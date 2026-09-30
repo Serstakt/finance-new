@@ -82,9 +82,9 @@ engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     try:
-        # WAL вместо journal=delete: устойчивее к обрывам записи (краш процесса,
-        # антивирус, синхронизация облака), читающие запросы не блокируются пишущими.
-        cursor.execute("PRAGMA journal_mode=WAL")
+        # DELETE вместо WAL: не создаёт sidecar-файлы portfolio.db-wal/-shm,
+        # которые мешают работе с Git (постоянно "изменённые файлы").
+        cursor.execute("PRAGMA journal_mode=DELETE")
     except sqlite3.Error as exc:
         # Не роняем приложение из-за pragma (read-only ФС, сетевой диск и т.п.)
         logger.warning("Не удалось включить WAL-режим для %s: %s", DB_PATH, exc)

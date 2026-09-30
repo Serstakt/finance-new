@@ -1,11 +1,7 @@
-# Compiled/Cache files
-__pycache__/
-*.pyc
-
-# Database files (SQLite)
+# Database files
 *.db
 *.db-shm
 *.db-wal
 
-# Bundles/Archives
+# Bundles/Archives (if considered artifacts)
 *.bundle
