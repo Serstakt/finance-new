@@ -1,0 +1,756 @@
+/* ==========================================================================
+   1. 🌍 СБРОС И БАЗОВЫЕ СТИЛИ
+   ========================================================================== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, sans-serif;
+  background: #131722;
+  color: #d1d4dc;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   2. 🧭 НАВИГАЦИОННАЯ ПАНЕЛЬ
+   ========================================================================== */
+#nav-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 50px;
+  background: #1e222d; border-bottom: 1px solid #2a2e39;
+  display: flex; align-items: center; padding: 0 20px; z-index: 1000; gap: 10px;
+}
+.nav-btn {
+  background: transparent; border: none; color: #787b86;
+  padding: 8px 16px; border-radius: 4px; cursor: pointer;
+  font-size: 14px; font-weight: 600; transition: all 0.2s;
+}
+.nav-btn:hover { background: #2a2e39; color: #d1d4dc; }
+.nav-btn.active { background: #2962ff; color: #fff; }
+.nav-title { font-size: 16px; font-weight: 700; color: #d1d4dc; margin-right: 20px; }
+
+/* ==========================================================================
+   3. 📐 ОСНОВНОЙ МАКЕТ И СТРАНИЦЫ
+   ========================================================================== */
+#main-content { margin-top: 50px; flex: 1; display: flex; height: calc(100vh - 50px); }
+.page { display: none; width: 100%; height: 100%; }
+.page.active { display: flex; }
+
+/* ==========================================================================
+   4. 🏠 ГЛАВНАЯ СТРАНИЦА (HOME)
+   ========================================================================== */
+#home-page { flex-direction: column; padding: 20px; overflow-y: auto; }
+.home-header { font-size: 24px; font-weight: 700; margin-bottom: 20px; color: #d1d4dc; }
+/* ==========================================================================
+   Контейнер для виджетов на главной странице (Flexbox)
+   ========================================================================== */
+.market-widgets-container {
+  display: flex;
+  gap: 20px;
+  width: 100%;
+  margin-bottom: 30px;
+}
+
+.tv-market-overview {
+  flex: 1.5;
+  min-height: 400px;
+  height: auto;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #2a2e39;
+  background: #1e222d;
+}
+
+.investing-widget-container {
+  flex: 1;
+  min-height: 400px;
+  height: 400px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #2a2e39;
+  background: #1e222d;
+}
+
+/* Скрываем копирайт Investing, если он мешает (опционально) */
+.investing-widget-container .poweredBy {
+  display: none !important;
+}
+
+/* Адаптивность: на экранах меньше 1024px виджеты встанут друг под другом */
+@media (max-width: 1024px) {
+  .market-widgets-container {
+    flex-direction: column;
+  }
+  .tv-market-overview,
+  .investing-widget-container {
+    width: 100%;
+    flex: none;
+    height: 400px;
+  }
+}
+tv-market-data .tradingview-widget-copyright,
+tv-market-data a[href*="tradingview.com"] { display: none !important; }
+
+.quick-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
+.action-card {
+  background: #1e222d; border: 1px solid #2a2e39; border-radius: 8px;
+  padding: 20px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 15px;
+}
+.action-card:hover { background: #2a2e39; border-color: #2962ff; }
+.action-icon { font-size: 32px; }
+.action-info h3 { font-size: 16px; font-weight: 600; margin-bottom: 5px; }
+.action-info p { font-size: 12px; color: #787b86; }
+
+/* ==========================================================================
+   5. 💼 СТРАНИЦА ПОРТФЕЛЯ
+   ========================================================================== */
+#portfolio-page { flex-direction: column; align-items: center; padding: 20px; }
+.coming-soon { text-align: center; }
+.coming-soon h2 { font-size: 32px; margin-bottom: 15px; }
+.coming-soon p { color: #787b86; font-size: 16px; }
+
+/* ==========================================================================
+   6. 📋 WATCHLIST: МАКЕТ И ЗАГОЛОВОК
+   ========================================================================== */
+#watchlist-page { flex-direction: row; }
+#watchlist {
+  width: 360px; min-width: 260px; max-width: 500px; background: #1e222d;
+  border-right: 1px solid #2a2e39; display: flex; flex-direction: column; height: 100%;
+}
+#watchlist.hidden { display: none !important; }
+
+/* Кнопки скрытия/показа панели */
+#hide-watchlist-btn {
+  background: transparent !important; border: 1px solid #363a45 !important; color: #787b86 !important;
+  padding: 2px 4px !important; border-radius: 2px !important; transition: all 0.2s ease !important;
+}
+#hide-watchlist-btn:hover {
+  background: #2a2e39 !important; border-color: #787b86 !important; color: #d1d4dc !important; transform: translateX(-2px);
+}
+#show-watchlist-btn {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  background: #1e222d; border: 1px solid #2a2e39; border-left: none;
+  color: #787b86; padding: 12px 6px; cursor: pointer; border-radius: 0 6px 6px 0;
+  z-index: 100; display: none; writing-mode: vertical-rl; text-orientation: mixed;
+  font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.2s;
+}
+#show-watchlist-btn:hover { background: #2a2e39; color: #2962ff; }
+#show-watchlist-btn.visible { display: flex; }
+
+/* Изменение размера панели */
+#resizer { width: 5px; background: transparent; cursor: col-resize; transition: background 0.2s; z-index: 10; }
+#resizer:hover, #resizer.active { background: #2962ff; }
+#resizer.hidden { display: none !important; }
+
+/* Заголовок Watchlist */
+#watchlist-header {
+  padding: 10px 12px; border-bottom: 1px solid #2a2e39; font-weight: 600; font-size: 13px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+#list-controls { display: flex; align-items: center; gap: 6px; flex: 1; }
+#list-selector {
+  flex: 1; background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;
+  padding: 5px 8px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer;
+}
+#list-selector:focus { border-color: #2962ff; }
+#list-selector option { background: #1e222d; color: #d1d4dc; }
+
+#auto-refresh-indicator { color: #787b86; font-size: 10px; font-weight: 400; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+#auto-refresh-indicator .dot { width: 6px; height: 6px; border-radius: 50%; background: #26a69a; animation: pulse 2s infinite; }
+
+/* ==========================================================================
+   7. 📊 ЗАГОЛОВКИ КОЛОНОК ТАБЛИЦЫ
+   ========================================================================== */
+.column-headers {
+  display: flex; padding: 6px 8px; background: #252a36; border-bottom: 1px solid #2a2e39;
+  font-size: 10px; font-weight: 600; color: #787b86; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.column-header { cursor: pointer; user-select: none; transition: color 0.2s; display: flex; align-items: center; gap: 4px; }
+.column-header:hover { color: #d1d4dc; }
+.column-header.active { color: #2962ff; }
+.column-header .sort-icon { font-size: 9px; opacity: 0; transition: opacity 0.2s; }
+.column-header:hover .sort-icon, .column-header.active .sort-icon { opacity: 1; }
+
+.col-ticker { flex: 1; min-width: 70px; }
+.col-price { min-width: 50px; text-align: right; }
+.col-change { min-width: 40px; text-align: right; border-radius: 3px; }
+.col-change-pct { min-width: 44px; text-align: right; border-radius: 3px; }
+
+/* ==========================================================================
+   8. ➕ ФОРМА ДОБАВЛЕНИЯ ТИКЕРА
+   ========================================================================== */
+#add-form { display: flex; padding: 6px 8px; gap: 4px; border-bottom: 1px solid #2a2e39; }
+#add-input {
+  flex: 1; background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
+  padding: 5px 8px; border-radius: 4px; font-size: 12px; outline: none;
+}
+#add-input:focus { border-color: #2962ff; }
+#add-btn { background: #2962ff; color: #fff; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+#add-btn:hover { background: #1e53e5; }
+#add-section-btn {
+  background: transparent !important; border: 1px solid #363a45 !important; color: #787b86 !important;
+  padding: 5px 8px !important; border-radius: 4px !important; cursor: pointer !important;
+  font-size: 12px !important; transition: all 0.2s ease !important;
+}
+#add-section-btn:hover {
+  background: rgba(41, 98, 255, 0.1) !important; border-color: #2962ff !important; color: #2962ff !important;
+}
+
+/* ==========================================================================
+   9. 📜 СПИСОК ТИКЕРОВ И ЭЛЕМЕНТЫ
+   ========================================================================== */
+#ticker-list { flex: 1; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+#ticker-list::-webkit-scrollbar { display: none; }
+
+/* --- Базовый элемент тикера --- */
+.ticker-item {
+  padding: 4px 8px; cursor: pointer; font-size: 11px; transition: background 0.15s;
+  border-bottom: 1px solid #2a2e39; display: flex; align-items: center; gap: 6px;
+}
+.ticker-item:hover { background: #2a2e39; }
+.ticker-item.active { background: #2962ff22; border-left: 3px solid #2962ff; padding-left: 5px; }
+
+/* --- Drag & Drop --- */
+.drag-handle { color: #787b86; cursor: grab; opacity: 0; transition: opacity 0.15s; font-size: 14px; user-select: none; line-height: 1; }
+.ticker-item:hover .drag-handle { opacity: 1; }
+.drag-handle:active { cursor: grabbing; }
+
+/* --- Избранное (флажки) --- */
+.favorite-wrapper { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
+.favorite-flag { font-size: 13px; transition: color 0.2s, transform 0.2s; display: inline-block; line-height: 1; }
+.favorite-flag.empty { color: #363a45; }
+.favorite-flag:hover { transform: scale(1.15); }
+.favorite-flag.empty:hover { color: #787b86; }
+.favorite-picker {
+  position: absolute; top: 100%; left: 0; background: #1e222d; border: 1px solid #363a45;
+  border-radius: 4px; padding: 4px; display: none; gap: 4px; z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5); margin-top: 2px;
+}
+.favorite-picker.active { display: flex; }
+.favorite-picker span {
+  cursor: pointer; font-size: 12px; padding: 1px; border-radius: 2px;
+  transition: background 0.15s, transform 0.15s;
+}
+.favorite-picker span:hover { background: #2a2e39; transform: scale(1.2); }
+
+/* === КРУГЛЫЙ ЛОГОТИП ТИКЕРА (меньший размер) === */
+.ticker-logo-container {
+  border-radius: 50%;
+  overflow: hidden;
+  width: 24px; /* Было 32px */
+  height: 24px; /* Было 32px */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ticker-logo-container img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ticker-logo-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2e39;
+  color: #d1d4dc;
+  font-weight: 600;
+  font-size: 11px; /* Было 14px */
+  border-radius: 50%;
+}
+.ticker-info { flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 55px; }
+.ticker-symbol-link { font-weight: 600; font-size: 11px; display: block; color: #d1d4dc; text-decoration: none; transition: color 0.2s; line-height: 1.2; }
+.ticker-symbol-link:hover { color: #2962ff; text-decoration: underline; }
+
+/* --- Цены и изменения --- */
+.ticker-price { font-size: 11px; font-weight: 600; min-width: 48px; text-align: right; }
+.ticker-change, .ticker-change-percent {
+  font-size: 11px; font-weight: 600; min-width: 40px; text-align: right;
+  border-radius: 3px; padding: 1px 2px; transition: background-color 0.2s;
+}
+.ticker-change-percent { min-width: 44px; }
+.positive-bg { background-color: rgba(38, 166, 154, 0.15); color: #26a69a; }
+.negative-bg { background-color: rgba(239, 83, 80, 0.15); color: #ef5350; }
+.ticker-remove { color: #787b86; cursor: pointer; font-size: 12px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
+.ticker-item:hover .ticker-remove { opacity: 1; }
+.ticker-remove:hover { color: #ef5350; }
+
+/* --- Алерты и скелетоны загрузки --- */
+.alert-bell { font-size: 12px; cursor: pointer; opacity: 0.4; transition: all 0.2s; }
+.alert-bell:hover { opacity: 1; transform: scale(1.1); }
+.alert-bell.active { opacity: 1; color: #ffca28; animation: ring 2s infinite; }
+.alert-bell.triggered { opacity: 1; color: #26a69a; animation: ring-triggered 1.5s infinite; }
+
+.skeleton {
+  background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
+  background-size: 200% 100%; animation: skeleton-loading 1.5s infinite linear;
+  border-radius: 3px; display: inline-block;
+}
+.skeleton-price { width: 48px; height: 14px; }
+.skeleton-change { width: 40px; height: 14px; }
+.skeleton-change-pct { width: 44px; height: 14px; }
+
+/* ==========================================================================
+   10. 📈 КОНТЕЙНЕР ГРАФИКА
+   ========================================================================== */
+#chart-container {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#tradingview_chart {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.error-msg { color: #ef5350; padding: 20px; font-size: 14px; line-height: 1.5; }
+
+/* === ПАНЕЛЬ НОВОСТЕЙ === */
+#news-panel {
+  flex: 1;
+  min-height: 0;
+  display: none;
+  flex-direction: column;
+  margin-top: 20px;
+  background: #1e222d;
+  border-radius: 8px;
+  border: 1px solid #2a2e39;
+  overflow: hidden;
+}
+
+#news-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+#news-list::-webkit-scrollbar {
+  width: 8px;
+}
+#news-list::-webkit-scrollbar-track {
+  background: #1e222d;
+  border-radius: 4px;
+}
+#news-list::-webkit-scrollbar-thumb {
+  background: #363a45;
+  border-radius: 4px;
+}
+#news-list::-webkit-scrollbar-thumb:hover {
+  background: #787b86;
+}
+/* ==========================================================================
+   11. 🛠 ПАНЕЛЬ УПРАВЛЕНИЯ (IO) И МЕНЮ
+   ========================================================================== */
+#io-panel { padding: 6px 8px; border-top: 1px solid #2a2e39; display: flex; gap: 4px; flex-wrap: wrap; }
+#io-panel > button:not(.admin-trigger) {
+  flex: 1; min-width: 70px; background: #2a2e39; color: #787b86;
+  border: 1px solid #363a45; padding: 5px; border-radius: 4px;
+  cursor: pointer; font-size: 11px; transition: all 0.2s;
+}
+#io-panel > button:not(.admin-trigger):hover { color: #d1d4dc; border-color: #787b86; }
+
+#open-tv-btn, #open-news-btn {
+  background: linear-gradient(135deg, #2962ff 0%, #1e53e5 100%) !important;
+  color: #fff !important; border: none !important; box-shadow: 0 2px 4px rgba(41, 98, 255, 0.2);
+  transition: all 0.2s ease !important; font-weight: 600;
+}
+#open-tv-btn:hover, #open-news-btn:hover {
+  transform: translateY(-2px); box-shadow: 0 4px 12px rgba(41, 98, 255, 0.4);
+  background: linear-gradient(135deg, #3b7bff 0%, #2962ff 100%) !important;
+}
+#open-tv-btn:active, #open-news-btn:active { transform: translateY(0); box-shadow: 0 2px 4px rgba(41, 98, 255, 0.2); }
+
+.admin-dropdown { position: relative; flex: 1; min-width: 70px; }
+.admin-trigger {
+  width: 100%; background: #2a2e39; color: #787b86; border: 1px solid #363a45;
+  padding: 5px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.2s;
+}
+.admin-trigger:hover { color: #d1d4dc; border-color: #787b86; background: #363a45; }
+.admin-menu {
+  position: absolute; bottom: 100%; left: 0; width: 100%; background: #1e222d;
+  border: 1px solid #363a45; border-radius: 4px; padding: 4px; display: flex;
+  flex-direction: column; gap: 4px; opacity: 0; visibility: hidden;
+  transform: translateY(10px); transition: all 0.2s ease; z-index: 100;
+  margin-bottom: 4px; box-shadow: 0 -4px 12px rgba(0,0,0,0.3);
+}
+.admin-dropdown:hover .admin-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.admin-menu button {
+  background: transparent; color: #d1d4dc; border: none; padding: 6px 10px;
+  text-align: left; cursor: pointer; border-radius: 4px; font-size: 11px; transition: background 0.15s;
+}
+.admin-menu button:hover { background: #2a2e39; color: #2962ff; }
+
+/* ==========================================================================
+   12. 🐞 ПАНЕЛЬ ОТЛАДКИ (DEBUG)
+   ========================================================================== */
+#debug-panel {
+  position: fixed; bottom: 0; left: 0; right: 0; background: #1e222d; border-top: 2px solid #2962ff;
+  padding: 10px; padding-top: 24px; height: 250px; min-height: 100px; max-height: 80vh;
+  overflow-y: auto; font-family: monospace; font-size: 11px; z-index: 1000; display: none;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+#debug-panel::-webkit-scrollbar { display: none; }
+#debug-panel.visible { display: block; }
+
+.debug-resize-handle {
+  position: absolute; top: 0; left: 0; right: 0; height: 8px; background: transparent;
+  cursor: row-resize; z-index: 11; transition: background 0.2s;
+}
+.debug-resize-handle:hover, .debug-resize-handle.active { background: #2962ff; }
+.debug-resize-handle::after {
+  content: ''; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+  width: 40px; height: 2px; background: #363a45; border-radius: 1px; transition: background 0.2s;
+}
+.debug-resize-handle:hover::after, .debug-resize-handle.active::after { background: #fff; }
+
+.debug-close-btn {
+  position: absolute; top: 12px; right: 8px; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center; background: transparent;
+  border: none; color: #787b86; font-size: 18px; font-weight: 700; cursor: pointer;
+  border-radius: 4px; transition: all 0.2s; z-index: 12; line-height: 1;
+}
+.debug-close-btn:hover { background: #ef5350; color: #fff; }
+
+#debug-panel .log-entry { margin: 2px 0; padding: 2px 5px; border-left: 3px solid transparent; }
+#debug-panel .log-error { color: #ef5350; border-left-color: #ef5350; background: #2a1515; }
+#debug-panel .log-success { color: #26a69a; border-left-color: #26a69a; background: #152a25; }
+#debug-panel .log-info { color: #787b86; border-left-color: #787b86; }
+
+/* ==========================================================================
+   13. 🪟 МОДАЛЬНЫЕ ОКНА И СПИСКИ АЛЕРТОВ
+   ========================================================================== */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.7); z-index: 2000;
+  display: none; align-items: center; justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal-box {
+  background: #1e222d; border: 1px solid #363a45; border-radius: 8px;
+  padding: 24px; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.modal-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #d1d4dc; }
+.modal-input, .modal-select {
+  width: 100%; background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
+  padding: 8px; border-radius: 4px; font-size: 13px; margin-bottom: 12px; outline: none;
+}
+.modal-input:focus, .modal-select:focus { border-color: #2962ff; }
+.modal-buttons { display: flex; gap: 8px; margin-top: 16px; }
+.modal-btn {
+  flex: 1; padding: 8px; border-radius: 4px; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 600; transition: background 0.2s;
+}
+.modal-btn-save { background: #2962ff; color: #fff; }
+.modal-btn-save:hover { background: #1e53e5; }
+.modal-btn-cancel { background: #363a45; color: #d1d4dc; }
+.modal-btn-cancel:hover { background: #4a5060; }
+.modal-btn-delete { background: rgba(239, 83, 80, 0.2); color: #ef5350; margin-top: 8px; width: 100%; }
+.modal-btn-delete:hover { background: rgba(239, 83, 80, 0.3); }
+
+.alerts-list-container { width: 450px; max-height: 400px; overflow-y: auto; }
+.alert-list-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #252a36; padding: 10px 12px; border-radius: 6px;
+  margin-bottom: 8px; border-left: 3px solid #363a45;
+}
+.alert-list-item.status-active { border-left-color: #26a69a; }
+.alert-list-item.status-triggered { border-left-color: #ffca28; opacity: 0.7; }
+.alert-list-item.status-cancelled { border-left-color: #ef5350; opacity: 0.5; }
+.alert-item-info { display: flex; flex-direction: column; gap: 4px; }
+.alert-item-condition { font-size: 14px; font-weight: 600; color: #d1d4dc; }
+.alert-status { font-size: 11px; font-weight: 600; }
+.status-active { color: #26a69a; }
+.status-triggered { color: #ffca28; }
+.status-cancelled { color: #ef5350; }
+.mini-btn {
+  background: rgba(239, 83, 80, 0.2); color: #ef5350;
+  border: 1px solid rgba(239, 83, 80, 0.3); padding: 4px 10px;
+  border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+}
+.mini-btn:hover { background: rgba(239, 83, 80, 0.4); color: #fff; }
+
+/* ==========================================================================
+   14. 📂 ЗАГОЛОВКИ РАЗДЕЛОВ (СЕКЦИЙ)
+   ========================================================================== */
+.section-header {
+  padding: 4px 8px; background: #252a36; color: #787b86; font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.5px; display: flex;
+  justify-content: space-between; align-items: center;
+  border-bottom: 1px solid #2a2e39; border-top: 1px solid #2a2e39;
+  margin-top: 4px; cursor: default; gap: 6px;
+}
+.section-header .section-title {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  transition: color 0.2s; font-size: 11px; font-weight: 500;
+}
+.section-header .section-title:hover { color: #d1d4dc; }
+.section-collapse-btn {
+  cursor: pointer; font-size: 9px; padding: 1px 3px; border-radius: 3px;
+  transition: background 0.2s; display: flex; align-items: center; line-height: 1;
+}
+.section-collapse-btn:hover { background: #363a45; color: #d1d4dc; }
+.section-header .drag-handle { cursor: grab; opacity: 0.5; font-size: 14px; }
+.section-header:hover .drag-handle { opacity: 1; }
+.section-header .ticker-remove { opacity: 0; font-size: 12px; transition: opacity 0.2s ease; }
+.section-header:hover .ticker-remove { opacity: 1; }
+
+/* ==========================================================================
+   15. 🔘 КНОПКИ ПЕРЕКЛЮЧЕНИЯ (TOGGLE)
+   ========================================================================== */
+.toggle-watchlist-btn {
+  background: transparent !important; border: none !important; color: #787b86 !important;
+  cursor: pointer; padding: 4px 6px !important; border-radius: 4px !important;
+  font-size: 14px !important; font-weight: 500 !important; transition: all 0.2s ease !important;
+  display: flex !important; align-items: center !important; justify-content: center !important;
+  min-width: 28px !important; height: 28px !important;
+}
+.toggle-watchlist-btn:hover { background: #2a2e39 !important; color: #d1d4dc !important; }
+.toggle-watchlist-btn:active { transform: scale(0.95) !important; background: #363a45 !important; }
+.toggle-watchlist-btn.danger:hover { background: rgba(239, 83, 80, 0.1) !important; color: #ef5350 !important; }
+.toggle-watchlist-btn.danger:active { background: rgba(239, 83, 80, 0.2) !important; }
+
+/* ==========================================================================
+   16. ✨ АНИМАЦИИ
+   ========================================================================== */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes ring {
+  0%, 100% { transform: rotate(0); }
+  10%, 30%, 50% { transform: rotate(10deg); }
+  20%, 40% { transform: rotate(-10deg); }
+}
+@keyframes ring-triggered {
+  0%, 100% { transform: rotate(0) scale(1); }
+  10%, 30%, 50% { transform: rotate(15deg) scale(1.1); }
+  20%, 40% { transform: rotate(-15deg) scale(1.1); }
+}
+@keyframes skeleton-loading {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* ==========================================================================
+   17. 💼 СТРАНИЦА ПОРТФЕЛЯ
+   ========================================================================== */
+.portfolio-container {
+    padding: 10px 40px 40px 40px;
+     width: 100%;
+     box-sizing: border-box;
+}
+
+.portfolio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.portfolio-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #d1d4dc;
+}
+
+.portfolio-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-primary, .btn-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.btn-primary {
+  background: #2962ff;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #1e53e5;
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: #2a2e39;
+  color: #d1d4dc;
+  border: 1px solid #363a45;
+}
+
+.btn-secondary:hover {
+  background: #363a45;
+}
+
+.portfolio-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.summary-card {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.summary-card h4 {
+  font-size: 12px;
+  color: #787b86;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.summary-card .value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #d1d4dc;
+}
+
+.summary-card .sub-value {
+  font-size: 14px;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.text-green { color: #26a69a; }
+.text-red { color: #ef5350; }
+
+.portfolio-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.chart-container {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.chart-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #d1d4dc;
+  margin-bottom: 16px;
+}
+
+.chart-wrapper {
+  position: relative;
+  height: 300px;
+}
+
+.portfolio-table-container {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  padding: 20px;
+  overflow-x: auto;
+}
+
+.table-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #d1d4dc;
+  margin-bottom: 16px;
+}
+
+.portfolio-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.portfolio-table th,
+.portfolio-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #2a2e39;
+  font-size: 13px;
+}
+
+.portfolio-table th {
+  background: #252a36;
+  color: #787b86;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.portfolio-table tr:hover {
+  background: #2a2e39;
+}
+
+.portfolio-table .empty-state {
+  text-align: center;
+  color: #787b86;
+  padding: 40px;
+}
+
+.portfolio-table .btn-icon {
+  background: transparent;
+  border: 1px solid #363a45;
+  color: #787b86;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  margin-right: 4px;
+}
+
+.portfolio-table .btn-icon:hover {
+  background: #363a45;
+  color: #d1d4dc;
+}
+
+.portfolio-table .btn-icon.delete:hover {
+  background: rgba(239, 83, 80, 0.1);
+  color: #ef5350;
+  border-color: #ef5350;
+}
+
+@media (max-width: 768px) {
+  .portfolio-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-charts {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+}

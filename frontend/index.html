@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Финансовый терминал</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- ВАЖНО: внешние скрипты (Sortable, TradingView) загружаются АСИНХРОННО (defer).
+         Обычный <script src="..."> блокирует разбор страницы: если CDN недоступен
+         (блокировка провайдером/регионом, файрвол, антивирус, прокси), вкладка
+         «вечно грузит» и локальный сервер тут ни при чём. -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script defer src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+<nav id="nav-bar">
+    <div class="nav-title">📊 Финансовый терминал</div>
+    <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
+    <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
+    <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
+</nav>
+
+<div id="main-content">
+    <div id="home-page" class="page">
+        <h1 class="home-header">Обзор рынка</h1>
+        <div class="market-widgets-container">
+            <!-- Виджет 1: TradingView (встраивается асинхронно после загрузки страницы) -->
+            <div class="tv-market-overview" id="tv-market-overview">
+                <div class="widget-fallback">Загрузка виджета…</div>
+            </div>
+            <!-- Виджет 2: Investing.com (встраивается асинхронно после загрузки страницы) -->
+            <div class="investing-widget-container" id="investing-widget-container">
+                <div class="widget-fallback">Загрузка виджета…</div>
+            </div>
+            <script>
+              // Внешние виджеты вставляются ПОСЛЕ загрузки документа, чтобы зависший
+              // доступ к tradingview.com / investing.com не блокировал открытие страницы.
+              window.addEventListener('load', function () {
+                try {
+                  var tvBox = document.getElementById('tv-market-overview');
+                  if (tvBox) {
+                    var mod = document.createElement('script');
+                    mod.type = 'module';
+                    mod.src = 'https://widgets.tradingview-widget.com/w/ru/tv-market-data.js';
+                    mod.onerror = function () { tvBox.innerHTML = '<div class="widget-fallback">⚠️ Виджет TradingView недоступен (заблокирован сетью)</div>'; };
+                    var el = document.createElement('tv-market-data');
+                    el.setAttribute('symbol-sectors', '[{"sectionName":"Indices","symbols":["FOREXCOM:SPXUSD","FOREXCOM:NSXUSD","FOREXCOM:DJI","INDEX:NKY","RUS:IRUS","RUS:RTSI","RUS:RGBI","CAPITALCOM:DXY","OANDA:XAUUSD","BLACKBULL:BRENT","NASDAQ:TLT","BITSTAMP:BTCUSD"]}]');
+                    el.setAttribute('view', 'performance');
+                    el.setAttribute('heatmaptheme', 'dark');
+                    tvBox.appendChild(mod);
+                    tvBox.appendChild(el);
+                  }
+                } catch (e) { console.warn('TradingView overview widget failed:', e); }
+
+                try {
+                  var invBox = document.getElementById('investing-widget-container');
+                  if (invBox) {
+                    var frame = document.createElement('iframe');
+                    frame.src = 'https://ru.widgets.investing.com/live-currency-cross-rates?theme=darkTheme&roundedCorners=true&cols=last,change,changePerc,time&pairs=1,3,1073360,1073358,9530';
+                    frame.width = '100%';
+                    frame.height = '100%';
+                    frame.frameBorder = '0';
+                    frame.allowTransparency = true;
+                    frame.marginWidth = '0';
+                    frame.marginHeight = '0';
+                    invBox.appendChild(frame);
+                  }
+                } catch (e) { console.warn('Investing widget failed:', e); }
+              });
+            </script>
+
+        </div>
+        <h2 style="font-size: 18px; margin-bottom: 15px; color: #d1d4dc;">Быстрые действия</h2>
+        <div class="quick-actions">
+            <div class="action-card" onclick="navigateTo('watchlist')">
+                <div class="action-icon">📋</div>
+                <div class="action-info"><h3>Watchlist</h3><p>Списки наблюдения с ценами</p></div>
+            </div>
+            <div class="action-card" onclick="navigateTo('portfolio')">
+                <div class="action-icon">💼</div>
+                <div class="action-info"><h3>Портфель</h3><p>Управление активами</p></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="watchlist-page" class="page">
+        <button id="show-watchlist-btn" title="Показать Watchlist">◀ Списки</button>
+        <div id="watchlist">
+            <div id="watchlist-header">
+                <div id="list-controls">
+                    <select id="list-selector" title="Выбрать список"></select>
+                    <button id="add-list-btn" class="toggle-watchlist-btn" title="Создать новый список">+</button>
+                    <button id="rename-list-btn" class="toggle-watchlist-btn" title="Переименовать список">✎</button>
+                    <button id="delete-list-btn" class="toggle-watchlist-btn danger" title="Удалить текущий список">×</button>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <span id="auto-refresh-indicator"><span class="dot"></span><span id="countdown">120с</span></span>
+                    <button class="toggle-watchlist-btn" id="hide-watchlist-btn" title="Скрыть панель">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+                    </button>
+                </div>
+            </div>
+            <div id="add-form">
+                <input id="add-input" placeholder="SBER, AAPL, BTCUSDT" title="Введите тикер. Биржа определяется автоматически." />
+                <button id="add-btn" type="button" title="Добавить тикер">+</button>
+                <button id="add-section-btn" type="button" title="Добавить раздел">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
+                </button>
+            </div>
+            <div class="column-headers">
+                <div class="column-header col-ticker" data-sort="ticker">Тикер <span class="sort-icon">↕</span></div>
+                <div class="column-header col-price" data-sort="price">Цена <span class="sort-icon">↕</span></div>
+                <div class="column-header col-change" data-sort="change">Изм. <span class="sort-icon">↕</span></div>
+                <div class="column-header col-change-pct" data-sort="changePct">Изм.% <span class="sort-icon">↕</span></div>
+            </div>
+            <div id="ticker-list"></div>
+            <div id="io-panel">
+                <button id="open-tv-btn" onclick="openOnTradingView()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> Chart
+                </button>
+                <button id="open-news-btn" onclick="openSmartLabNews()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path><path d="M18 14h-8"></path><path d="M15 18h-5"></path><path d="M10 6h8v4h-8V6Z"></path></svg> News
+                </button>
+                <button id="open-alerts-list-btn" onclick="openAlertsListModal()" style="background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;">🔔 Алерты</button>
+                <div class="admin-dropdown">
+                    <button class="admin-trigger">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> Настройки
+                    </button>
+                    <div class="admin-menu">
+                        <button id="refresh-btn" onclick="refreshAllPrices()">🔄 Обновить</button>
+                        <button onclick="exportAllData()">📤 Экспорт</button>
+                        <button onclick="importAllData()">📥 Импорт</button>
+                        <button onclick="toggleDebug()">🐞 Debug</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="resizer" title="Потяните, чтобы изменить размер"></div>
+        <div id="chart-container">
+            <!-- Сам график TradingView -->
+            <div id="tradingview_chart"></div>
+            <!-- Панель новостей под графиком -->
+            <div id="news-panel">
+                <div style="padding: 16px 20px; border-bottom: 1px solid #2a2e39; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+                    <h3 style="margin: 0; font-size: 16px; color: #d1d4dc;">
+                        📰 Новости: <span id="news-panel-symbol" style="color: #2962ff;">-</span>
+                    </h3>
+                    <button onclick="refreshNews()" style="background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;" onmouseover="this.style.background='#363a45'" onmouseout="this.style.background='#2a2e39'">
+                        🔄 Обновить
+                    </button>
+                </div>
+
+                <div id="news-list">
+                    <div style="padding: 20px; text-align: center; color: #787b86;">
+                        Выберите тикер для загрузки новостей
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="portfolio-page" class="page">
+        <div class="portfolio-container">
+            <!-- Заголовок и кнопки управления -->
+            <div class="portfolio-header">
+                <h2 class="portfolio-title">💼 Мой Портфель</h2>
+                <div class="portfolio-actions">
+                    <button class="btn-primary" onclick="openAddPositionModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Добавить позицию
+                    </button>
+                    <button class="btn-secondary" onclick="refreshPortfolio()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        Обновить
+                    </button>
+                </div>
+            </div>
+
+            <!-- Сводная статистика -->
+            <div class="portfolio-summary">
+                <div class="summary-card">
+                    <h4>Общая стоимость</h4>
+                    <div class="value" id="total-value">—</div>
+                </div>
+                <div class="summary-card">
+                    <h4>Вложено</h4>
+                    <div class="value" id="total-invested">—</div>
+                </div>
+                <div class="summary-card">
+                    <h4>P&L (Прибыль/Убыток)</h4>
+                    <div class="value" id="total-pnl">—</div>
+                    <div class="sub-value" id="total-pnl-pct">—</div>
+                </div>
+                <div class="summary-card">
+                    <h4>Количество позиций</h4>
+                    <div class="value" id="total-positions">0</div>
+                </div>
+            </div>
+
+            <!-- Графики -->
+
+            <div class="portfolio-charts">
+                <div class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 class="chart-title" style="margin-bottom: 0;">Распределение портфеля</h3>
+                        <div style="background: #2a2e39; border-radius: 6px; padding: 4px; display: flex; gap: 4px;">
+                            <button id="chart-mode-ticker" class="btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="setChartMode('ticker')">По тикерам</button>
+                            <button id="chart-mode-sector" class="btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="setChartMode('sector')">По секторам</button>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="portfolio-pie-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <h3 class="chart-title">P&L по позициям</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="portfolio-bar-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Таблица позиций -->
+            <div class="portfolio-table-container">
+                <h3 class="table-title">Позиции</h3>
+                <table class="portfolio-table">
+                    <thead>
+                    <tr>
+                        <th>Тикер</th>
+                        <th>Количество</th>
+                        <th>Средняя цена</th>
+                        <th>Текущая цена</th>
+                        <th>Стоимость</th>
+                        <th>P&L</th>
+                        <th>P&L %</th>
+                        <th>Действия</th>
+                    </tr>
+                    </thead>
+                    <tbody id="portfolio-tbody">
+                    <tr>
+                        <td colspan="8" class="empty-state">Загрузка...</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Модальное окно добавления позиции -->
+        <div class="modal-overlay" id="add-position-modal">
+            <div class="modal-box">
+                <div class="modal-title">Добавить позицию</div>
+                <input type="text" class="modal-input" id="position-symbol" placeholder="Тикер (например, MOEX:SBER)" />
+                <input type="number" class="modal-input" id="position-quantity" placeholder="Количество" step="0.01" />
+                <input type="number" class="modal-input" id="position-avg-price" placeholder="Цена входа (например, 250.5)" step="0.01" />
+                <select class="modal-input" id="position-sector" style="cursor: pointer;">
+                    <option value="Не указан">Не указан</option>
+                    <option value="Недвижимость">Недвижимость</option>
+                    <option value="Информационные технологии">Информационные технологии</option>
+                    <option value="Сырьевая промышленность">Сырьевая промышленность</option>
+                    <option value="Машиностроение и транспорт">Машиностроение и транспорт</option>
+                    <option value="Здравоохранение">Здравоохранение</option>
+                    <option value="Потребительские товары и услуги">Портебительские товары и услуги</option>
+                    <option value="Телекоммуникации">Телекоммуникации</option>
+                    <option value="Финансовый сектор">Финансовый сектор</option>
+                    <option value="Энергетика">Энергетика</option>
+                    <option value="Другое">Другое</option>
+                </select>
+                <div class="modal-buttons">
+                    <button class="modal-btn modal-btn-cancel" onclick="closeAddPositionModal()">Отмена</button>
+                    <button class="modal-btn modal-btn-save" onclick="savePosition()">Добавить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="debug-panel">
+    <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
+    <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
+</div>
+
+<div class="modal-overlay" id="alert-modal">
+    <div class="modal-box">
+        <div class="modal-title">🔔 Ценовое уведомление: <span id="alert-symbol-name"></span></div>
+        <select class="modal-select" id="alert-condition">
+            <option value="above">Цена станет ВЫШЕ или равна</option>
+            <option value="below">Цена станет НИЖЕ или равна</option>
+        </select>
+        <input type="number" step="0.01" class="modal-input" id="alert-target-price" placeholder="Целевая цена" />
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" onclick="closeAlertModal()">Отмена</button>
+            <button class="modal-btn modal-btn-save" onclick="saveAlert()">Сохранить</button>
+        </div>
+        <button class="modal-btn modal-btn-delete" id="alert-delete-btn" onclick="deleteAlert()" style="display: none;">Удалить</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="alerts-list-modal">
+    <div class="modal-box alerts-list-container">
+        <div class="modal-title">📋 Алерты для <span id="alerts-list-symbol" style="color: #2962ff;"></span></div>
+        <div id="alerts-list-content" style="margin-bottom: 16px;"></div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" onclick="closeAlertsListModal()">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- defer: скрипты выполсятся строго в этом порядке после разбора HTML,
+     но не будут блокировать отрисовку страницы -->
+<script defer src="js/state.js"></script>
+<script defer src="js/api.js"></script>
+<script defer src="js/ui.js"></script>
+<script defer src="js/main.js"></script>
+<script defer src="js/portfolio.js"></script>
+
+<!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
+     показываем предупреждение вместо «вечной загрузки» -->
+<script>
+window.addEventListener('load', function () {
+  var blocked = [];
+  if (typeof Sortable === 'undefined') blocked.push('cdnjs.cloudflare.com');
+  if (typeof TradingView === 'undefined') blocked.push('s3.tradingview.com');
+  if (blocked.length) {
+    var bar = document.createElement('div');
+    bar.id = 'cdn-warning';
+    bar.textContent = '⚠️ Внешние сервисы (' + blocked.join(', ') + ') не отвечают — часть виджетов недоступна. Данные терминала работают.';
+    bar.title = 'Проверьте блокировщик рекламы / файрвол / антивирус / прокси. Сам сервер запускается нормально.';
+    document.body.appendChild(bar);
+    setTimeout(function () { bar.style.opacity = '0'; setTimeout(function(){ bar.remove(); }, 500); }, 12000);
+  }
+});
+</script>
+</body>
+</html>
