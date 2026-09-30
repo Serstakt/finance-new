@@ -1,3 +1,11 @@
+# Python bytecode and cache
+__pycache__/
+*.pyc
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
 *.bundle
 .idea
 # Python
