@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,7 +11,19 @@ from .services import portfolio_service
 from .services import watchlist_service
 from .models import schemas
 
-app = FastAPI(title="Financial Terminal API")
+# Путь к фронтенду
+FRONTEND_PATH = Path(__file__).parent.parent / "frontend"
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Монтируем статику фронтенда при старте, чтобы "/..." не перехватывал /api/*-маршруты."""
+    application.mount("/css", StaticFiles(directory=FRONTEND_PATH / "css"), name="css")
+    application.mount("/js", StaticFiles(directory=FRONTEND_PATH / "js"), name="js")
+    yield
+
+
+app = FastAPI(title="Financial Terminal API", lifespan=lifespan)
 
 # CORS
 app.add_middleware(
@@ -19,16 +33,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Путь к фронтенду
-FRONTEND_PATH = Path(__file__).parent.parent / "frontend"
-
-
-@app.on_event("startup")
-async def mount_frontend():
-    """Монтируем статику фронтенда в конце, чтобы "/..." не перехватывал /api/*-маршруты."""
-    app.mount("/css", StaticFiles(directory=FRONTEND_PATH / "css"), name="css")
-    app.mount("/js", StaticFiles(directory=FRONTEND_PATH / "js"), name="js")
 
 
 # Главная страница
@@ -145,4 +149,6 @@ async def get_telegram_news(ticker: str, force_refresh: bool = Query(default=Fal
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    # ВАЖНО: приложение передаётся import-строкой, иначе uvicorn не может
+    # включить reload/workers ("You must pass the application as an import string")
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000)
