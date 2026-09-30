@@ -82,17 +82,40 @@ engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     try:
-        # WAL вместо journal=delete: устойчивее к обрывам записи (краш процесса,
-        # антивирус, синхронизация облака), читающие запросы не блокируются пишущими.
-        cursor.execute("PRAGMA journal_mode=WAL")
+        # journal_mode=DELETE — классический режим журнала: временный файл
+        # журнала удаляется сразу после коммита, а постоянные sidecar-файлы
+        # portfolio.db-wal / portfolio.db-shm НЕ создаются вообще.
+        # synchronous=FULL — данные сбрасываются на диск при каждом коммите,
+        # что максимально защищает от повреждения БД при обрыве записи.
+        cursor.execute("PRAGMA journal_mode=DELETE")
+        cursor.execute("PRAGMA synchronous=FULL")
     except sqlite3.Error as exc:
         # Не роняем приложение из-за pragma (read-only ФС, сетевой диск и т.п.)
-        logger.warning("Не удалось включить WAL-режим для %s: %s", DB_PATH, exc)
+        logger.warning("Не удалось настроить режим журнала для %s: %s", DB_PATH, exc)
     finally:
         try:
             cursor.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _remove_wal_files() -> None:
+    """Удаляет оставшиеся sidecar-файлы WAL (если база раньше работала в WAL).
+
+    SQLite сам конвертирует базу из WAL в DELETE-режим при первом подключении,
+    но старые файлы -wal/-shm могут остаться, если процесс был убит. Убираем их
+    до создания engine, чтобы они не «воскрешались».
+    """
+    for suffix in ("-wal", "-shm"):
+        p = Path(str(DB_PATH) + suffix)
+        try:
+            if p.exists():
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+_remove_wal_files()
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
