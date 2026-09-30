@@ -1,19 +1,8 @@
-# Python
+# Python bytecode and cache
 __pycache__/
 *.pyc
-venv/
-.venv/
-env/
 
-# Databases
+# Database files
 *.db
 *.db-shm
 *.db-wal
-
-# IDE
-.idea/
-.vscode/
-
-# OS
-.DS_Store
-Thumbs.db
