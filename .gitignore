@@ -1,7 +1,5 @@
-# Database files
-*.db
+__pycache__/
+*.pyc
 *.db-shm
 *.db-wal
-
-# Bundles/Archives (if considered artifacts)
 *.bundle
