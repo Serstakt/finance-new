@@ -1,19 +1,8 @@
-# Compiled/Cache files
+# Python compiled files
 __pycache__/
 *.pyc
 
-# Database files (SQLite)
+# Database files and locks
 *.db
 *.db-shm
 *.db-wal
-
-# Bundles/Archives
-*.bundle
-.idea
-# Python
-venv/
-.venv/
-env/
-__pycache__/
-*.pyc
-
