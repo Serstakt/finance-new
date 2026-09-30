@@ -151,4 +151,4 @@ if __name__ == "__main__":
 
     # ВАЖНО: приложение передаётся import-строкой, иначе uvicorn не может
     # включить reload/workers ("You must pass the application as an import string")
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000)
