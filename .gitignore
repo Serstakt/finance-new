@@ -1,18 +1,1 @@
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
-# База данных (создаётся при запуске)
-*.db
-backend/database/*.db
-
-# Node
-node_modules/
-
-# IDE / OS
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
+*.bundle
