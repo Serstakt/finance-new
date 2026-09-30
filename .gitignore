@@ -1,1 +1,19 @@
-*.bundle
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+env/
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
