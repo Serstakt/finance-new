@@ -23,9 +23,19 @@ def get_list_symbols(list_id: str) -> list[dict]:
 
 
 def add_symbol(list_id: str, symbol: str) -> dict:
-    """Добавляет тикер в конец списка. Повтор не добавляется (идемпотентно)."""
+    """Добавляет тикер в конец списка. Повтор не добавляется (идемпотентно).
+
+    Тикеры нормализуются к верхнему регистру (как в moex_service/portfolio_service),
+    чтобы "sber" и "SBER" не создавали дубли записей.
+    У заголовков разделов SECTION:... нормализуется только префикс — название
+    раздела (часть после ':') сохраняется как ввёл пользователь.
+    """
     symbol = symbol.strip()
-    if not symbol:
+    if not symbol.upper().startswith("SECTION:"):
+        symbol = symbol.upper()
+    else:
+        symbol = "SECTION:" + symbol[8:]
+    if not symbol or symbol == "SECTION:":
         raise ValueError("Пустой символ")
 
     with get_session() as db:
@@ -48,8 +58,15 @@ def add_symbol(list_id: str, symbol: str) -> dict:
 
 
 def remove_symbol(list_id: str, symbol: str) -> dict:
-    """Удаляет тикер из списка и перенумеровывает позиции."""
+    """Удаляет тикер из списка и перенумеровывает позиции.
+
+    Нормализация регистра та же, что и в add_symbol.
+    """
     symbol = symbol.strip()
+    if not symbol.upper().startswith("SECTION:"):
+        symbol = symbol.upper()
+    else:
+        symbol = "SECTION:" + symbol[8:]
     with get_session() as db:
             row = (
                 db.query(WatchlistItem)
@@ -76,7 +93,16 @@ def remove_symbol(list_id: str, symbol: str) -> dict:
 
 def set_order(list_id: str, symbols: list[str]) -> dict:
     """Заменяет содержимое/порядок списка на переданный (используется для drag&drop)."""
-    cleaned = [s.strip() for s in symbols if s and s.strip()]
+    cleaned = []
+    for s in symbols:
+        if not s or not s.strip():
+            continue
+        s = s.strip()
+        if not s.upper().startswith("SECTION:"):
+            s = s.upper()
+        else:
+            s = "SECTION:" + s[8:]
+        cleaned.append(s)
     with get_session() as db:
             old = db.query(WatchlistItem).filter(WatchlistItem.list_id == list_id).all()
             old_map = {r.symbol: r for r in old}
