@@ -1,7 +1,10 @@
 // === КОНСТАНТЫ ===
 window.STORAGE_KEY = 'multi_watchlists_state';
 window.DB_LISTS_KEY = 'watchlist_db_lists';   // соответствие id -> название пользовательских списков (локально)
-window.CACHE_KEY = 'price_cache';
+// Ключ кэша цен в localStorage. Должен совпадать с ключом, который использует
+// fetchTickerData (api.js), иначе очистка кэша (ручное/авто обновление) не будет
+// удалять реальные записи и цены будут устаревать.
+window.CACHE_KEY = 'ticker_cache';
 window.CACHE_DURATION = 120 * 1000;
 window.AUTO_REFRESH_INTERVAL = 120 * 1000;
 window.ALERTS_KEY = 'price_alerts';
