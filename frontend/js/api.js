@@ -17,11 +17,19 @@ window.fetchWithTimeout = function(url, options = {}, timeoutMs = 15000) {
 };
 
 // === ПОЛУЧЕНИЕ ДАННЫХ ПО ТИКЕРУ ===
+// Единый ключ кэша: берём константу CACHE_KEY из state.js (загружается раньше этого
+// файла). Фолбэк 'ticker_cache' — на случай загрузки api.js без state.js.
+window.CACHE_KEY = window.CACHE_KEY || 'ticker_cache';
+
+// Одноразовая миграция: раньше очистка кэша обращалась к устаревшему ключу
+// 'price_cache', из-за чего в localStorage могли остаться «осиротевшие» записи.
+try { localStorage.removeItem('price_cache'); } catch(e) {}
+
 window.fetchTickerData = async function(symbol) {
   if (symbol.startsWith('SECTION:')) return null;
 
   let cache = {};
-  try { cache = JSON.parse(localStorage.getItem('ticker_cache') || '{}'); } catch(e) {}
+  try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch(e) {}
   if (cache[symbol] && (Date.now() - cache[symbol].timestamp) < 120000) {
     return cache[symbol].data;
   }
@@ -35,7 +43,7 @@ window.fetchTickerData = async function(symbol) {
     const data = await response.json();
 
     cache[symbol] = { data, timestamp: Date.now() };
-    try { localStorage.setItem('ticker_cache', JSON.stringify(cache)); } catch(e) {}
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch(e) {}
 
     return data;
   } catch (e) {
