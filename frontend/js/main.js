@@ -1,11 +1,12 @@
 // === ИНИЦИАЛИЗАЦИЯ И СОБЫТИЯ ===
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   loadState();
   setupColumnHeaders();
   startAutoRefresh();
   requestNotificationPermission();
 
-  // Загружаем состав активного списка из БД (тикеры watchlist хранятся на сервере)
+  // Загружаем списки (названия и тикеры) из БД — источник истины не localStorage
+  await loadListNamesFromDb();
   syncListWithDb(appState.activeListId);
 
   const savedPage = sessionStorage.getItem('activePage') || 'home';
@@ -25,6 +26,9 @@ window.navigateTo = function(pageName) {
 
   if (pageName === 'watchlist') {
     render();
+    // При открытии раздела названия и тикеры списков подтягиваются из БД,
+    // а не из localStorage
+    loadListNamesFromDb().then(() => syncListWithDb(appState.activeListId));
     const currentList = getCurrentList();
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
       setTimeout(() => { if (!widget) createChart(currentList.activeSymbol); }, 100);
@@ -47,15 +51,28 @@ window.openSmartLabNews = function() {
 window.addNewList = async function() {
   const name = prompt('Введите название нового списка:', 'Новый список');
   if (!name) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
   const id = 'list_' + Date.now();
-  appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [] };
+
+  // Сначала гарантированно регистрируем список в БД (таблица watchlists),
+  // и только потом показываем его в UI. Так невозможно состояние, когда
+  // список «есть на экране», но в БД его нет или он сохранился с заглушкой.
+  log(`Сохраняю список "${trimmed}" в БД...`, 'info');
+  const saved = await createListInDb(id, trimmed);
+  if (!saved) {
+    log(`Не удалось создать список "${trimmed}" в БД — список не создан. Проверьте, что сервер запущен, и повторите.`, 'error');
+    return;
+  }
+
+  appState.lists[id] = { name: trimmed, tickers: [], activeSymbol: '', collapsedSections: [] };
   saveState();
   populateListSelector();
   switchList(id);
-  log(`Создан список: ${name}`, 'success');
+  log(`Создан список: ${trimmed} (сохранен в БД)`, 'success');
 };
 
-window.renameList = function() {
+window.renameList = async function() {
   if (appState.activeListId.startsWith('fav_')) {
     window.alert('Этот список управляется автоматически через флажки.');
     return;
@@ -66,23 +83,31 @@ window.renameList = function() {
   currentList.name = newName.trim();
   saveState();
   populateListSelector();
-  log(`Список переименован: "${currentList.name}"`, 'success');
+  // Сохраняем новое название в БД (watchlist.name) — при следующей загрузке
+  // раздела данные будут тянуться из БД
+  const saved = await renameListInDb(appState.activeListId, currentList.name);
+  if (saved) log(`Список переименован: "${currentList.name}" (название сохранено в БД)`, 'success');
+  else log(`Список переименован локально: "${currentList.name}", но сохранить название в БД не удалось`, 'error');
 };
 
-window.deleteCurrentList = function() {
+window.deleteCurrentList = async function() {
   if (appState.activeListId.startsWith('fav_')) {
     window.alert('Этот список управляется автоматически через флажки.');
     return;
   }
   const listIds = Object.keys(appState.lists);
   if (listIds.length <= 1) { window.alert('Нельзя удалить последний список!'); return; }
+  const deletedId = appState.activeListId;
   const currentName = getCurrentList().name;
   if (!confirm(`Удалить список "${currentName}"?`)) return;
-  delete appState.lists[appState.activeListId];
-  appState.activeListId = listIds.find(id => id !== appState.activeListId);
+  delete appState.lists[deletedId];
+  appState.activeListId = listIds.find(id => id !== deletedId);
   saveState();
   populateListSelector();
   render();
+  // Удаляем список и его тикеры из БД
+  await deleteListInDb(deletedId);
+  syncListWithDb(appState.activeListId);
   log(`Удален список: ${currentName}`, 'info');
 };
 
@@ -172,10 +197,17 @@ window.addTicker = async function() {
 window.addSection = async function() {
   const name = prompt('Введите название раздела:', 'Новый раздел');
   if (!name || !name.trim()) return;
+  const listId = appState.activeListId;
   const currentList = getCurrentList();
   currentList.tickers.push(`SECTION:${name.trim()}`);
   saveState(); render();
-  await saveOrderToDb(appState.activeListId, currentList.tickers); // порядок и разделы — в БД
+  // Гарантируем, что очередь записи имени списка в БД завершена ДО /order,
+  // иначе гонка create-vs-order могла создать строку-заглушку «Новый список».
+  await waitForListNameSaved(listId);
+  await saveOrderToDb(listId, currentList.tickers); // порядок и разделы — в БД
+  // Страховка: после любых изменений состава перечитываем название из БД.
+  // Если там всё же оказалась заглушка — syncListWithDb/repair её починят.
+  await syncListWithDb(listId);
   log(`Добавлен раздел: "${name.trim()}"`, 'success');
 };
 

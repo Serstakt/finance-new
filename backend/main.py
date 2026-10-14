@@ -101,16 +101,79 @@ async def remove_position_endpoint(symbol: str):
 
 @app.get("/api/watchlist/{list_id}")
 async def get_watchlist(list_id: str):
-    """Возвращает список тикеров из БД в порядке позиции."""
+    """Возвращает список тикеров из БД в порядке позиции + название списка из БД.
+
+    Если в watchlist_items есть элементы, а строки в watchlists нет (список
+    появился до того, как названия стали храниться в БД, или не сохранилось
+    название) — запись создаётся автоматически, чтобы таблицы были согласованы.
+    """
     items = watchlist_service.get_list_symbols(list_id)
-    return {"list_id": list_id, "symbols": [i["symbol"] for i in items]}
+    name = watchlist_service.get_name(list_id)
+    if name is None and items:
+        watchlist_service.ensure_list(list_id)
+        name = watchlist_service.get_name(list_id)
+    return {
+        "list_id": list_id,
+        "name": name,
+        "symbols": [i["symbol"] for i in items],
+    }
+
+
+@app.get("/api/watchlists")
+async def get_watchlists():
+    """Возвращает все списки (id -> name) с названиями из БД."""
+    return {"lists": watchlist_service.get_all_names()}
+
+
+@app.post("/api/watchlist/create")
+async def create_watchlist(payload: schemas.WatchlistRename):
+    """Создаёт список в таблице watchlists с указанным названием.
+
+    Вызывается фронтендом сразу при создании нового списка, чтобы запись
+    появилась в БД немедленно (а не только после добавления первого тикера).
+    Если список уже существует — обновляет его название (upsert).
+    """
+    try:
+        return watchlist_service.set_name(payload.list_id, payload.name)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/watchlist/repair")
+async def repair_watchlists(payload: schemas.WatchlistRepair):
+    """Чинит строки-заглушки в watchlists («Новый список», list_<timestamp>).
+
+    Фронтенд вызывает при загрузке раздела WATCHLIST: если локально у
+    списка настоящее имя, а в БД заглушка — перезаписываем. Настоящие
+    названия в БД не трогаем. Возвращает актуальные {id: name} после починки.
+    """
+    return {"lists": watchlist_service.repair_names(payload.names)}
+
+
+@app.post("/api/watchlist/rename")
+async def rename_watchlist(payload: schemas.WatchlistRename):
+    """Переименовывает список: название сохраняется в БД (watchlists.name)."""
+    try:
+        return watchlist_service.set_name(payload.list_id, payload.name)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.delete("/api/watchlist/{list_id}")
+async def delete_watchlist(list_id: str):
+    """Удаляет список и его элементы из БД."""
+    return watchlist_service.delete_list(list_id)
 
 
 @app.post("/api/watchlist/add")
 async def add_watchlist_ticker(payload: schemas.WatchlistAdd):
-    """Добавляет тикер в watchlist (сохраняется в БД)."""
+    """Добавляет тикер в watchlist (сохраняется в БД).
+
+    list_name (если передан) используется, чтобы при автосоздании строки в
+    watchlists сразу записывалось настоящее название списка с UI.
+    """
     try:
-        return watchlist_service.add_symbol(payload.list_id, payload.symbol)
+        return watchlist_service.add_symbol(payload.list_id, payload.symbol, payload.list_name)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 
@@ -127,7 +190,7 @@ async def remove_watchlist_ticker(payload: schemas.WatchlistRemove):
 @app.post("/api/watchlist/order")
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
     """Сохраняет новый порядок/состав списка (drag&drop, разделы)."""
-    return watchlist_service.set_order(payload.list_id, payload.symbols)
+    return watchlist_service.set_order(payload.list_id, payload.symbols, payload.list_name)
 
 
 # =============================================================================

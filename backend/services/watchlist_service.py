@@ -5,9 +5,155 @@
 чтобы сохранять порядок и группировку.
 """
 from backend.database.database import Base, engine, get_session, safe_create_all
-from backend.database.models import WatchlistItem
+from backend.database.models import Watchlist, WatchlistItem
 
 safe_create_all()
+
+
+def get_name(list_id: str) -> str | None:
+    """Возвращает название списка из таблицы watchlists (или None, если списка нет)."""
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        return row.name if row else None
+
+
+def get_all_names() -> dict[str, str]:
+    """Возвращает все названия списков {id: name} из БД."""
+    with get_session() as db:
+        rows = db.query(Watchlist).all()
+        return {r.id: r.name for r in rows}
+
+
+# Название-заглушка, которое ставится в watchlists.name, когда список
+# автосоздаётся по данным из watchlist_items (без известного имени с UI).
+PLACEHOLDER_NAME = "Новый список"
+
+
+def _is_placeholder(name: str | None, list_id: str) -> bool:
+    """Является ли название заглушкой (не настоящим именем с UI)?
+
+    ВАЖНО: к заглушкам НЕ относится дефолтное имя SQLAlchemy-колонки
+    («Основной») и любые настоящие пользовательские имена — иначе старый код
+    мог перезаписать настоящее имя списков, созданных до появления таблицы.
+    """
+    if not name:
+        return True
+    n = name.strip()
+    return n == "" or n == PLACEHOLDER_NAME or n == list_id
+
+
+def ensure_list(list_id: str, default_name: str | None = None) -> None:
+    """Гарантирует, что в таблице watchlists есть строка для list_id.
+
+    Используется при добавлении тикеров/порядка: если списка ещё нет в БД
+    (например, фронтенд не успел сохранить название), запись создаётся
+    автоматически, чтобы watchlist_items и watchlists были согласованы.
+
+    Если default_name передан и непустой — он используется как название новой
+    записи; иначе ставится заглушка «Новый список» (никогда не сам list_id).
+
+    ЗАЩИТА ОТ ПЕРЕБИВАНИЯ ИМЕНИ (главный баг «в БД Новый список вместо
+    моего имени»): порядок операций такой:
+      1) POST /create (set_name) пишет настоящее имя;
+      2) затем любой /add или /order вызывает ensure_list.
+    Если на шаге 2 строка уже существует с НАСТОЯЩИМ именем — она не
+    трогается вообще, даже если default_name пуст или это заглушка.
+    Заглушка из прошлых версий («Новый список», list_<timestamp>)
+    перезаписывается только настоящим default_name.
+    """
+    if not list_id or list_id.startswith("fav_"):
+        return
+    new_name = (default_name or "").strip()
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if not row:
+            db.add(Watchlist(id=list_id, name=new_name or PLACEHOLDER_NAME))
+            db.commit()
+        elif new_name and not _is_placeholder(new_name, list_id) and _is_placeholder(row.name, list_id):
+            # достраиваем настоящее название поверх заглушки, созданной
+            # предыдущим запросом (гонка create/add)
+            row.name = new_name
+            db.commit()
+
+
+def set_name(list_id: str, name: str) -> dict:
+    """Создаёт/обновляет название списка в таблице watchlists.
+
+    Если запись уже существует, но её название — заглушка ("Новый список"),
+    созданная ensure_list при добавлении тикера до сохранения названия,
+    она перезаписывается настоящим названием с фронтенда.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Пустое название списка")
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if row:
+            row.name = name
+        else:
+            db.add(Watchlist(id=list_id, name=name))
+        db.commit()
+        return {"status": "ok", "list_id": list_id, "name": name}
+
+
+def repair_name(list_id: str, name: str) -> bool:
+    """Чинит «осиротевшие»/заглушечные записи в таблице watchlists.
+
+    - Если строки для list_id нет — создаёт её с настоящим названием.
+    - Если там заглушка ("Новый список" / list_<timestamp> из ensure_list) —
+      заменяет её на настоящее название с фронтенда.
+    - Если там уже настоящее имя — НЕ трогает (источник истины — переименование).
+
+    Возвращает True, если что-то было исправлено.
+    """
+    name = (name or "").strip()
+    if not name or not list_id or list_id.startswith("fav_"):
+        return False
+    # само пользовательское имя не должно быть заглушкой
+    if _is_placeholder(name, list_id):
+        return False
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if row is None:
+            db.add(Watchlist(id=list_id, name=name))
+            db.commit()
+            return True
+        if _is_placeholder(row.name, list_id):
+            row.name = name
+            db.commit()
+            return True
+        return False
+
+
+def repair_names(names: dict[str, str]) -> dict[str, str]:
+    """Массовая починка заглушек: {list_id: настоящее_название}.
+
+    Используется эндпоинтом POST /api/watchlist/repair, чтобы залечить
+    строки вида «Новый список»/list_<timestamp>, созданные гонкой
+    add-before-create. Настоящие имена НЕ перезаписываются.
+    Возвращает актуальные названия после починки.
+    """
+    for list_id, name in (names or {}).items():
+        repair_name(str(list_id), str(name))
+    return get_all_names()
+
+
+def delete_list(list_id: str) -> dict:
+    """Удаляет список и его элементы из БД."""
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        existed = bool(row)
+        if row:
+            db.delete(row)
+        items = (
+            db.query(WatchlistItem)
+            .filter(WatchlistItem.list_id == list_id)
+            .all()
+        )
+        for item in items:
+            db.delete(item)
+        db.commit()
+        return {"status": "ok", "list_id": list_id}
 
 
 def get_list_symbols(list_id: str) -> list[dict]:
@@ -22,14 +168,19 @@ def get_list_symbols(list_id: str) -> list[dict]:
             return [{"symbol": r.symbol, "position": r.position} for r in rows]
 
 
-def add_symbol(list_id: str, symbol: str) -> dict:
+def add_symbol(list_id: str, symbol: str, list_name: str | None = None) -> dict:
     """Добавляет тикер в конец списка. Повтор не добавляется (идемпотентно).
+
+    Если списка ещё нет в таблице watchlists, он создаётся там автоматически.
+    Если передан list_name — новая запись сразу получает настоящее название
+    (иначе — заглушку «Новый список», которую перезапишет следующий create).
 
     Тикеры нормализуются к верхнему регистру (как в moex_service/portfolio_service),
     чтобы "sber" и "SBER" не создавали дубли записей.
     У заголовков разделов SECTION:... нормализуется только префикс — название
     раздела (часть после ':') сохраняется как ввёл пользователь.
     """
+    ensure_list(list_id, list_name)
     symbol = symbol.strip()
     if not symbol.upper().startswith("SECTION:"):
         symbol = symbol.upper()
@@ -91,7 +242,7 @@ def remove_symbol(list_id: str, symbol: str) -> dict:
             return {"status": "ok", "list_id": list_id, "symbol": symbol}
 
 
-def set_order(list_id: str, symbols: list[str]) -> dict:
+def set_order(list_id: str, symbols: list[str], list_name: str | None = None) -> dict:
     """Заменяет содержимое/порядок списка на переданный (используется для drag&drop)."""
     cleaned = []
     for s in symbols:
@@ -103,6 +254,7 @@ def set_order(list_id: str, symbols: list[str]) -> dict:
         else:
             s = "SECTION:" + s[8:]
         cleaned.append(s)
+    ensure_list(list_id, list_name)
     with get_session() as db:
             old = db.query(WatchlistItem).filter(WatchlistItem.list_id == list_id).all()
             old_map = {r.symbol: r for r in old}

@@ -22,6 +22,10 @@ class PositionCreate(BaseModel):
 class WatchlistAdd(BaseModel):
     list_id: str = "default"
     symbol: str
+    # Название списка (опционально): передаётся фронтендом, чтобы при добавлении
+    # тикера в ещё не созданный список запись в watchlists появлялась сразу с
+    # настоящим именем, а не с заглушкой (закрывает гонку create/add).
+    list_name: str | None = None
 
 
 class WatchlistRemove(BaseModel):
@@ -32,4 +36,22 @@ class WatchlistRemove(BaseModel):
 class WatchlistOrder(BaseModel):
     list_id: str = "default"
     symbols: List[str]
+    # См. WatchlistAdd: настоящее название списка при автосоздании строки в watchlists.
+    list_name: str | None = None
+
+
+class WatchlistRename(BaseModel):
+    list_id: str = "default"
+    name: str
+
+
+class WatchlistRepair(BaseModel):
+    """Массовая починка названий: {list_id: настоящее_название}.
+
+    Фронтенд вызывает POST /api/watchlist/repair при загрузке раздела
+    WATCHLIST, чтобы залечить строки-заглушки («Новый список»,
+    list_<timestamp>), созданные гонкой add-before-create.
+    Настоящие пользовательские названия не перезаписываются.
+    """
+    names: Dict[str, str]
 

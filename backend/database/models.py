@@ -20,3 +20,12 @@ class WatchlistItem(Base):
     symbol = Column(String, nullable=False, index=True)
     position = Column(Integer, nullable=False, default=0)
     added_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Watchlist(Base):
+    """Список watchlist: id -> название (хранится в БД, а не в localStorage)."""
+    __tablename__ = "watchlists"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False, default="Основной")
+    created_at = Column(DateTime, default=datetime.utcnow)
