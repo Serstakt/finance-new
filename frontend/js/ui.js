@@ -255,27 +255,6 @@ window.render = async function() {
   }
 };
 
-window.createChart = function(symbol) {
-  const chartDiv = document.getElementById('tradingview_chart');
-  if (!chartDiv) return;
-  if (typeof TradingView === 'undefined') {
-    chartDiv.innerHTML = '<div class="error-msg">⚠️ Ошибка загрузки скрипта TradingView.</div>';
-    return;
-  }
-  if (widget && widgetReady) {
-    widget.setSymbol(symbol, 'D', () => {});
-    return;
-  }
-  chartDiv.innerHTML = '';
-  widget = new TradingView.widget({
-    "autosize": true, "symbol": symbol, "interval": "D", "timezone": "Etc/UTC",
-    "theme": "dark", "style": "1", "locale": "ru", "toolbar_bg": "#1e222d",
-    "enable_publishing": false, "hide_top_toolbar": false, "hide_legend": false,
-    "save_image": false, "container_id": "tradingview_chart",
-    "onready": () => { widgetReady = true; }
-  });
-};
-
 // === АЛЕРТЫ UI ===
 window.updateBellIconStatus = function(symbol, status) {
   const items = document.querySelectorAll('.ticker-item');
