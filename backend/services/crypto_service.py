@@ -134,13 +134,39 @@ _negative_cache: dict[str, float] = {}                # symbol -> ts неуда�
 _QUOTE_SUFFIXES = ("USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "EUR", "TRY", "BTC", "ETH")
 
 
+# Binance-префиксы объёма: '1000SATS' -> базовый символ 'SATS' (id: 1000sats-ordinals)
+_VOL_PREFIXES = ("1000000", "100000", "10000", "1000")
+
+
 def _base_symbol(symbol: str) -> str:
-    """'SOLUSDT' -> 'SOL'; если суффикс котировки не отрезался — возвращаем как есть."""
+    """'SOLUSDT' -> 'SOL', '1000SATSUSDT' -> 'SATS';
+    если суффикс котировки не отрезался — возвращаем как есть."""
     s = symbol.upper().strip()
     for q in _QUOTE_SUFFIXES:
         if s.endswith(q) and len(s) > len(q):
-            return s[: -len(q)]
+            s = s[: -len(q)]
+            break
+    for p in _VOL_PREFIXES:
+        if s.startswith(p) and len(s) > len(p):
+            return s[len(p):]
     return s
+
+
+def _symbol_variants(symbol: str) -> list[str]:
+    """Варианты базового символа для резолвинга: с префиксом объёма и без.
+    '1000SATSUSDT' -> ['SATS', '1000SATS'] (CoinGecko любит оба варианта)."""
+    s = symbol.upper().strip()
+    for q in _QUOTE_SUFFIXES:
+        if s.endswith(q) and len(s) > len(q):
+            s = s[: -len(q)]
+            break
+    variants = [s]
+    for p in _VOL_PREFIXES:
+        if s.startswith(p) and len(s) > len(p):
+            variants.append(s[len(p):])
+            break
+    # дедупликация с сохранением порядка
+    return list(dict.fromkeys(variants))
 
 
 async def _get(session: aiohttp.ClientSession, path: str, params: dict | None = None):
@@ -239,40 +265,48 @@ async def _resolve_via_search(session: aiohttp.ClientSession, sym: str) -> Optio
 # Основной резолвер: символ пары -> coin_gecko_id
 # ---------------------------------------------------------------------------
 async def resolve_coin_id(session: aiohttp.ClientSession, symbol: str) -> Optional[str]:
-    sym = _base_symbol(symbol)
-    if not sym:
-        return None
+    variants = _symbol_variants(symbol)   # ['SATS', '1000SATS'] для 1000SATSUSDT
+    primary = variants[0]
 
     # негативный кэш: недавно не нашли — не долбим API
-    neg_ts = _negative_cache.get(sym)
+    neg_ts = _negative_cache.get(primary)
     if neg_ts and time.time() - neg_ts < NEGATIVE_TTL:
         return None
 
-    # 1. статический словарь
-    coin_id = STATIC_MAP.get(sym)
-    if coin_id:
-        return coin_id
+    for sym in variants:
+        # 1. статический словарь
+        coin_id = STATIC_MAP.get(sym)
+        if coin_id:
+            return coin_id
 
-    # 2. кэш /coins/list
+    # 2. кэш /coins/list (пробуем каждый вариант символа)
     by_symbol = await _ensure_coins_list(session)
     if by_symbol:
-        picked = _pick_from_candidates(by_symbol.get(sym, []), sym)
-        if picked:
-            return picked
+        for sym in variants:
+            picked = _pick_from_candidates(by_symbol.get(sym, []), sym)
+            if picked:
+                return picked
 
     # 3. /search
-    coin_id = await _resolve_via_search(session, sym)
-    if coin_id:
-        return coin_id
+    for sym in variants:
+        coin_id = await _resolve_via_search(session, sym)
+        if coin_id:
+            return coin_id
 
     # 4. ленивая гипотеза: id == символ, проверяем прямым запросом markets
-    guess = sym.lower()
-    data = await _get(session, "/coins/markets", {"vs_currency": "usd", "ids": guess})
-    if isinstance(data, list) and data and data[0].get("id") == guess:
-        _markets_cache[guess] = {"ts": time.time(), "data": data[0]}
-        return guess
+    guesses = list(dict.fromkeys(v.lower() for v in variants))
+    data = await _get(session, "/coins/markets", {
+        "vs_currency": "usd", "ids": ",".join(guesses),
+        "price_change_percentage": "24h,7d,30d,1y",
+    })
+    if isinstance(data, list):
+        for item in data:
+            gid = item.get("id")
+            if gid in guesses and not _is_probably_delisted(item):
+                _markets_cache[gid] = {"ts": time.time(), "data": item}
+                return gid
 
-    _negative_cache[sym] = time.time()
+    _negative_cache[primary] = time.time()
     return None
 
 
