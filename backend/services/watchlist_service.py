@@ -30,19 +30,27 @@ def ensure_list(list_id: str, default_name: str | None = None) -> None:
     Используется при добавлении тикеров/порядка: если списка ещё нет в БД
     (например, фронтенд не успел сохранить название), запись создаётся
     автоматически, чтобы watchlist_items и watchlists были согласованы.
-    Существующее название не перезаписывается.
 
     Если default_name передан и непустой — он используется как название новой
-    записи; иначе название не выдумывается (не может быть list_<timestamp>),
-    а остаётся заглушкой до первой синхронизации с фронтендом.
+    записи; иначе ставится заглушка «Новый список» (никогда не сам list_id).
+
+    ВАЖНО: существующая заглушка («Новый список» или list_<id>) тоже
+    перезаписывается переданным default_name. Это закрывает гонку на
+    фронтенде: addTicker вызывает /api/watchlist/add раньше, чем завершается
+    POST /api/watchlist/create из addNewList — без этого порядка ensure_list
+    создал бы строку с заглушкой, а create её бы не заменил.
     """
     if not list_id or list_id.startswith("fav_"):
         return
-    name = (default_name or "").strip() or "Новый список"
+    new_name = (default_name or "").strip()
     with get_session() as db:
         row = db.get(Watchlist, list_id)
         if not row:
-            db.add(Watchlist(id=list_id, name=name))
+            db.add(Watchlist(id=list_id, name=new_name or "Новый список"))
+            db.commit()
+        elif new_name and row.name in ("Новый список", list_id):
+            # достраиваем название поверх заглушки, созданной предыдущим запросом
+            row.name = new_name
             db.commit()
 
 
@@ -122,19 +130,19 @@ def get_list_symbols(list_id: str) -> list[dict]:
             return [{"symbol": r.symbol, "position": r.position} for r in rows]
 
 
-def add_symbol(list_id: str, symbol: str) -> dict:
+def add_symbol(list_id: str, symbol: str, list_name: str | None = None) -> dict:
     """Добавляет тикер в конец списка. Повтор не добавляется (идемпотентно).
 
-    Если списка ещё нет в таблице watchlists, он создаётся там автоматически
-    (с названием по умолчанию), чтобы каждая строка watchlist_items имела
-    соответствующую запись в watchlists.
+    Если списка ещё нет в таблице watchlists, он создаётся там автоматически.
+    Если передан list_name — новая запись сразу получает настоящее название
+    (иначе — заглушку «Новый список», которую перезапишет следующий create).
 
     Тикеры нормализуются к верхнему регистру (как в moex_service/portfolio_service),
     чтобы "sber" и "SBER" не создавали дубли записей.
     У заголовков разделов SECTION:... нормализуется только префикс — название
     раздела (часть после ':') сохраняется как ввёл пользователь.
     """
-    ensure_list(list_id)
+    ensure_list(list_id, list_name)
     symbol = symbol.strip()
     if not symbol.upper().startswith("SECTION:"):
         symbol = symbol.upper()
@@ -196,7 +204,7 @@ def remove_symbol(list_id: str, symbol: str) -> dict:
             return {"status": "ok", "list_id": list_id, "symbol": symbol}
 
 
-def set_order(list_id: str, symbols: list[str]) -> dict:
+def set_order(list_id: str, symbols: list[str], list_name: str | None = None) -> dict:
     """Заменяет содержимое/порядок списка на переданный (используется для drag&drop)."""
     cleaned = []
     for s in symbols:
@@ -208,7 +216,7 @@ def set_order(list_id: str, symbols: list[str]) -> dict:
         else:
             s = "SECTION:" + s[8:]
         cleaned.append(s)
-    ensure_list(list_id)
+    ensure_list(list_id, list_name)
     with get_session() as db:
             old = db.query(WatchlistItem).filter(WatchlistItem.list_id == list_id).all()
             old_map = {r.symbol: r for r in old}

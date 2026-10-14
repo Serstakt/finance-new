@@ -156,9 +156,13 @@ async def delete_watchlist(list_id: str):
 
 @app.post("/api/watchlist/add")
 async def add_watchlist_ticker(payload: schemas.WatchlistAdd):
-    """Добавляет тикер в watchlist (сохраняется в БД)."""
+    """Добавляет тикер в watchlist (сохраняется в БД).
+
+    list_name (если передан) используется, чтобы при автосоздании строки в
+    watchlists сразу записывалось настоящее название списка с UI.
+    """
     try:
-        return watchlist_service.add_symbol(payload.list_id, payload.symbol)
+        return watchlist_service.add_symbol(payload.list_id, payload.symbol, payload.list_name)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 
@@ -175,7 +179,7 @@ async def remove_watchlist_ticker(payload: schemas.WatchlistRemove):
 @app.post("/api/watchlist/order")
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
     """Сохраняет новый порядок/состав списка (drag&drop, разделы)."""
-    return watchlist_service.set_order(payload.list_id, payload.symbols)
+    return watchlist_service.set_order(payload.list_id, payload.symbols, payload.list_name)
 
 
 # =============================================================================

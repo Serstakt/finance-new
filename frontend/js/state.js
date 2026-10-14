@@ -100,7 +100,7 @@ window.syncListWithDb = async function(listId) {
       await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list_id: listId, symbols: list.tickers })
+        body: JSON.stringify({ list_id: listId, symbols: list.tickers, list_name: list.name })
       }, 15000);
       if (typeof log === 'function') log(`Локальный список "${list.name}" мигрирован в БД (${list.tickers.length} эл.)`, 'info');
       saveState();
@@ -236,11 +236,15 @@ window.deleteListInDb = async function(listId) {
 
 window.addTickerToDb = async function(listId, symbol) {
   if (!listId || listId.startsWith('fav_')) return false;
+  // Передаём и название списка: если строки в watchlists ещё нет (например,
+  // create не дошёл до БД), /api/watchlist/add создаст её сразу с настоящим
+  // именем, а не с заглушкой.
+  const listName = (appState.lists[listId] && appState.lists[listId].name) || null;
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/add`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ list_id: listId, symbol: symbol })
+      body: JSON.stringify({ list_id: listId, symbol: symbol, list_name: listName })
     }, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     if (typeof log === 'function') log(`${symbol} сохранен в БД`, 'success');
@@ -271,11 +275,12 @@ window.removeTickerFromDb = async function(listId, symbol) {
 
 window.saveOrderToDb = async function(listId, symbols) {
   if (!listId || listId.startsWith('fav_')) return;
+  const listName = (appState.lists[listId] && appState.lists[listId].name) || null;
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ list_id: listId, symbols: symbols })
+      body: JSON.stringify({ list_id: listId, symbols: symbols, list_name: listName })
     }, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e) {

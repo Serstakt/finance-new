@@ -51,17 +51,25 @@ window.openSmartLabNews = function() {
 window.addNewList = async function() {
   const name = prompt('Введите название нового списка:', 'Новый список');
   if (!name) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
   const id = 'list_' + Date.now();
-  appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [] };
+
+  // Сначала гарантированно регистрируем список в БД (таблица watchlists),
+  // и только потом показываем его в UI. Так невозможно состояние, когда
+  // список «есть на экране», но в БД его нет или он сохранился с заглушкой.
+  log(`Сохраняю список "${trimmed}" в БД...`, 'info');
+  const saved = await createListInDb(id, trimmed);
+  if (!saved) {
+    log(`Не удалось создать список "${trimmed}" в БД — список не создан. Проверьте, что сервер запущен, и повторите.`, 'error');
+    return;
+  }
+
+  appState.lists[id] = { name: trimmed, tickers: [], activeSymbol: '', collapsedSections: [] };
   saveState();
   populateListSelector();
   switchList(id);
-  log(`Создан список: ${name}`, 'success');
-  // Название нового списка сохраняем в БД (таблица watchlists).
-  // Функция делает повторные попытки и проверяет результат через GET.
-  const saved = await createListInDb(id, name);
-  if (saved) log(`Список "${name}" сохранен в БД`, 'success');
-  else log(`Список "${name}" создан локально, но сохранить его в БД не удалось — попробуйте переименовать список (Rename)`, 'error');
+  log(`Создан список: ${trimmed} (сохранен в БД)`, 'success');
 };
 
 window.renameList = async function() {
