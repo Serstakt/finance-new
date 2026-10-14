@@ -101,9 +101,34 @@ async def remove_position_endpoint(symbol: str):
 
 @app.get("/api/watchlist/{list_id}")
 async def get_watchlist(list_id: str):
-    """Возвращает список тикеров из БД в порядке позиции."""
+    """Возвращает список тикеров из БД в порядке позиции + название списка из БД."""
     items = watchlist_service.get_list_symbols(list_id)
-    return {"list_id": list_id, "symbols": [i["symbol"] for i in items]}
+    return {
+        "list_id": list_id,
+        "name": watchlist_service.get_name(list_id),
+        "symbols": [i["symbol"] for i in items],
+    }
+
+
+@app.get("/api/watchlists")
+async def get_watchlists():
+    """Возвращает все списки (id -> name) с названиями из БД."""
+    return {"lists": watchlist_service.get_all_names()}
+
+
+@app.post("/api/watchlist/rename")
+async def rename_watchlist(payload: schemas.WatchlistRename):
+    """Переименовывает список: название сохраняется в БД (watchlists.name)."""
+    try:
+        return watchlist_service.set_name(payload.list_id, payload.name)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.delete("/api/watchlist/{list_id}")
+async def delete_watchlist(list_id: str):
+    """Удаляет список и его элементы из БД."""
+    return watchlist_service.delete_list(list_id)
 
 
 @app.post("/api/watchlist/add")

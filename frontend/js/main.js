@@ -1,11 +1,12 @@
 // === ИНИЦИАЛИЗАЦИЯ И СОБЫТИЯ ===
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   loadState();
   setupColumnHeaders();
   startAutoRefresh();
   requestNotificationPermission();
 
-  // Загружаем состав активного списка из БД (тикеры watchlist хранятся на сервере)
+  // Загружаем списки (названия и тикеры) из БД — источник истины не localStorage
+  await loadListNamesFromDb();
   syncListWithDb(appState.activeListId);
 
   const savedPage = sessionStorage.getItem('activePage') || 'home';
@@ -25,6 +26,9 @@ window.navigateTo = function(pageName) {
 
   if (pageName === 'watchlist') {
     render();
+    // При открытии раздела названия и тикеры списков подтягиваются из БД,
+    // а не из localStorage
+    loadListNamesFromDb().then(() => syncListWithDb(appState.activeListId));
     const currentList = getCurrentList();
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
       setTimeout(() => { if (!widget) createChart(currentList.activeSymbol); }, 100);
@@ -52,10 +56,13 @@ window.addNewList = async function() {
   saveState();
   populateListSelector();
   switchList(id);
+  // Название нового списка сохраняем в БД (таблица watchlists), а не только в localStorage
+  await renameListInDb(id, name);
+  populateListSelector();
   log(`Создан список: ${name}`, 'success');
 };
 
-window.renameList = function() {
+window.renameList = async function() {
   if (appState.activeListId.startsWith('fav_')) {
     window.alert('Этот список управляется автоматически через флажки.');
     return;
@@ -66,23 +73,31 @@ window.renameList = function() {
   currentList.name = newName.trim();
   saveState();
   populateListSelector();
-  log(`Список переименован: "${currentList.name}"`, 'success');
+  // Сохраняем новое название в БД (watchlist.name) — при следующей загрузке
+  // раздела данные будут тянуться из БД
+  const saved = await renameListInDb(appState.activeListId, currentList.name);
+  if (saved) log(`Список переименован: "${currentList.name}" (название сохранено в БД)`, 'success');
+  else log(`Список переименован локально: "${currentList.name}", но сохранить название в БД не удалось`, 'error');
 };
 
-window.deleteCurrentList = function() {
+window.deleteCurrentList = async function() {
   if (appState.activeListId.startsWith('fav_')) {
     window.alert('Этот список управляется автоматически через флажки.');
     return;
   }
   const listIds = Object.keys(appState.lists);
   if (listIds.length <= 1) { window.alert('Нельзя удалить последний список!'); return; }
+  const deletedId = appState.activeListId;
   const currentName = getCurrentList().name;
   if (!confirm(`Удалить список "${currentName}"?`)) return;
-  delete appState.lists[appState.activeListId];
-  appState.activeListId = listIds.find(id => id !== appState.activeListId);
+  delete appState.lists[deletedId];
+  appState.activeListId = listIds.find(id => id !== deletedId);
   saveState();
   populateListSelector();
   render();
+  // Удаляем список и его тикеры из БД
+  await deleteListInDb(deletedId);
+  syncListWithDb(appState.activeListId);
   log(`Удален список: ${currentName}`, 'info');
 };
 

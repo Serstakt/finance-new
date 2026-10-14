@@ -1,6 +1,9 @@
 // === КОНСТАНТЫ ===
 window.STORAGE_KEY = 'multi_watchlists_state';
-window.DB_LISTS_KEY = 'watchlist_db_lists';   // соответствие id -> название пользовательских списков (локально)
+// Устаревший ключ: раньше названия пользовательских списков хранились в localStorage.
+// Теперь они живут в БД (таблица watchlists) и загружаются через /api/watchlists.
+window.DB_LISTS_KEY = 'watchlist_db_lists';
+try { localStorage.removeItem(window.DB_LISTS_KEY); } catch(e) {}
 // Ключ кэша цен в localStorage. Должен совпадать с ключом, который использует
 // fetchTickerData (api.js), иначе очистка кэша (ручное/авто обновление) не будет
 // удалять реальные записи и цены будут устаревать.
@@ -63,15 +66,9 @@ window.loadState = function() {
     if (typeof trimAlertsHistory === 'function') trimAlertsHistory();
   } catch (e) { console.error('Ошибка загрузки состояния:', e); }
 
-  // Пользовательские списки: названия хранятся локально, тикеры — в БД
-  try {
-    const dbLists = JSON.parse(localStorage.getItem(DB_LISTS_KEY) || '{}');
-    for (const [id, name] of Object.entries(dbLists)) {
-      if (!appState.lists[id]) {
-        appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [] };
-      }
-    }
-  } catch(e) {}
+  // Пользовательские списки: названия хранятся в БД (таблица watchlists),
+  // поэтому здесь они не подтягиваются из localStorage — это делает
+  // loadListNamesFromDb() при загрузке страницы/раздела WATCHLIST.
 };
 
 window.saveState = function() {
@@ -80,6 +77,7 @@ window.saveState = function() {
 };
 
 // Синхронизация состава списка с бэкендом (БД).
+// Название списка тоже берётся из БД (watchlists.name), а не из localStorage.
 window.syncListWithDb = async function(listId) {
   if (!listId || listId.startsWith('fav_')) return;
   try {
@@ -90,14 +88,23 @@ window.syncListWithDb = async function(listId) {
     if (!list) return;
     const dbSymbols = data.symbols || [];
 
+    // Название списка тянем из БД: оно является источником истины при загрузке раздела
+    if (typeof data.name === 'string' && data.name.trim() !== '' && data.name !== list.name) {
+      list.name = data.name;
+    }
+
     // Миграция: в БД пусто, а локально есть тикеры (старый watchlist) — загружаем их в БД
     if (dbSymbols.length === 0 && list.tickers.length > 0) {
+      // Заодно сохраняем текущее название в БД, чтобы дальше оно жило на сервере
+      await window.renameListInDb(listId, list.name);
       await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ list_id: listId, symbols: list.tickers })
       }, 15000);
       if (typeof log === 'function') log(`Локальный список "${list.name}" мигрирован в БД (${list.tickers.length} эл.)`, 'info');
+      saveState();
+      if (typeof populateListSelector === 'function') populateListSelector();
       return;
     }
 
@@ -108,6 +115,68 @@ window.syncListWithDb = async function(listId) {
     if (typeof log === 'function') log(`Список "${list.name}" загружен из БД (${list.tickers.length} эл.)`, 'info');
   } catch (e) {
     if (typeof log === 'function') log('Не удалось загрузить watchlist из БД: ' + e.message, 'error');
+  }
+};
+
+// Названия всех пользовательских списков подтягиваются из БД (таблица watchlists)
+// и создают отсутствующие списки локально — вместо хранения в localStorage.
+window.loadListNamesFromDb = async function() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlists`, {}, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const names = data.lists || {};
+    let changed = false;
+    for (const [id, name] of Object.entries(names)) {
+      if (id.startsWith('fav_')) continue;
+      if (!appState.lists[id]) {
+        appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [] };
+        changed = true;
+      } else if (name && appState.lists[id].name !== name) {
+        // источник истины — БД, а не localStorage
+        appState.lists[id].name = name;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveState();
+      if (typeof populateListSelector === 'function') populateListSelector();
+    }
+    return names;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось загрузить названия списков из БД: ' + e.message, 'error');
+    return {};
+  }
+};
+
+// Сохраняет/обновляет название списка в БД (строка watchlists.name).
+window.renameListInDb = async function(listId, name) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, name: name })
+    }, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось сохранить название списка в БД: ' + e.message, 'error');
+    return false;
+  }
+};
+
+window.deleteListInDb = async function(listId) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, { method: 'DELETE' }, 15000
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось удалить список из БД: ' + e.message, 'error');
+    return false;
   }
 };
 

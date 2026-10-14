@@ -5,9 +5,56 @@
 чтобы сохранять порядок и группировку.
 """
 from backend.database.database import Base, engine, get_session, safe_create_all
-from backend.database.models import WatchlistItem
+from backend.database.models import Watchlist, WatchlistItem
 
 safe_create_all()
+
+
+def get_name(list_id: str) -> str | None:
+    """Возвращает название списка из таблицы watchlists (или None, если списка нет)."""
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        return row.name if row else None
+
+
+def get_all_names() -> dict[str, str]:
+    """Возвращает все названия списков {id: name} из БД."""
+    with get_session() as db:
+        rows = db.query(Watchlist).all()
+        return {r.id: r.name for r in rows}
+
+
+def set_name(list_id: str, name: str) -> dict:
+    """Создаёт/обновляет название списка в таблице watchlists."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Пустое название списка")
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if row:
+            row.name = name
+        else:
+            db.add(Watchlist(id=list_id, name=name))
+        db.commit()
+        return {"status": "ok", "list_id": list_id, "name": name}
+
+
+def delete_list(list_id: str) -> dict:
+    """Удаляет список и его элементы из БД."""
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        existed = bool(row)
+        if row:
+            db.delete(row)
+        items = (
+            db.query(WatchlistItem)
+            .filter(WatchlistItem.list_id == list_id)
+            .all()
+        )
+        for item in items:
+            db.delete(item)
+        db.commit()
+        return {"status": "ok", "list_id": list_id}
 
 
 def get_list_symbols(list_id: str) -> list[dict]:

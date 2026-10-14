@@ -33,3 +33,8 @@ class WatchlistOrder(BaseModel):
     list_id: str = "default"
     symbols: List[str]
 
+
+class WatchlistRename(BaseModel):
+    list_id: str = "default"
+    name: str
+
