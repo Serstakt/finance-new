@@ -157,16 +157,10 @@ window.render = async function() {
     const flagClass = flagColor ? '' : 'empty';
     const pickerActiveClass = activePickerSymbol === sym ? 'active' : '';
 
-    const alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-    // Колокольчик «активен» только если есть реально активный алерт.
-    // Сработавшие (triggered) и отменённые (cancelled) алерты — история, колокольчик неактивен.
-    const hasActiveAlert = alerts.some(a => {
-      if (a.symbol !== sym) return false;
-      return a.status ? a.status === 'active' : a.active === true;
-    });
-
+    const bellStatus = getBellStatusForSymbol(sym);
     let bellClass = 'alert-bell';
-    if (hasActiveAlert) bellClass += ' active';
+    if (bellStatus === 'active') bellClass += ' active';
+    else if (bellStatus === 'triggered') bellClass += ' triggered';
 
     let logoInnerHtml = buildLogoHtml(sym, baseTicker, data);
 
@@ -256,16 +250,47 @@ window.render = async function() {
 };
 
 // === АЛЕРТЫ UI ===
-window.updateBellIconStatus = function(symbol, status) {
+// Единая функция определения состояния колокольчика для символа.
+// Всегда читает актуальный список алертов из localStorage, поэтому результат
+// мгновенно отражает любые изменения (установка, отмена, удаление, срабатывание)
+// без необходимости перезагрузки страницы или ожидания ближайшего render().
+window.getBellStatusForSymbol = function(symbol) {
+  const alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  let hasActive = false;
+  let hasTriggered = false;
+  for (const a of alerts) {
+    if (a.symbol !== symbol) continue;
+    // Поддержка старых записей без поля status: active === true → 'active',
+    // иначе считаем алерт сработавшим (история).
+    const st = a.status || (a.active ? 'active' : 'triggered');
+    if (st === 'active') hasActive = true;
+    else if (st === 'triggered') hasTriggered = true;
+  }
+  if (hasActive) return 'active';
+  if (hasTriggered) return 'triggered';
+  return 'none';
+};
+
+// Мгновенно перерисовывает колокольчики всех тикеров в DOM по фактическому
+// состоянию хранилища — вызывается после любого изменения статуса алертов.
+window.refreshAllBells = function() {
   const items = document.querySelectorAll('.ticker-item');
   items.forEach(item => {
     const bell = item.querySelector('.alert-bell');
-    if (bell && bell.getAttribute('data-symbol') === symbol) {
-      bell.classList.remove('active', 'triggered');
-      if (status === 'active') bell.classList.add('active');
-      else if (status === 'triggered') bell.classList.add('triggered');
-    }
+    if (!bell) return;
+    const sym = bell.getAttribute('data-symbol');
+    if (!sym) return;
+    const st = getBellStatusForSymbol(sym);
+    bell.classList.remove('active', 'triggered');
+    if (st === 'active') bell.classList.add('active');
+    else if (st === 'triggered') bell.classList.add('triggered');
   });
+};
+
+// Обновляет колокольчик одного символа (делегировано в refreshAllBells,
+// чтобы вся логика статуса была в одном месте).
+window.updateBellIconStatus = function(symbol, status) {
+  refreshAllBells();
 };
 
 window.openAlertModal = function(symbol) {
@@ -328,7 +353,9 @@ window.saveAlert = function() {
   trimAlertsHistory();
   log(`Алерт установлен для ${currentAlertSymbol}: ${condition} ${target}`, 'success');
   closeAlertModal();
-  updateBellIconStatus(currentAlertSymbol, 'active');
+  // Мгновенно обновляем колокольчик по фактическому состоянию хранилища —
+  // без ожидания ближайшего render()/автообновления цен.
+  refreshAllBells();
 };
 
 window.deleteAlert = function() {
@@ -342,8 +369,7 @@ window.deleteAlert = function() {
   log(`Алерт для ${currentAlertSymbol} удален`, 'info');
   closeAlertModal();
 
-  const hasRemainingActive = alerts.some(a => a.symbol === currentAlertSymbol && a.status === 'active');
-  updateBellIconStatus(currentAlertSymbol, hasRemainingActive ? 'active' : 'none');
+  refreshAllBells();
 };
 
 window.openAlertsListModal = function() {
@@ -414,8 +440,8 @@ window.cancelAlert = function(symbol, originalIndex) {
     localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
     trimAlertsHistory();
     renderAlertsList(symbol);
-    const hasRemainingActive = alerts.some(a => a.symbol === symbol && a.status === 'active');
-    updateBellIconStatus(symbol, hasRemainingActive ? 'active' : 'none');
+    // Мгновенно синхронизируем колокольчик с новым состоянием алертов
+    refreshAllBells();
     log(`Алерт для ${symbol} отменен вручную`, 'info');
   }
 };
