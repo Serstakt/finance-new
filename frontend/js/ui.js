@@ -161,7 +161,8 @@ window.render = async function() {
     const hasActiveAlert = alerts.some(a => a.symbol === sym && a.status === 'active');
     const hasTriggeredAlert = alerts.some(a => a.symbol === sym && a.status === 'triggered');
 
-    let bellClass = 'alert-bell';
+    // Кнопка «Настроить ценовое уведомление» — в общем стиле иконочных кнопок приложения
+    let bellClass = 'btn-icon alert-bell';
     if (hasActiveAlert) bellClass += ' active';
     else if (hasTriggeredAlert) bellClass += ' triggered';
 
@@ -169,7 +170,7 @@ window.render = async function() {
 
     div.innerHTML = `
       <span class="drag-handle" title="Перетащить">⋮</span>
-      <div class="favorite-wrapper" onclick="toggleFavoritePicker('${sym}', event)" title="${flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет'}">
+      <div class="favorite-wrapper btn-icon ${flagColor ? 'favorited' : ''}" onclick="toggleFavoritePicker('${sym}', event)" title="${flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет'}">
         <span class="favorite-flag ${flagClass}" style="color: ${flagHex}">⚑</span>
         <div class="favorite-picker ${pickerActiveClass}">
           <span onclick="event.stopPropagation(); setFavorite('${sym}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
@@ -186,7 +187,7 @@ window.render = async function() {
       <div class="ticker-price" id="price-${safeId}">${data?.price ? formatNumber(data.price) : '<div class="skeleton skeleton-price"></div>'}</div>
       <div class="ticker-change" id="change-val-${safeId}">${data?.changeValue !== undefined && data?.changeValue !== null ? '' : '<div class="skeleton skeleton-change"></div>'}</div>
       <div class="ticker-change-percent" id="change-pct-${safeId}">${data?.changeDay !== undefined && data?.changeDay !== null ? '' : '<div class="skeleton skeleton-change-pct"></div>'}</div>
-      <span class="alert-bell ${bellClass}" data-symbol="${sym}" onclick="event.stopPropagation(); openAlertModal('${sym}')" title="Настроить ценовое уведомление">🔔</span>
+      <span class="${bellClass}" data-symbol="${sym}" onclick="event.stopPropagation(); openAlertModal('${sym}')" title="Настроить ценовое уведомление">🔔</span>
       <span class="ticker-remove" data-symbol="${sym}" title="Удалить">×</span>`;
 
     div.addEventListener('click', (e) => {

@@ -219,12 +219,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-item:hover .drag-handle { opacity: 1; }
 .drag-handle:active { cursor: grabbing; }
 
-/* --- Избранное (флажки) --- */
-.favorite-wrapper { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
+/* --- Избранное (флажки): кнопка в общем стиле иконочных кнопок --- */
+.favorite-wrapper {
+  width: 22px; height: 22px; padding: 0; flex-shrink: 0;
+}
 .favorite-flag { font-size: 13px; transition: color 0.2s, transform 0.2s; display: inline-block; line-height: 1; }
-.favorite-flag.empty { color: #363a45; }
-.favorite-flag:hover { transform: scale(1.15); }
-.favorite-flag.empty:hover { color: #787b86; }
+.favorite-flag.empty { color: #4a5060; }
+.favorite-wrapper:hover { background: #363a45; border-color: #787b86; color: #d1d4dc; }
+.favorite-wrapper.favorited { background: rgba(41, 98, 255, 0.12); border-color: rgba(41, 98, 255, 0.5); }
+.favorite-wrapper.favorited:hover { background: rgba(41, 98, 255, 0.2); border-color: #2962ff; }
 .favorite-picker {
   position: absolute; top: 100%; left: 0; background: #1e222d; border: 1px solid #363a45;
   border-radius: 4px; padding: 4px; display: none; gap: 4px; z-index: 100;
@@ -285,10 +288,11 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-remove:hover { color: #ef5350; }
 
 /* --- Алерты и скелетоны загрузки --- */
-.alert-bell { font-size: 12px; cursor: pointer; opacity: 0.4; transition: all 0.2s; }
-.alert-bell:hover { opacity: 1; transform: scale(1.1); }
-.alert-bell.active { opacity: 1; color: #ffca28; animation: ring 2s infinite; }
-.alert-bell.triggered { opacity: 1; color: #26a69a; animation: ring-triggered 1.5s infinite; }
+/* Кнопка «Настроить ценовое уведомление» — общий стиль иконочных кнопок (как в портфеле) */
+.alert-bell { font-size: 12px; line-height: 1; opacity: 0.55; }
+.alert-bell:hover { opacity: 1; }
+.alert-bell.active { opacity: 1; color: #ffca28; background: rgba(255, 202, 40, 0.12); border-color: rgba(255, 202, 40, 0.5); animation: ring 2s infinite; }
+.alert-bell.triggered { opacity: 1; color: #26a69a; background: rgba(38, 166, 154, 0.12); border-color: rgba(38, 166, 154, 0.5); animation: ring-triggered 1.5s infinite; }
 
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
@@ -508,8 +512,30 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .section-header:hover .ticker-remove { opacity: 1; }
 
 /* ==========================================================================
-   15. 🔘 КНОПКИ ПЕРЕКЛЮЧЕНИЯ (TOGGLE)
+   15. 🔘 КНОПКИ ПЕРЕКЛЮЧЕНИЯ (TOGGLE) И ОБЩИЕ ИКОНОЧНЫЕ КНОПКИ
    ========================================================================== */
+/* Универсальная иконочная кнопка в общем стиле приложения
+   (используется в watchlist: избранное и ценовые уведомления, а также в портфеле) */
+.btn-icon {
+  background: transparent;
+  border: 1px solid #363a45;
+  color: #787b86;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: #363a45;
+  color: #d1d4dc;
+}
+
+.portfolio-table .btn-icon { margin-right: 4px; }
 .toggle-watchlist-btn {
   background: transparent !important; border: none !important; color: #787b86 !important;
   cursor: pointer; padding: 4px 6px !important; border-radius: 4px !important;
@@ -711,26 +737,6 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   text-align: center;
   color: #787b86;
   padding: 40px;
-}
-
-.portfolio-table .btn-icon {
-  background: transparent;
-  border: 1px solid #363a45;
-  color: #787b86;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  margin-right: 4px;
-}
-
-.portfolio-table .btn-icon:hover {
-  background: #363a45;
-  color: #d1d4dc;
 }
 
 .portfolio-table .btn-icon.delete:hover {
