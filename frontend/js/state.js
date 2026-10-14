@@ -88,9 +88,24 @@ window.syncListWithDb = async function(listId) {
     if (!list) return;
     const dbSymbols = data.symbols || [];
 
-    // Название списка тянем из БД: оно является источником истины при загрузке раздела
-    if (typeof data.name === 'string' && data.name.trim() !== '' && data.name !== list.name) {
+    // Название списка тянем из БД: оно является источником истины при загрузке раздела.
+    // Исключение — заглушки («Новый список», list_<timestamp>, пустое): если локально
+    // у нас настоящее имя, а в БД заглушка (например, /add создал строку раньше, чем
+    // дошёл /create), НЕ перетаскиваем заглушку в UI и чиним её в БД через repair.
+    const dbRaw = typeof data.name === 'string' ? data.name.trim() : '';
+    const localName = (list.name || '').trim();
+    const isStub = !dbRaw || dbRaw === 'Новый список' || dbRaw === listId;
+    if (!isStub && dbRaw !== list.name) {
       list.name = data.name;
+    } else if (isStub && localName && localName !== 'Новый список' && localName !== listId) {
+      try {
+        await fetchWithTimeout(`${API_BASE}/api/watchlist/repair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ names: { [listId]: localName } })
+        }, 15000);
+        if (typeof log === 'function') log(`Название "${localName}" восстановлено в БД вместо заглушки`, 'info');
+      } catch (e) { /* попробуем починить при следующей загрузке */ }
     }
 
     // Миграция: в БД пусто, а локально есть тикеры (старый watchlist) — загружаем их в БД
@@ -151,6 +166,30 @@ window.loadListNamesFromDb = async function() {
     await Promise.all(
       [...missing, ...stubs].map(([id, l]) => window.createListInDb(id, l.name))
     );
+    // Страховка на случай гонки add-before-create: одной пачкой чиним ВСЕ
+    // локальные имена поверх заглушек прямо в БД (/api/watchlist/repair).
+    // Настоящие названия в БД эндпоинт не перезаписывает.
+    try {
+      const repairNames = {};
+      for (const [id, l] of Object.entries(appState.lists)) {
+        if (!id.startsWith('fav_') && l.name) repairNames[id] = l.name;
+      }
+      const repRes = await fetchWithTimeout(`${API_BASE}/api/watchlist/repair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: repairNames })
+      }, 15000);
+      if (repRes.ok) {
+        const rdata = await repRes.json();
+        for (const [id, name] of Object.entries(rdata.lists || {})) {
+          if (id.startsWith('fav_')) continue;
+          if (appState.lists[id] && name && appState.lists[id].name !== name) {
+            appState.lists[id].name = name;
+            changed = true;
+          }
+        }
+      }
+    } catch (e) { /* если repair недоступен — дальше работает обычная загрузка имён */ }
     if (missing.length || stubs.length) {
       // перечитаем названия из БД после починки
       const refreshed = await fetchWithTimeout(`${API_BASE}/api/watchlists`, {}, 15000);
@@ -181,40 +220,65 @@ window.loadListNamesFromDb = async function() {
 // ошибках и ПРОВЕРЯЕТ результат: после успешного ответа запрашивает список
 // из БД и сверяет название. Возвращает true только если название реально
 // записалось в таблицу watchlists.
+//
+// ВАЖНО (заглушка вместо имени): все записи имён идут через ОЧЕРЕДЬ на
+// список (nameWriteQueue). Это гарантирует, что /api/watchlist/create
+// завершится ДО того, как следующий запрос (/add, /order) сможет создать
+// строку с заглушкой «Новый список». Без очереди addTicker мог выиграть
+// гонку у create — и в БД оставалась заглушка.
+window.nameWriteQueue = window.nameWriteQueue || {};
+
+function _writeListNameNow(listId, trimmed) {
+  return (async () => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ list_id: listId, name: trimmed })
+        }, 15000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Проверка: убеждаемся, что запись действительно появилась в БД
+        const checkRes = await fetchWithTimeout(
+          `${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, {}, 15000
+        );
+        if (checkRes.ok) {
+          const data = await checkRes.json();
+          if (data && data.name === trimmed) return true;
+          lastError = `в БД сохранилось "${data ? data.name : '?'}" вместо "${trimmed}"`;
+        } else {
+          lastError = `проверка не удалась (HTTP ${checkRes.status})`;
+        }
+      } catch (e) {
+        lastError = e.message;
+      }
+      if (attempt < 3) await new Promise(r => setTimeout(r, 400 * attempt));
+    }
+    if (typeof log === 'function') {
+      log(`Не удалось сохранить название списка "${trimmed}" в БД: ${lastError}`, 'error');
+    }
+    return false;
+  })();
+}
+
 window.createListInDb = async function(listId, name) {
   if (!listId || listId.startsWith('fav_')) return false;
   const trimmed = (name || '').trim();
   if (!trimmed) return false;
+  const q = window.nameWriteQueue;
+  const prev = q[listId] || Promise.resolve(false);
+  const cur = prev.then(() => _writeListNameNow(listId, trimmed));
+  q[listId] = cur.catch(() => false);
+  return cur;
+};
 
-  let lastError = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list_id: listId, name: trimmed })
-      }, 15000);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // Проверка: убеждаемся, что запись действительно появилась в БД
-      const checkRes = await fetchWithTimeout(
-        `${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, {}, 15000
-      );
-      if (checkRes.ok) {
-        const data = await checkRes.json();
-        if (data && data.name === trimmed) return true;
-        lastError = `в БД сохранилось "${data ? data.name : '?'}" вместо "${trimmed}"`;
-      } else {
-        lastError = `проверка не удалась (HTTP ${checkRes.status})`;
-      }
-    } catch (e) {
-      lastError = e.message;
-    }
-    if (attempt < 3) await new Promise(r => setTimeout(r, 400 * attempt));
-  }
-  if (typeof log === 'function') {
-    log(`Не удалось сохранить название списка "${trimmed}" в БД: ${lastError}`, 'error');
-  }
-  return false;
+// Ждём завершения всех отложенных записей имени списка в БД.
+// Вызывается перед /add и /order, чтобы эти запросы не создали в watchlists
+// строку-заглушку раньше, чем дойдёт настоящий create/rename.
+window.waitForListNameSaved = async function(listId) {
+  if (!listId || !window.nameWriteQueue || !window.nameWriteQueue[listId]) return;
+  try { await window.nameWriteQueue[listId]; } catch (e) {}
 };
 
 // Совместимость: renameListInDb — то же, что createListInDb (upsert по названию).
@@ -236,6 +300,9 @@ window.deleteListInDb = async function(listId) {
 
 window.addTickerToDb = async function(listId, symbol) {
   if (!listId || listId.startsWith('fav_')) return false;
+  // Ждём завершения записи имени (create/rename), чтобы /add не создал
+  // строку-заглушку «Новый список» раньше настоящего названия.
+  await window.waitForListNameSaved(listId);
   // Передаём и название списка: если строки в watchlists ещё нет (например,
   // create не дошёл до БД), /api/watchlist/add создаст её сразу с настоящим
   // именем, а не с заглушкой.
@@ -275,6 +342,7 @@ window.removeTickerFromDb = async function(listId, symbol) {
 
 window.saveOrderToDb = async function(listId, symbols) {
   if (!listId || listId.startsWith('fav_')) return;
+  await window.waitForListNameSaved(listId);
   const listName = (appState.lists[listId] && appState.lists[listId].name) || null;
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {

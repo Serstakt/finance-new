@@ -139,6 +139,17 @@ async def create_watchlist(payload: schemas.WatchlistRename):
         raise HTTPException(status_code=400, detail=str(ve))
 
 
+@app.post("/api/watchlist/repair")
+async def repair_watchlists(payload: schemas.WatchlistRepair):
+    """Чинит строки-заглушки в watchlists («Новый список», list_<timestamp>).
+
+    Фронтенд вызывает при загрузке раздела WATCHLIST: если локально у
+    списка настоящее имя, а в БД заглушка — перезаписываем. Настоящие
+    названия в БД не трогаем. Возвращает актуальные {id: name} после починки.
+    """
+    return {"lists": watchlist_service.repair_names(payload.names)}
+
+
 @app.post("/api/watchlist/rename")
 async def rename_watchlist(payload: schemas.WatchlistRename):
     """Переименовывает список: название сохраняется в БД (watchlists.name)."""

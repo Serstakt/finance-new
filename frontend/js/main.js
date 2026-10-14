@@ -197,10 +197,17 @@ window.addTicker = async function() {
 window.addSection = async function() {
   const name = prompt('Введите название раздела:', 'Новый раздел');
   if (!name || !name.trim()) return;
+  const listId = appState.activeListId;
   const currentList = getCurrentList();
   currentList.tickers.push(`SECTION:${name.trim()}`);
   saveState(); render();
-  await saveOrderToDb(appState.activeListId, currentList.tickers); // порядок и разделы — в БД
+  // Гарантируем, что очередь записи имени списка в БД завершена ДО /order,
+  // иначе гонка create-vs-order могла создать строку-заглушку «Новый список».
+  await waitForListNameSaved(listId);
+  await saveOrderToDb(listId, currentList.tickers); // порядок и разделы — в БД
+  // Страховка: после любых изменений состава перечитываем название из БД.
+  // Если там всё же оказалась заглушка — syncListWithDb/repair её починят.
+  await syncListWithDb(listId);
   log(`Добавлен раздел: "${name.trim()}"`, 'success');
 };
 

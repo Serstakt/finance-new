@@ -24,6 +24,24 @@ def get_all_names() -> dict[str, str]:
         return {r.id: r.name for r in rows}
 
 
+# Название-заглушка, которое ставится в watchlists.name, когда список
+# автосоздаётся по данным из watchlist_items (без известного имени с UI).
+PLACEHOLDER_NAME = "Новый список"
+
+
+def _is_placeholder(name: str | None, list_id: str) -> bool:
+    """Является ли название заглушкой (не настоящим именем с UI)?
+
+    ВАЖНО: к заглушкам НЕ относится дефолтное имя SQLAlchemy-колонки
+    («Основной») и любые настоящие пользовательские имена — иначе старый код
+    мог перезаписать настоящее имя списков, созданных до появления таблицы.
+    """
+    if not name:
+        return True
+    n = name.strip()
+    return n == "" or n == PLACEHOLDER_NAME or n == list_id
+
+
 def ensure_list(list_id: str, default_name: str | None = None) -> None:
     """Гарантирует, что в таблице watchlists есть строка для list_id.
 
@@ -34,11 +52,14 @@ def ensure_list(list_id: str, default_name: str | None = None) -> None:
     Если default_name передан и непустой — он используется как название новой
     записи; иначе ставится заглушка «Новый список» (никогда не сам list_id).
 
-    ВАЖНО: существующая заглушка («Новый список» или list_<id>) тоже
-    перезаписывается переданным default_name. Это закрывает гонку на
-    фронтенде: addTicker вызывает /api/watchlist/add раньше, чем завершается
-    POST /api/watchlist/create из addNewList — без этого порядка ensure_list
-    создал бы строку с заглушкой, а create её бы не заменил.
+    ЗАЩИТА ОТ ПЕРЕБИВАНИЯ ИМЕНИ (главный баг «в БД Новый список вместо
+    моего имени»): порядок операций такой:
+      1) POST /create (set_name) пишет настоящее имя;
+      2) затем любой /add или /order вызывает ensure_list.
+    Если на шаге 2 строка уже существует с НАСТОЯЩИМ именем — она не
+    трогается вообще, даже если default_name пуст или это заглушка.
+    Заглушка из прошлых версий («Новый список», list_<timestamp>)
+    перезаписывается только настоящим default_name.
     """
     if not list_id or list_id.startswith("fav_"):
         return
@@ -46,10 +67,11 @@ def ensure_list(list_id: str, default_name: str | None = None) -> None:
     with get_session() as db:
         row = db.get(Watchlist, list_id)
         if not row:
-            db.add(Watchlist(id=list_id, name=new_name or "Новый список"))
+            db.add(Watchlist(id=list_id, name=new_name or PLACEHOLDER_NAME))
             db.commit()
-        elif new_name and row.name in ("Новый список", list_id):
-            # достраиваем название поверх заглушки, созданной предыдущим запросом
+        elif new_name and not _is_placeholder(new_name, list_id) and _is_placeholder(row.name, list_id):
+            # достраиваем настоящее название поверх заглушки, созданной
+            # предыдущим запросом (гонка create/add)
             row.name = new_name
             db.commit()
 
@@ -78,14 +100,17 @@ def repair_name(list_id: str, name: str) -> bool:
     """Чинит «осиротевшие»/заглушечные записи в таблице watchlists.
 
     - Если строки для list_id нет — создаёт её с настоящим названием.
-    - Если там заглушка ("Новый список" из ensure_list или сам list_id) —
+    - Если там заглушка ("Новый список" / list_<timestamp> из ensure_list) —
       заменяет её на настоящее название с фронтенда.
-    Реальные расхождения не трогает (источник истины при загрузке — БД).
+    - Если там уже настоящее имя — НЕ трогает (источник истины — переименование).
 
     Возвращает True, если что-то было исправлено.
     """
     name = (name or "").strip()
     if not name or not list_id or list_id.startswith("fav_"):
+        return False
+    # само пользовательское имя не должно быть заглушкой
+    if _is_placeholder(name, list_id):
         return False
     with get_session() as db:
         row = db.get(Watchlist, list_id)
@@ -93,11 +118,24 @@ def repair_name(list_id: str, name: str) -> bool:
             db.add(Watchlist(id=list_id, name=name))
             db.commit()
             return True
-        if row.name in ("Новый список", list_id):
+        if _is_placeholder(row.name, list_id):
             row.name = name
             db.commit()
             return True
         return False
+
+
+def repair_names(names: dict[str, str]) -> dict[str, str]:
+    """Массовая починка заглушек: {list_id: настоящее_название}.
+
+    Используется эндпоинтом POST /api/watchlist/repair, чтобы залечить
+    строки вида «Новый список»/list_<timestamp>, созданные гонкой
+    add-before-create. Настоящие имена НЕ перезаписываются.
+    Возвращает актуальные названия после починки.
+    """
+    for list_id, name in (names or {}).items():
+        repair_name(str(list_id), str(name))
+    return get_all_names()
 
 
 def delete_list(list_id: str) -> dict:

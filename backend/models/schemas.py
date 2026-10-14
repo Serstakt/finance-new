@@ -44,3 +44,14 @@ class WatchlistRename(BaseModel):
     list_id: str = "default"
     name: str
 
+
+class WatchlistRepair(BaseModel):
+    """Массовая починка названий: {list_id: настоящее_название}.
+
+    Фронтенд вызывает POST /api/watchlist/repair при загрузке раздела
+    WATCHLIST, чтобы залечить строки-заглушки («Новый список»,
+    list_<timestamp>), созданные гонкой add-before-create.
+    Настоящие пользовательские названия не перезаписываются.
+    """
+    names: Dict[str, str]
+
