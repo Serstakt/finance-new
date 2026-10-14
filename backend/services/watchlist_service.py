@@ -24,25 +24,35 @@ def get_all_names() -> dict[str, str]:
         return {r.id: r.name for r in rows}
 
 
-def ensure_list(list_id: str, default_name: str = "Новый список") -> None:
+def ensure_list(list_id: str, default_name: str | None = None) -> None:
     """Гарантирует, что в таблице watchlists есть строка для list_id.
 
     Используется при добавлении тикеров/порядка: если списка ещё нет в БД
     (например, фронтенд не успел сохранить название), запись создаётся
-    автоматически, чтобы watchlist_items.link и watchlists были согласованы.
+    автоматически, чтобы watchlist_items и watchlists были согласованы.
     Существующее название не перезаписывается.
+
+    Если default_name передан и непустой — он используется как название новой
+    записи; иначе название не выдумывается (не может быть list_<timestamp>),
+    а остаётся заглушкой до первой синхронизации с фронтендом.
     """
     if not list_id or list_id.startswith("fav_"):
         return
+    name = (default_name or "").strip() or "Новый список"
     with get_session() as db:
         row = db.get(Watchlist, list_id)
         if not row:
-            db.add(Watchlist(id=list_id, name=default_name))
+            db.add(Watchlist(id=list_id, name=name))
             db.commit()
 
 
 def set_name(list_id: str, name: str) -> dict:
-    """Создаёт/обновляет название списка в таблице watchlists."""
+    """Создаёт/обновляет название списка в таблице watchlists.
+
+    Если запись уже существует, но её название — заглушка ("Новый список"),
+    созданная ensure_list при добавлении тикера до сохранения названия,
+    она перезаписывается настоящим названием с фронтенда.
+    """
     name = (name or "").strip()
     if not name:
         raise ValueError("Пустое название списка")
@@ -54,6 +64,32 @@ def set_name(list_id: str, name: str) -> dict:
             db.add(Watchlist(id=list_id, name=name))
         db.commit()
         return {"status": "ok", "list_id": list_id, "name": name}
+
+
+def repair_name(list_id: str, name: str) -> bool:
+    """Чинит «осиротевшие»/заглушечные записи в таблице watchlists.
+
+    - Если строки для list_id нет — создаёт её с настоящим названием.
+    - Если там заглушка ("Новый список" из ensure_list или сам list_id) —
+      заменяет её на настоящее название с фронтенда.
+    Реальные расхождения не трогает (источник истины при загрузке — БД).
+
+    Возвращает True, если что-то было исправлено.
+    """
+    name = (name or "").strip()
+    if not name or not list_id or list_id.startswith("fav_"):
+        return False
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if row is None:
+            db.add(Watchlist(id=list_id, name=name))
+            db.commit()
+            return True
+        if row.name in ("Новый список", list_id):
+            row.name = name
+            db.commit()
+            return True
+        return False
 
 
 def delete_list(list_id: str) -> dict:

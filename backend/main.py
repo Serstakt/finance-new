@@ -125,6 +125,20 @@ async def get_watchlists():
     return {"lists": watchlist_service.get_all_names()}
 
 
+@app.post("/api/watchlist/create")
+async def create_watchlist(payload: schemas.WatchlistRename):
+    """Создаёт список в таблице watchlists с указанным названием.
+
+    Вызывается фронтендом сразу при создании нового списка, чтобы запись
+    появилась в БД немедленно (а не только после добавления первого тикера).
+    Если список уже существует — обновляет его название (upsert).
+    """
+    try:
+        return watchlist_service.set_name(payload.list_id, payload.name)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
 @app.post("/api/watchlist/rename")
 async def rename_watchlist(payload: schemas.WatchlistRename):
     """Переименовывает список: название сохраняется в БД (watchlists.name)."""

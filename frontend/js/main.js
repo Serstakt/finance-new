@@ -56,10 +56,12 @@ window.addNewList = async function() {
   saveState();
   populateListSelector();
   switchList(id);
-  // Название нового списка сохраняем в БД (таблица watchlists), а не только в localStorage
-  await renameListInDb(id, name);
-  populateListSelector();
   log(`Создан список: ${name}`, 'success');
+  // Название нового списка сохраняем в БД (таблица watchlists).
+  // Функция делает повторные попытки и проверяет результат через GET.
+  const saved = await createListInDb(id, name);
+  if (saved) log(`Список "${name}" сохранен в БД`, 'success');
+  else log(`Список "${name}" создан локально, но сохранить его в БД не удалось — попробуйте переименовать список (Rename)`, 'error');
 };
 
 window.renameList = async function() {

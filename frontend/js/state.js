@@ -143,8 +143,28 @@ window.loadListNamesFromDb = async function() {
     // регистрируем его в БД, чтобы названия всех списков жили на сервере.
     const missing = Object.entries(appState.lists)
       .filter(([id, l]) => !id.startsWith('fav_') && !(id in names) && l.name);
-    await Promise.all(missing.map(([id, l]) => window.renameListInDb(id, l.name)));
-    if (missing.length) changed = true;
+    // Плюс чиним «заглушки» в БД ("Новый список" / list_<timestamp>), которые
+    // появились из-за того, что тикер добавили раньше, чем сохранилось название.
+    const stubs = Object.entries(appState.lists)
+      .filter(([id, l]) => !id.startsWith('fav_') && l.name &&
+        id in names && (names[id] === 'Новый список' || names[id] === id));
+    await Promise.all(
+      [...missing, ...stubs].map(([id, l]) => window.createListInDb(id, l.name))
+    );
+    if (missing.length || stubs.length) {
+      // перечитаем названия из БД после починки
+      const refreshed = await fetchWithTimeout(`${API_BASE}/api/watchlists`, {}, 15000);
+      if (refreshed.ok) {
+        const rdata = await refreshed.json();
+        for (const [id, name] of Object.entries(rdata.lists || {})) {
+          if (id.startsWith('fav_')) continue;
+          if (appState.lists[id] && name && appState.lists[id].name !== name) {
+            appState.lists[id].name = name;
+          }
+        }
+      }
+      changed = true;
+    }
     if (changed) {
       saveState();
       if (typeof populateListSelector === 'function') populateListSelector();
@@ -156,22 +176,49 @@ window.loadListNamesFromDb = async function() {
   }
 };
 
-// Сохраняет/обновляет название списка в БД (строка watchlists.name).
-window.renameListInDb = async function(listId, name) {
+// Создаёт/обновляет название списка в БД (строка watchlists.name).
+// Использует /api/watchlist/create (upsert), делает до 3 попыток при сетевых
+// ошибках и ПРОВЕРЯЕТ результат: после успешного ответа запрашивает список
+// из БД и сверяет название. Возвращает true только если название реально
+// записалось в таблицу watchlists.
+window.createListInDb = async function(listId, name) {
   if (!listId || listId.startsWith('fav_')) return false;
-  try {
-    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/rename`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ list_id: listId, name: name })
-    }, 15000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return true;
-  } catch (e) {
-    if (typeof log === 'function') log('Не удалось сохранить название списка в БД: ' + e.message, 'error');
-    return false;
+  const trimmed = (name || '').trim();
+  if (!trimmed) return false;
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ list_id: listId, name: trimmed })
+      }, 15000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Проверка: убеждаемся, что запись действительно появилась в БД
+      const checkRes = await fetchWithTimeout(
+        `${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, {}, 15000
+      );
+      if (checkRes.ok) {
+        const data = await checkRes.json();
+        if (data && data.name === trimmed) return true;
+        lastError = `в БД сохранилось "${data ? data.name : '?'}" вместо "${trimmed}"`;
+      } else {
+        lastError = `проверка не удалась (HTTP ${checkRes.status})`;
+      }
+    } catch (e) {
+      lastError = e.message;
+    }
+    if (attempt < 3) await new Promise(r => setTimeout(r, 400 * attempt));
   }
+  if (typeof log === 'function') {
+    log(`Не удалось сохранить название списка "${trimmed}" в БД: ${lastError}`, 'error');
+  }
+  return false;
 };
+
+// Совместимость: renameListInDb — то же, что createListInDb (upsert по названию).
+window.renameListInDb = window.createListInDb;
 
 window.deleteListInDb = async function(listId) {
   if (!listId || listId.startsWith('fav_')) return false;
