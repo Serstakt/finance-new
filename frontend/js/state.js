@@ -138,6 +138,13 @@ window.loadListNamesFromDb = async function() {
         changed = true;
       }
     }
+    // Обратная синхронизация: список есть локально (например, создан на другом
+    // устройстве/сессии или мигрирован), но его ещё нет в таблице watchlists —
+    // регистрируем его в БД, чтобы названия всех списков жили на сервере.
+    const missing = Object.entries(appState.lists)
+      .filter(([id, l]) => !id.startsWith('fav_') && !(id in names) && l.name);
+    await Promise.all(missing.map(([id, l]) => window.renameListInDb(id, l.name)));
+    if (missing.length) changed = true;
     if (changed) {
       saveState();
       if (typeof populateListSelector === 'function') populateListSelector();

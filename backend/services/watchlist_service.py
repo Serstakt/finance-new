@@ -24,6 +24,23 @@ def get_all_names() -> dict[str, str]:
         return {r.id: r.name for r in rows}
 
 
+def ensure_list(list_id: str, default_name: str = "Новый список") -> None:
+    """Гарантирует, что в таблице watchlists есть строка для list_id.
+
+    Используется при добавлении тикеров/порядка: если списка ещё нет в БД
+    (например, фронтенд не успел сохранить название), запись создаётся
+    автоматически, чтобы watchlist_items.link и watchlists были согласованы.
+    Существующее название не перезаписывается.
+    """
+    if not list_id or list_id.startswith("fav_"):
+        return
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if not row:
+            db.add(Watchlist(id=list_id, name=default_name))
+            db.commit()
+
+
 def set_name(list_id: str, name: str) -> dict:
     """Создаёт/обновляет название списка в таблице watchlists."""
     name = (name or "").strip()
@@ -72,11 +89,16 @@ def get_list_symbols(list_id: str) -> list[dict]:
 def add_symbol(list_id: str, symbol: str) -> dict:
     """Добавляет тикер в конец списка. Повтор не добавляется (идемпотентно).
 
+    Если списка ещё нет в таблице watchlists, он создаётся там автоматически
+    (с названием по умолчанию), чтобы каждая строка watchlist_items имела
+    соответствующую запись в watchlists.
+
     Тикеры нормализуются к верхнему регистру (как в moex_service/portfolio_service),
     чтобы "sber" и "SBER" не создавали дубли записей.
     У заголовков разделов SECTION:... нормализуется только префикс — название
     раздела (часть после ':') сохраняется как ввёл пользователь.
     """
+    ensure_list(list_id)
     symbol = symbol.strip()
     if not symbol.upper().startswith("SECTION:"):
         symbol = symbol.upper()
@@ -150,6 +172,7 @@ def set_order(list_id: str, symbols: list[str]) -> dict:
         else:
             s = "SECTION:" + s[8:]
         cleaned.append(s)
+    ensure_list(list_id)
     with get_session() as db:
             old = db.query(WatchlistItem).filter(WatchlistItem.list_id == list_id).all()
             old_map = {r.symbol: r for r in old}

@@ -101,11 +101,20 @@ async def remove_position_endpoint(symbol: str):
 
 @app.get("/api/watchlist/{list_id}")
 async def get_watchlist(list_id: str):
-    """Возвращает список тикеров из БД в порядке позиции + название списка из БД."""
+    """Возвращает список тикеров из БД в порядке позиции + название списка из БД.
+
+    Если в watchlist_items есть элементы, а строки в watchlists нет (список
+    появился до того, как названия стали храниться в БД, или не сохранилось
+    название) — запись создаётся автоматически, чтобы таблицы были согласованы.
+    """
     items = watchlist_service.get_list_symbols(list_id)
+    name = watchlist_service.get_name(list_id)
+    if name is None and items:
+        watchlist_service.ensure_list(list_id)
+        name = watchlist_service.get_name(list_id)
     return {
         "list_id": list_id,
-        "name": watchlist_service.get_name(list_id),
+        "name": name,
         "symbols": [i["symbol"] for i in items],
     }
 
