@@ -41,6 +41,8 @@ window.fetchTickerData = async function(symbol) {
     );
     if (!response.ok) return null;
     const data = await response.json();
+    // Сохраняем логотип крипты в отдельный долгий кэш (переживает очистку цен)
+    if (data && data.logo) rememberCryptoLogo(symbol, data.logo);
 
     cache[symbol] = { data, timestamp: Date.now() };
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch(e) {}
@@ -50,6 +52,53 @@ window.fetchTickerData = async function(symbol) {
     console.error(`Ошибка API для ${symbol}:`, e);
     return null;
   }
+};
+
+// === ЛОГОТИПЫ ТИКЕРОВ ===
+// Кэш официальных логотипов криптовалют (CoinGecko image) из ответа /api/prices:
+// symbol -> url. Пишется при каждой загрузке цены, читается при отрисовке тикера,
+// поэтому логотип появляется сразу даже на скелетоне и переживает перезагрузку
+// страницы (localStorage).
+window.LOGO_CACHE_KEY = 'crypto_logo_cache';
+try { window.cryptoLogoCache = JSON.parse(localStorage.getItem(LOGO_CACHE_KEY) || '{}'); }
+catch(e) { window.cryptoLogoCache = {}; }
+
+window.rememberCryptoLogo = function(symbol, logoUrl) {
+  if (!logoUrl || !symbol) return;
+  if (window.cryptoLogoCache[symbol] === logoUrl) return; // не пересохраняем без изменения
+  window.cryptoLogoCache[symbol] = logoUrl;
+  try { localStorage.setItem(window.LOGO_CACHE_KEY, JSON.stringify(window.cryptoLogoCache)); } catch(e) {}
+};
+
+// Вызывается после каждого fetchTickerData: складываем logo из ответа в кэш.
+window.cacheLogosFromData = function(symbol, data) {
+  if (data && data.logo) rememberCryptoLogo(symbol, data.logo);
+};
+
+// HTML логотипа для строки тикера/портфеля.
+// Приоритет: официальный логотип крипты (CoinGecko CDN) -> favicon сайта эмитента
+// (Google s2) -> буква-заглушка.
+window.buildLogoHtml = function(fullSymbol, baseTicker, data) {
+  const fallbackLetter = (baseTicker || fullSymbol || '?').charAt(0).toUpperCase();
+  const parts = String(fullSymbol || '').toUpperCase().split(':');
+  const isCrypto = parts[0] === 'BINANCE' ||
+    /USDT$|BTC$|ETH$/.test(String(baseTicker || '').toUpperCase());
+
+  let url = null;
+  if (isCrypto) {
+    if (data && data.logo) { window.rememberCryptoLogo(fullSymbol, data.logo); url = data.logo; }
+    else url = window.cryptoLogoCache[fullSymbol] || window.cryptoLogoCache[`BINANCE:${baseTicker}`] || null;
+  }
+  if (!url) {
+    const domain = window.getCompanyDomain(baseTicker);
+    if (domain) url = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+  }
+  if (!url) {
+    return `<div class="ticker-logo-fallback" style="display: flex;">${fallbackLetter}</div>`;
+  }
+  return `<img src="${url}" class="ticker-logo" alt="${fallbackLetter}" loading="lazy" ` +
+    `onerror="this.style.display='none'; this.parentElement.querySelector('.ticker-logo-fallback').style.display='flex';" />` +
+    `<div class="ticker-logo-fallback" style="display: none;">${fallbackLetter}</div>`;
 };
 
 // === СЛОВАРЬ ДОМЕНОВ ДЛЯ ЛОГОТИПОВ ===

@@ -359,6 +359,10 @@ def _build_response(symbol: str, m: dict) -> dict:
         "changeWeek": m.get("price_change_percentage_7d_in_currency"),
         "changeMonth": m.get("price_change_percentage_30d_in_currency"),
         "changeYear": m.get("price_change_percentage_1y_in_currency"),
+        # Официальный логотип монеты из CoinGecko (/coins/markets -> image).
+        # Это CDN-ссылка (assets.coingecko.com), кэшируется браузером — повторных
+        # запросов к API не создаёт.
+        "logo": m.get("image"),
     }
 
 
