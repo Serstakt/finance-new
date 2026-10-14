@@ -61,12 +61,8 @@ function renderPortfolio(data) {
     // === ЛОГИКА ДЛЯ ЛОГОТИПА (как в watchlist) ===
     const parts = pos.symbol.split(':');
     const baseTicker = parts.length > 1 ? parts[1] : pos.symbol; // Убираем "MOEX:"
-    const domain = getCompanyDomain(baseTicker);
-    const fallbackLetter = baseTicker.charAt(0);
 
-    const logoInnerHtml = domain
-      ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=128" class="ticker-logo" onerror="this.style.display='none'; this.parentElement.querySelector('.ticker-logo-fallback').style.display='flex';" /><div class="ticker-logo-fallback" style="display: none;">${fallbackLetter}</div>`
-      : `<div class="ticker-logo-fallback" style="display: flex;">${fallbackLetter}</div>`;
+    const logoInnerHtml = buildLogoHtml(pos.symbol, baseTicker, null);
     // ==============================================
 
     return `

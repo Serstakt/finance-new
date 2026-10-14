@@ -148,7 +148,6 @@ window.render = async function() {
     const safeId = sym.replace(/[^a-zA-Z0-9]/g, '_');
     const parts = sym.split(':');
     const data = dataMap[sym];
-    const domain = getCompanyDomain(parts.length > 1 ? parts[1] : sym);
     const fallbackLetter = (parts.length > 1 ? parts[1] : sym).charAt(0);
     const baseTicker = parts.length > 1 ? parts[1] : sym;
     const smartLabUrl = `https://smart-lab.ru/forum/${baseTicker}/`;
@@ -166,9 +165,7 @@ window.render = async function() {
     if (hasActiveAlert) bellClass += ' active';
     else if (hasTriggeredAlert) bellClass += ' triggered';
 
-    let logoInnerHtml = domain
-      ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=128" class="ticker-logo" onerror="this.style.display='none'; this.parentElement.querySelector('.ticker-logo-fallback').style.display='flex';" /><div class="ticker-logo-fallback" style="display: none;">${fallbackLetter}</div>`
-      : `<div class="ticker-logo-fallback" style="display: flex;">${fallbackLetter}</div>`;
+    let logoInnerHtml = buildLogoHtml(sym, baseTicker, data);
 
     div.innerHTML = `
       <span class="drag-handle" title="Перетащить">⋮</span>

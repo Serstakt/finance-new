@@ -10,6 +10,9 @@ class PriceResponse(BaseModel):
     changeWeek: float | None = None
     changeMonth: float | None = None
     changeYear: float | None = None
+    # Логотип монеты (CoinGecko image, поле приходит из /coins/markets).
+    # Для MOEX-тикеров может приходить favicon с сайта эмитента или None.
+    logo: str | None = None
 
 
 class PositionCreate(BaseModel):
