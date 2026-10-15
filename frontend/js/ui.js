@@ -381,7 +381,8 @@ window.saveAlert = async function() {
   try {
     // Текущая цена из отрисованной строки тикера — сохраняем на сервере как
     // «от какой цены ждали срабатывания» (поле price_at_creation)
-    const priceEl = document.getElementById(`price-${sym.replace(/[^a-zA-Z0-9]/g, '_')}`);
+    const safeId = currentAlertSymbol.replace(/[^a-zA-Z0-9]/g, '_');
+    const priceEl = document.getElementById(`price-${safeId}`);
     const currentPrice = priceEl ? parseFloat(String(priceEl.textContent).replace(/\s|'/g, '').replace(',', '.')) : NaN;
     const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, {
       method: 'POST',
