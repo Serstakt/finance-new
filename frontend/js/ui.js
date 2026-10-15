@@ -185,168 +185,118 @@ window.switchBottomTab = function(tab) {
   }
 };
 
-window.render = async function() {
-  const currentList = getCurrentList();
-  const container = document.getElementById('ticker-list');
-  if (!container) return;
-  populateListSelector();
+// ==========================================================================
+// ИНКРЕМЕНТАЛЬНАЯ ОТРИСОВКА СПИСКА (KEYED DOM DIFFING)
+// --------------------------------------------------------------------------
+// Раньше каждая перерисовка (автообновление цен каждые 120 с, сортировка,
+// клики по флажкам, сворачивание разделов) выполняла container.innerHTML = ''
+// и пересоздавала все строки заново. Из-за этого:
+//   • сбрасывался скролл списка и hover-состояния;
+//   • мигали логотипы (перезагрузка <img>), скелетоны рисовались заново;
+//   • терялся фокус/выделение, если пользователь взаимодействовал со списком;
+//   • лишние перекладывания DOM-узлов грузили поток рендера при больших списках.
+// Теперь строки создаются один раз и «переживают» перерисовку: обновляются
+// только изменившиеся значения (цена, изменение, флажок, колокольчик), а
+// порядок узлов меняется через insertBefore только при реальной необходимости.
+// ==========================================================================
 
-  // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
-  // Последовательный await для каждого тикера складывал задержки: при медленном
-  // внешнем API список «загружался» бесконечно долго.
-  const dataMap = {};
-  const symbols = currentList.tickers.filter(s => !s.startsWith('SECTION:'));
-  const results = await Promise.all(symbols.map(sym => fetchTickerData(sym)));
-  symbols.forEach((sym, i) => { dataMap[sym] = results[i]; });
+// Кэш DOM-узлов строк: symbol -> { el, state }. Сбрасывается при смене списка.
+window.__rowsCache = { map: new Map(), listId: null };
 
-  const sortedList = sortList(currentList.tickers, dataMap);
-  container.innerHTML = '';
+// Ключ снимка данных для сравнения «изменилось ли значение» (null, если данных нет).
+window.dataSig = function(d) {
+  if (!d) return 'ERR';
+  return `${d.price}|${d.changeValue}|${d.changeDay}`;
+};
 
-  if (sortedList.length > 0 && !currentList.activeSymbol) {
-    const firstTicker = sortedList.find(s => !s.startsWith('SECTION:'));
-    if (firstTicker) { currentList.activeSymbol = firstTicker; saveState(); }
-  }
+// Создание каркаса строки тикера (структура строится один раз; дальше —
+// только точечное обновление текстов/классов в updateRow).
+window.buildRowElement = function(sym) {
+  const div = document.createElement('div');
+  div.className = 'ticker-item';
+  div.dataset.symbol = sym;
+  const safeId = sym.replace(/[^a-zA-Z0-9]/g, '_');
+  const parts = sym.split(':');
+  const baseTicker = parts.length > 1 ? parts[1] : sym;
+  const smartLabUrl = `https://smart-lab.ru/forum/${baseTicker}/`;
 
-  let isCollapsed = false;
-  for (const sym of sortedList) {
-    if (sym.startsWith('SECTION:')) {
-      isCollapsed = currentList.collapsedSections && currentList.collapsedSections.includes(sym);
-      const sectionName = sym.replace('SECTION:', '');
-      const div = document.createElement('div');
-      div.className = 'section-header' + (isCollapsed ? ' collapsed' : '');
-      div.innerHTML = `
-        <span class="drag-handle" title="Перетащить">⋮</span>
-        <span class="section-collapse-btn" title="Свернуть/Развернуть">${isCollapsed ? '▶' : '▼'}</span>
-        <span class="section-title" title="Дважды кликните, чтобы переименовать">${sectionName}</span>
-        <span class="ticker-remove" data-symbol="${sym}" title="Удалить раздел">×</span>`;
-
-      div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!currentList.collapsedSections) currentList.collapsedSections = [];
-        const nowCollapsed = !currentList.collapsedSections.includes(sym);
-        if (nowCollapsed) currentList.collapsedSections.push(sym);
-        else currentList.collapsedSections = currentList.collapsedSections.filter(s => s !== sym);
-        saveState(); render();
-        // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
-        // а не только в localStorage — переживает смену браузера
-        setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
-      });
-
-      div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (confirm(`Удалить раздел "${sectionName}"?`)) {
-          currentList.tickers = currentList.tickers.filter(s => s !== sym);
-          if (currentList.collapsedSections) currentList.collapsedSections = currentList.collapsedSections.filter(s => s !== sym);
-          saveState(); render();
-          await saveOrderToDb(appState.activeListId, currentList.tickers); // удаляем из БД
-        }
-      });
-
-      div.querySelector('.section-title').addEventListener('dblclick', async () => {
-        const newName = prompt('Введите новое название раздела:', sectionName);
-        if (!newName || !newName.trim() || newName.trim() === sectionName) return;
-        const newSectionSymbol = `SECTION:${newName.trim()}`;
-        const index = currentList.tickers.indexOf(sym);
-        if (index !== -1) {
-          currentList.tickers[index] = newSectionSymbol;
-          if (currentList.collapsedSections && currentList.collapsedSections.includes(sym)) {
-            currentList.collapsedSections[currentList.collapsedSections.indexOf(sym)] = newSectionSymbol;
-          }
-          saveState(); render();
-          await saveOrderToDb(appState.activeListId, currentList.tickers); // переименование раздела — в БД
-          log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
-        }
-      });
-      container.appendChild(div);
-      continue;
-    }
-
-    const div = document.createElement('div');
-    div.className = 'ticker-item' + (sym === currentList.activeSymbol ? ' active' : '');
-    if (isCollapsed) div.style.display = 'none';
-
-    const safeId = sym.replace(/[^a-zA-Z0-9]/g, '_');
-    const parts = sym.split(':');
-    const data = dataMap[sym];
-    const fallbackLetter = (parts.length > 1 ? parts[1] : sym).charAt(0);
-    const baseTicker = parts.length > 1 ? parts[1] : sym;
-    const smartLabUrl = `https://smart-lab.ru/forum/${baseTicker}/`;
-
-    const flagColor = appState.favorites[sym] || null;
-    const flagHex = flagColor ? FLAG_COLORS[flagColor].hex : '#363a45';
-    const flagClass = flagColor ? '' : 'empty';
-    const pickerActiveClass = activePickerSymbol === sym ? 'active' : '';
-
-    const bellStatus = getBellStatusForSymbol(sym);
-    let bellClass = 'alert-bell';
-    if (bellStatus === 'active') bellClass += ' active';
-    else if (bellStatus === 'triggered') bellClass += ' triggered';
-
-    // Заметки к тикерам (колонка watchlist_items.note, кэш appState.notes)
-    // больше не редактируются из строк watchlist — весь функционал перенесён
-    // во вкладку «Заметки» под графиком (renderNotesTab / switchBottomTab).
-
-    let logoInnerHtml = buildLogoHtml(sym, baseTicker, data);
-
-    div.innerHTML = `
-      <span class="drag-handle" title="Перетащить">⋮</span>
-      <div class="favorite-wrapper" onclick="toggleFavoritePicker('${sym}', event)" title="${flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет'}">
-        <span class="favorite-flag ${flagClass}" style="color: ${flagHex}">⚑</span>
-        <div class="favorite-picker ${pickerActiveClass}">
-          <span onclick="event.stopPropagation(); setFavorite('${sym}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
-          <span onclick="event.stopPropagation(); setFavorite('${sym}', 'blue')" style="color:#2962ff" title="Синий">🔵</span>
-          <span onclick="event.stopPropagation(); setFavorite('${sym}', 'yellow')" style="color:#ffca28" title="Желтый">🟡</span>
-          <span onclick="event.stopPropagation(); setFavorite('${sym}', 'orange')" style="color:#ff9800" title="Оранжевый">🟠</span>
-          <span onclick="event.stopPropagation(); setFavorite('${sym}', 'green')" style="color:#26a69a" title="Зеленый">🟢</span>
-        </div>
+  div.innerHTML = `
+    <span class="drag-handle" title="Перетащить">⋮</span>
+    <div class="favorite-wrapper" onclick="toggleFavoritePicker('${escapeHtml(sym)}', event)" title="Флажок избранного">
+      <span class="favorite-flag empty" style="color: #363a45">⚑</span>
+      <div class="favorite-picker">
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'blue')" style="color:#2962ff" title="Синий">🔵</span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'yellow')" style="color:#ffca28" title="Желтый">🟡</span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'orange')" style="color:#ff9800" title="Оранжевый">🟠</span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'green')" style="color:#26a69a" title="Зеленый">🟢</span>
       </div>
-      <div class="ticker-logo-container">${logoInnerHtml}</div>
-      <div class="ticker-info">
-        <a href="${smartLabUrl}" target="_blank" rel="noopener noreferrer" class="ticker-symbol-link" title="Открыть ${baseTicker} на Smart-Lab" onclick="event.stopPropagation();">${baseTicker}</a>
-      </div>
-      <div class="ticker-price" id="price-${safeId}">${data?.price ? formatNumber(data.price) : '<div class="skeleton skeleton-price"></div>'}</div>
-      <div class="ticker-change" id="change-val-${safeId}">${data?.changeValue !== undefined && data?.changeValue !== null ? '' : '<div class="skeleton skeleton-change"></div>'}</div>
-      <div class="ticker-change-percent" id="change-pct-${safeId}">${data?.changeDay !== undefined && data?.changeDay !== null ? '' : '<div class="skeleton skeleton-change-pct"></div>'}</div>
-      <span class="alert-bell ${bellClass}" data-symbol="${sym}" onclick="event.stopPropagation(); openAlertModal('${sym}')" title="Настроить ценовое уведомление">🔔</span>
-      <span class="ticker-remove" data-symbol="${sym}" title="Удалить">×</span>`;
+    </div>
+    <div class="ticker-logo-container"></div>
+    <div class="ticker-info">
+      <a href="${smartLabUrl}" target="_blank" rel="noopener noreferrer" class="ticker-symbol-link" title="Открыть ${escapeHtml(baseTicker)} на Smart-Lab" onclick="event.stopPropagation();">${escapeHtml(baseTicker)}</a>
+    </div>
+    <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
+    <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
+    <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
+    <span class="alert-bell" data-symbol="${escapeHtml(sym)}" onclick="event.stopPropagation(); openAlertModal('${escapeHtml(sym)}')" title="Настроить ценовое уведомление">🔔</span>
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить">×</span>`;
 
-    div.addEventListener('click', (e) => {
-      if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') || e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') || e.target.classList.contains('alert-bell')) return;
-      currentList.activeSymbol = sym;
-      saveState();
-      createChart(sym);
-      document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
-      div.classList.add('active');
-    });
+  // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
+  // жизни узла (раньше слушатель создавался при каждой перерисовке).
+  div.addEventListener('click', (e) => {
+    if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') ||
+        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') ||
+        e.target.classList.contains('alert-bell')) return;
+    const cur = getCurrentList();
+    cur.activeSymbol = sym;
+    saveState();
+    createChart(sym);
+    document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
+    div.classList.add('active');
+  });
 
-    div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (appState.activeListId.startsWith('fav_')) {
-        setFavorite(sym, null);
-      } else {
-        currentList.tickers = currentList.tickers.filter(s => s !== sym);
-        if (currentList.activeSymbol === sym) {
-          currentList.activeSymbol = currentList.tickers.find(s => !s.startsWith('SECTION:')) || '';
-        }
-        saveState(); render();
-        await removeTickerFromDb(appState.activeListId, sym); // удаляем из БД
+  div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const cur = getCurrentList();
+    if (appState.activeListId.startsWith('fav_')) {
+      setFavorite(sym, null);
+    } else {
+      cur.tickers = cur.tickers.filter(s => s !== sym);
+      if (cur.activeSymbol === sym) {
+        cur.activeSymbol = cur.tickers.find(s => !s.startsWith('SECTION:')) || '';
       }
-    });
+      saveState(); render();
+      await removeTickerFromDb(appState.activeListId, sym); // удаляем из БД
+    }
+  });
 
-    const priceEl = div.querySelector(`#price-${safeId}`);
-    const changeValEl = div.querySelector(`#change-val-${safeId}`);
-    const changePctEl = div.querySelector(`#change-pct-${safeId}`);
+  return div;
+};
 
+// Точечное обновление строки: пишем в DOM только то, что реально изменилось
+// (сравнение по data-подписям — без лишних innerHTML/textContent записей).
+window.updateRow = function(div, sym, data, list, prev) {
+  const safeId = sym.replace(/[^a-zA-Z0-9]/g, '_');
+  const priceEl = div.querySelector(`#price-${safeId}`);
+  const changeValEl = div.querySelector(`#change-val-${safeId}`);
+  const changePctEl = div.querySelector(`#change-pct-${safeId}`);
+  if (!priceEl || !changeValEl || !changePctEl) return;
+
+  const newSig = dataSig(data);
+  const changed = newSig !== prev.sig;
+  const wasError = prev.sig === 'ERR';
+  const isError = newSig === 'ERR';
+
+  if (changed) {
     if (data && data.price) {
       priceEl.textContent = formatNumber(data.price);
-      // Бэкенд-проверка алертов «по горячим следам»: сразу после обновления
-      // цен просим сервер проверить активные условия (POST /api/alerts/check).
-      // Фоновый цикл сервера делает то же самое каждые 60 с, но при открытом
-      // терминале реакция должна быть мгновенной. Повторный запуск отменяет
-      // предыдущий таймер — синхронизация не наслаивается при автообновлении.
-      clearTimeout(window.__alertSyncTimer);
-      window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
-
+      // flash-подсветка только при переходе цена->цена (не при первом появлении)
+      if (prev.sig !== 'INIT' && !wasError) {
+        priceEl.classList.remove('price-flash');
+        void priceEl.offsetWidth; // рестарт CSS-анимации
+        priceEl.classList.add('price-flash');
+      }
       if (data.changeValue !== undefined && data.changeValue !== null) {
         changeValEl.innerHTML = formatChange(data.changeValue, false);
         changeValEl.className = `ticker-change ${data.changeValue >= 0 ? 'positive-bg' : 'negative-bg'}`;
@@ -361,21 +311,241 @@ window.render = async function() {
         changePctEl.innerHTML = '<span class="error-text">—</span>';
         changePctEl.className = 'ticker-change-percent';
       }
-    } else {
-      priceEl.innerHTML = '<span class="error-text" title="Возможно, временная блокировка MOEX">Сбой сети</span>';
-      changeValEl.innerHTML = '<span class="error-text">—</span>';
-      changeValEl.className = 'ticker-change';
-      changePctEl.innerHTML = '<span class="error-text">—</span>';
-      changePctEl.className = 'ticker-change-percent';
+    } else if (isError && prev.sig !== 'INIT') {
+      // Данные пришли, но пустые/ошибка сети. Если раньше была нормальная цена —
+      // оставляем её показывать (не «мигаем» ошибкой при временном сбое MOEX).
+      if (wasError || prev.sig === 'INIT') {
+        priceEl.innerHTML = '<span class="error-text" title="Возможно, временная блокировка MOEX">Сбой сети</span>';
+        changeValEl.innerHTML = '<span class="error-text">—</span>';
+        changeValEl.className = 'ticker-change';
+        changePctEl.innerHTML = '<span class="error-text">—</span>';
+        changePctEl.className = 'ticker-change-percent';
+      }
     }
-
-    container.appendChild(div);
+    prev.sig = newSig;
   }
 
-  if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
-    createChart(currentList.activeSymbol);
-  } else {
-    document.getElementById('tradingview_chart').innerHTML = '<div class="error-msg" style="display:flex;align-items:center;justify-content:center;height:100%;">Добавьте тикер в список</div>';
+  // Логотип: перестраиваем HTML только если URL реально сменился
+  // (иначе <img> перезагружался бы при каждой перерисовке и мигал).
+  const parts = sym.split(':');
+  const baseTicker = parts.length > 1 ? parts[1] : sym;
+  const logoContainer = div.querySelector('.ticker-logo-container');
+  const wantLogo = buildLogoHtml(sym, baseTicker, data);
+  if (wantLogo !== prev.logoHtml) {
+    logoContainer.innerHTML = wantLogo;
+    prev.logoHtml = wantLogo;
+  }
+
+  // Флажок избранного
+  const wrapper = div.querySelector('.favorite-wrapper');
+  const flagEl = wrapper.querySelector('.favorite-flag');
+  const flagColor = appState.favorites[sym] || null;
+  const flagHex = flagColor ? FLAG_COLORS[flagColor].hex : '#363a45';
+  const flagCls = 'favorite-flag' + (flagColor ? '' : ' empty');
+  if (flagColor !== prev.flag) {
+    flagEl.style.color = flagHex;
+    flagEl.className = flagCls;
+    wrapper.title = flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет';
+    prev.flag = flagColor;
+  }
+  // Открытый пикер цветов — переходящее UI-состояние, синхронизируем всегда
+  const picker = wrapper.querySelector('.favorite-picker');
+  picker.classList.toggle('active', activePickerSymbol === sym);
+
+  // Колокольчик алерта
+  const bell = div.querySelector('.alert-bell');
+  const bellStatus = getBellStatusForSymbol(sym);
+  const bellCls = 'alert-bell' + (bellStatus === 'active' ? ' active' : bellStatus === 'triggered' ? ' triggered' : '');
+  if (bellCls !== prev.bellCls) {
+    bell.className = bellCls;
+    prev.bellCls = bellCls;
+  }
+
+  // Подсветка активной строки
+  const isActive = sym === list.activeSymbol;
+  if (isActive !== prev.active) {
+    div.classList.toggle('active', isActive);
+    prev.active = isActive;
+  }
+};
+
+// Каркас секции создаётся один раз; обработчики живут на самом узле.
+window.buildSectionElement = function(sym) {
+  const div = document.createElement('div');
+  div.className = 'section-header';
+  div.dataset.symbol = sym;
+  const sectionName = sym.replace('SECTION:', '');
+  div.innerHTML = `
+    <span class="drag-handle" title="Перетащить">⋮</span>
+    <span class="section-collapse-btn" title="Свернуть/Развернуть">▼</span>
+    <span class="section-title" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить раздел">×</span>`;
+
+  div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const cur = getCurrentList();
+    if (!cur.collapsedSections) cur.collapsedSections = [];
+    const nowCollapsed = !cur.collapsedSections.includes(sym);
+    if (nowCollapsed) cur.collapsedSections.push(sym);
+    else cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
+    saveState();
+    // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
+    // а не только в localStorage — переживает смену браузера
+    setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
+    // Инкрементально: меняем только стрелку и видимость строк этой секции —
+    // без полного render() и без повторного запроса цен.
+    applySectionCollapse(cur);
+  });
+
+  div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (confirm(`Удалить раздел "${sectionName}"?`)) {
+      const cur = getCurrentList();
+      cur.tickers = cur.tickers.filter(s => s !== sym);
+      if (cur.collapsedSections) cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
+      saveState(); render();
+      await saveOrderToDb(appState.activeListId, cur.tickers); // удаляем из БД
+    }
+  });
+
+  div.querySelector('.section-title').addEventListener('dblclick', async () => {
+    const newName = prompt('Введите новое название раздела:', sectionName);
+    if (!newName || !newName.trim() || newName.trim() === sectionName) return;
+    const newSectionSymbol = `SECTION:${newName.trim()}`;
+    const cur = getCurrentList();
+    const index = cur.tickers.indexOf(sym);
+    if (index !== -1) {
+      cur.tickers[index] = newSectionSymbol;
+      if (cur.collapsedSections && cur.collapsedSections.includes(sym)) {
+        cur.collapsedSections[cur.collapsedSections.indexOf(sym)] = newSectionSymbol;
+      }
+      saveState(); render();
+      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД
+      log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
+    }
+  });
+
+  return div;
+};
+
+window.updateSectionElement = function(div, sym, list) {
+  const collapsed = !!(list.collapsedSections && list.collapsedSections.includes(sym));
+  div.classList.toggle('collapsed', collapsed);
+  const btn = div.querySelector('.section-collapse-btn');
+  const arrow = collapsed ? '▶' : '▼';
+  if (btn.textContent !== arrow) btn.textContent = arrow;
+};
+
+// Применяет свёрнутость секций к уже существующим строкам (без пересборки DOM).
+window.applySectionCollapse = function(list) {
+  const container = document.getElementById('ticker-list');
+  if (!container) return;
+  let isCollapsed = false;
+  container.querySelectorAll(':scope > .section-header, :scope > .ticker-item').forEach(node => {
+    if (node.classList.contains('section-header')) {
+      const sym = node.dataset.symbol || '';
+      isCollapsed = !!(list.collapsedSections && list.collapsedSections.includes(sym));
+      updateSectionElement(node, sym, list);
+    } else {
+      node.style.display = isCollapsed ? 'none' : '';
+    }
+  });
+};
+
+window.render = async function() {
+  const currentList = getCurrentList();
+  const container = document.getElementById('ticker-list');
+  if (!container) return;
+  populateListSelector();
+
+  // Список полностью сменился — сбрасываем кэш DOM-узлов (старые узлы относятся
+  // другому списку: другие тикеры, флажки, заметки). Контейнер при этом очищается,
+  // иначе diff не сможет корректно удалить чужие строки.
+  if (window.__rowsCache.listId !== appState.activeListId) {
+    window.__rowsCache = { map: new Map(), listId: appState.activeListId };
+    container.innerHTML = '';
+  }
+  const cacheMap = window.__rowsCache.map;
+
+  // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
+  // Последовательный await для каждого тикера складывал задержки: при медленном
+  // внешнем API список «загружался» бесконечно долго.
+  const dataMap = {};
+  const symbols = currentList.tickers.filter(s => !s.startsWith('SECTION:'));
+  const results = await Promise.all(symbols.map(sym => fetchTickerData(sym)));
+  symbols.forEach((sym, i) => { dataMap[sym] = results[i]; });
+
+  // Пока ждали ответа API, пользователь мог переключить список — не рисуем
+  // устаревшие данные в чужой DOM (иначе цены «переехали» бы между списками).
+  if (window.__rowsCache.listId !== appState.activeListId) return;
+
+  const sortedList = sortList(currentList.tickers, dataMap);
+
+  if (sortedList.length > 0 && !currentList.activeSymbol) {
+    const firstTicker = sortedList.find(s => !s.startsWith('SECTION:'));
+    if (firstTicker) { currentList.activeSymbol = firstTicker; saveState(); }
+  }
+
+  // === KEYED DIFF: узлы создаются один раз, дальше только точечные правки ===
+  const seen = new Set();
+  let cursor = container.firstElementChild;
+  let isCollapsed = false;
+
+  for (const sym of sortedList) {
+    if (sym.startsWith('SECTION:')) {
+      let node = cacheMap.get(sym);
+      if (!node) { node = buildSectionElement(sym); cacheMap.set(sym, node); }
+      seen.add(sym);
+      updateSectionElement(node, sym, currentList);
+      isCollapsed = !!(currentList.collapsedSections && currentList.collapsedSections.includes(sym));
+      if (cursor !== node) container.insertBefore(node, cursor);
+      else cursor = cursor.nextElementSibling;
+      continue;
+    }
+
+    let entry = cacheMap.get(sym);
+    if (!entry) {
+      entry = { el: buildRowElement(sym), state: { sig: 'INIT', logoHtml: null, flag: undefined, bellCls: null, active: null } };
+      cacheMap.set(sym, entry);
+    }
+    seen.add(sym);
+    updateRow(entry.el, sym, dataMap[sym], currentList, entry.state);
+    entry.el.style.display = isCollapsed ? 'none' : '';
+    if (cursor !== entry.el) container.insertBefore(entry.el, cursor);
+    else cursor = cursor.nextElementSibling;
+  }
+  cursor = container.lastElementChild;
+  while (cursor) {
+    const prev = cursor.previousElementSibling;
+    if (!seen.has(cursor.dataset.symbol || '')) {
+      cursor.remove();          // удалённые тикеры/секции
+      cacheMap.delete(cursor.dataset.symbol); // чистим кэш узлов, чтобы он не рос бесконечно
+    }
+    cursor = prev;
+  }
+
+  // Проверка алертов на бэкенде «по горячим следам» — ОДИН раз за перерисовку
+  // (раньше таймер перезапускался из каждой строки). Фоновый цикл сервера
+  // делает то же самое каждые 60 с, но при открытом терминале реакция мгновенна.
+  if (symbols.some(s => dataMap[s] && dataMap[s].price)) {
+    clearTimeout(window.__alertSyncTimer);
+    window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
+  }
+
+  // График: пересоздаём TradingView-виджет только при СМЕНЕ активного тикера.
+  // При автообновлении цен/сортировке вызов createChart с тем же символом
+  // приводил к лишним setSymbol/реконструкциям iframe — теперь это исключено.
+  const chartDiv = document.getElementById('tradingview_chart');
+  if (chartDiv) {
+    if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
+      if (chartDiv.dataset.activeSymbol !== currentList.activeSymbol) {
+        chartDiv.dataset.activeSymbol = currentList.activeSymbol;
+        createChart(currentList.activeSymbol);
+      }
+    } else {
+      delete chartDiv.dataset.activeSymbol;
+      chartDiv.innerHTML = '<div class="error-msg" style="display:flex;align-items:center;justify-content:center;height:100%;">Добавьте тикер в список</div>';
+    }
   }
 
   // Панель «Новости / Заметки»: синхронизируем полотно заметок с выбранным
@@ -671,6 +841,13 @@ window.createChart = function(symbol) {
     console.log("📊 [DEBUG] createChart вызвана для:", symbol);
     const chartDiv = document.getElementById('tradingview_chart');
     if (!chartDiv) return;
+
+    // Идемпотентность: повторный вызов с тем же символом (например, из
+    // navigateTo или addTicker для уже открытого тикера) не должен заново
+    // дёргать widget.setSymbol и перезагружать новости — это дорого и
+    // вызывает мерцание графика.
+    if (chartDiv.dataset.activeSymbol === symbol && (window.widget || typeof TradingView === 'undefined')) return;
+    chartDiv.dataset.activeSymbol = symbol;
 
     if (typeof TradingView === 'undefined') {
         chartDiv.innerHTML = '<div class="error-msg">⚠️ Ошибка загрузки скрипта TradingView.</div>';
