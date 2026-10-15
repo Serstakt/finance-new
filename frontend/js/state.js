@@ -34,10 +34,17 @@ window.currentAlertSymbol = null;
 window.appState = {
   activeListId: 'default',
   favorites: {},
+  // Заметки к тикерам: {"list_id|SYMBOL": "текст"}. Кэш колонки БД
+  // watchlist_items.note (источник истины — БД, см. loadNotesFromDb/syncListWithDb).
+  notes: {},
   lists: {
     'default': { name: 'Основной', tickers: ['MOEX:SBER', 'MOEX:IMOEX'], activeSymbol: 'MOEX:SBER', collapsedSections: [] }
   }
 };
+
+// Ключ для appState.notes: заметка привязана к паре (список, тикер),
+// поэтому в разных списках у одного тикера могут быть разные тезисы.
+window.noteKey = function(listId, symbol) { return `${listId}|${symbol}`; };
 
 // === ФУНКЦИИ СОСТОЯНИЯ ===
 window.loadState = function() {
@@ -46,6 +53,7 @@ window.loadState = function() {
     if (saved) {
       appState = JSON.parse(saved);
       if (!appState.favorites) appState.favorites = {};
+      if (!appState.notes) appState.notes = {};
       for (const key in appState.lists) {
         if (!appState.lists[key].collapsedSections) appState.lists[key].collapsedSections = [];
       }
@@ -89,8 +97,8 @@ window.syncListWithDb = async function(listId) {
     const list = appState.lists[listId];
     if (!list) return;
     const dbSymbols = data.symbols || [];
-    // Новые колонки БД: flag_color и collapsed у каждого элемента.
-    // Это источник истины для избранного и свёрнутых разделов (не localStorage).
+    // Новые колонки БД: flag_color, collapsed и note у каждого элемента.
+    // Это источник истины для избранного, свёрнутых разделов и заметок (не localStorage).
     const dbItems = Array.isArray(data.items) ? data.items : null;
 
     // Название списка тянем из БД: оно является источником истины при загрузке раздела.
@@ -117,12 +125,13 @@ window.syncListWithDb = async function(listId) {
     if (dbSymbols.length === 0 && list.tickers.length > 0) {
       // Заодно сохраняем текущее название в БД, чтобы дальше оно жило на сервере
       await window.renameListInDb(listId, list.name);
-      // Передаём и флажки/свёрнутость локальных элементов (одноразовая
-      // миграция localStorage -> БД), чтобы избранное не потерялось.
+      // Передаём флажки/свёрнутость/заметки локальных элементов (одноразовая
+      // миграция localStorage -> БД), чтобы избранное и заметки не потерялись.
       const items = list.tickers.map(sym => ({
         symbol: sym,
         flag_color: (!listId.startsWith('fav_') && appState.favorites[sym]) || null,
-        collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym))
+        collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym)),
+        note: appState.notes[noteKey(listId, sym)] || null
       }));
       await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
         method: 'POST',
@@ -137,8 +146,8 @@ window.syncListWithDb = async function(listId) {
 
     list.tickers = dbSymbols;
 
-    // Флажки и свёрнутые разделы: источник истины — колонки БД
-    // (watchlist_items.flag_color / collapsed). Для fav_-списков (они
+    // Флажки, свёрнутые разделы и заметки: источник истины — колонки БД
+    // (watchlist_items.flag_color / collapsed / note). Для fav_-списков (они
     // вычисляются из флага родительского списка) ничего не делаем.
     if (dbItems && !listId.startsWith('fav_')) {
       let flagsChanged = false;
@@ -151,6 +160,11 @@ window.syncListWithDb = async function(listId) {
         } else if (prev) {
           delete appState.favorites[sym]; flagsChanged = true;
         }
+        // заметка элемента этого списка (ключ list_id|SYMBOL)
+        const nk = noteKey(listId, sym);
+        const dbNote = it.note || null;
+        if (dbNote) appState.notes[nk] = dbNote;
+        else delete appState.notes[nk];
       }
       if (flagsChanged) rebuildFavoriteLists();
       // collapsed разделов из БД перезаписывают локальный список
@@ -380,13 +394,14 @@ window.saveOrderToDb = async function(listId, symbols) {
   if (!listId || listId.startsWith('fav_')) return;
   await window.waitForListNameSaved(listId);
   const listName = (appState.lists[listId] && appState.lists[listId].name) || null;
-  // Флажки и свёрнутость разделов едут вместе с порядком: если элемент будет
-  // пересоздан в БД, его flag_color/collapsed не потеряются.
+  // Флажки и свёрнутость/заметки едут вместе с порядком: если элемент будет
+  // пересоздан в БД, его flag_color/collapsed/note не потеряются.
   const items = (symbols || []).map(sym => ({
     symbol: sym,
     flag_color: (!sym.startsWith('SECTION:') && appState.favorites[sym]) || null,
     collapsed: !!(appState.lists[listId] && appState.lists[listId].collapsedSections
-                  && appState.lists[listId].collapsedSections.includes(sym))
+                  && appState.lists[listId].collapsedSections.includes(sym)),
+    note: (!sym.startsWith('SECTION:') && appState.notes[noteKey(listId, sym)]) || null
   }));
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
@@ -433,6 +448,28 @@ window.setCollapsedInDb = async function(listId, sectionSymbol, collapsed) {
     return true;
   } catch (e) {
     if (typeof log === 'function') log('Не удалось сохранить состояние раздела в БД: ' + e.message, 'error');
+    return false;
+  }
+};
+
+// Ставит/обновляет/снимает текстовую заметку элемента в БД
+// (watchlist_items.note). Заметка привязана к паре (список, тикер): у одного
+// тикера в разных списках могут быть разные тезисы «почему слежу».
+// Локальный кэш appState.notes обновляет вызывающий код (main.js editNote),
+// чтобы UI перерисовался мгновенно без перезагрузки из БД.
+window.setNoteInDb = async function(listId, symbol, note) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, symbol: symbol, note: note || null })
+    }, 15000);
+    if (res.status === 404) return true; // элемента нет в этом списке — не ошибка
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось сохранить заметку в БД: ' + e.message, 'error');
     return false;
   }
 };
@@ -489,6 +526,47 @@ window.loadFlagsFromDb = async function() {
     return flags;
   } catch (e) {
     if (typeof log === 'function') log('Не удалось загрузить флажки из БД: ' + e.message, 'error');
+    return {};
+  }
+};
+
+// Загружает ВСЕ заметки из БД (GET /api/watchlist-notes) и применяет их к
+// appState.notes. Вызывается при старте/открытии раздела, чтобы иконки 📝
+// восстановились в новом браузере без localStorage (аналог loadFlagsFromDb).
+window.loadNotesFromDb = async function() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist-notes`, {}, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const notes = data.notes || {};
+    let changed = false;
+    // Сначала убираем локальные записи для обычных списков, которых больше
+    // нет в БД (источник истины — БД; заметки могли быть удалены на другом
+    // устройстве). Ключ имеет вид list_id|SYMBOL, '|' не встречается в id.
+    for (const key of Object.keys(appState.notes)) {
+      const sep = key.indexOf('|');
+      if (sep === -1) continue;
+      const listId = key.slice(0, sep);
+      if (listId.startsWith('fav_')) continue;
+      if (!(key in notes)) { delete appState.notes[key]; changed = true; }
+    }
+    for (const [key, note] of Object.entries(notes)) {
+      const sep = key.indexOf('|');
+      if (sep === -1) continue;
+      const listId = key.slice(0, sep);
+      if (listId.startsWith('fav_')) continue; // служебные списки — производные
+      if (appState.notes[key] !== note) {
+        appState.notes[key] = note;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveState();
+      if (typeof render === 'function' && sessionStorage.getItem('activePage') === 'watchlist') render();
+    }
+    return notes;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось загрузить заметки из БД: ' + e.message, 'error');
     return {};
   }
 };

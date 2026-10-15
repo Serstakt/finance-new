@@ -18,6 +18,9 @@ safe_create_all()
 # Допустимые цвета флажков (должны совпадать с FLAG_COLORS на фронтенде).
 VALID_FLAG_COLORS = {"red", "blue", "yellow", "orange", "green"}
 
+# Максимальная длина заметки к тикеру (колонка watchlist_items.note).
+NOTE_MAX_LEN = 500
+
 
 def _normalize_symbol(symbol: str) -> str:
     """Нормализация тикера: верхний регистр; у SECTION:... сохраняем имя раздела."""
@@ -28,7 +31,7 @@ def _normalize_symbol(symbol: str) -> str:
 
 
 def migrate_columns() -> None:
-    """Добавляет колонки flag_color/collapsed в существующую таблицу watchlist_items.
+    """Добавляет колонки flag_color/collapsed/note в существующую таблицу watchlist_items.
 
     create_all не изменяет уже созданные таблицы, а SQLite не поддерживает
     ALTER TABLE ... ADD COLUMN IF NOT EXISTS, поэтому проверяем PRAGMA table_info
@@ -45,6 +48,8 @@ def migrate_columns() -> None:
                 con.execute(
                     "ALTER TABLE watchlist_items ADD COLUMN collapsed BOOLEAN NOT NULL DEFAULT 0"
                 )
+            if "note" not in cols:
+                con.execute("ALTER TABLE watchlist_items ADD COLUMN note TEXT")
             con.commit()
         finally:
             con.close()
@@ -206,7 +211,7 @@ def delete_list(list_id: str) -> dict:
 def get_list_symbols(list_id: str) -> list[dict]:
     """Возвращает элементы списка в порядке позиции.
 
-    Каждый элемент — dict {symbol, position, flag_color, collapsed}.
+    Каждый элемент — dict {symbol, position, flag_color, collapsed, note}.
     """
     with get_session() as db:
             rows = (
@@ -221,6 +226,7 @@ def get_list_symbols(list_id: str) -> list[dict]:
                     "position": r.position,
                     "flag_color": r.flag_color,
                     "collapsed": bool(r.collapsed),
+                    "note": r.note,
                 }
                 for r in rows
             ]
@@ -281,6 +287,54 @@ def set_collapsed(list_id: str, section_symbol: str, collapsed: bool) -> dict:
         row.collapsed = bool(collapsed)
         db.commit()
         return {"status": "ok", "list_id": list_id, "symbol": symbol, "collapsed": bool(collapsed)}
+
+
+def normalize_note(note: str | None) -> str | None:
+    """Приводит заметку к виду для хранения: обрезает пробелы, схлопывает
+    переводы строк в один (заметка — однострочный tooltip), ограничивает длину.
+
+    Пустая/None возвращает None (заметка снимается).
+    """
+    if note is None:
+        return None
+    cleaned = " ".join(str(note).split())  # strip + collapse \n, \t, множественные пробелы
+    if not cleaned:
+        return None
+    return cleaned[:NOTE_MAX_LEN]
+
+
+def set_note(list_id: str, symbol: str, note: str | None) -> dict:
+    """Ставит/обновляет/снимает текстовую заметку у элемента списка.
+
+    Заметка хранится в колонке watchlist_items.note (TEXT) — тезис «почему
+    слежу за тикером» живёт в БД и не теряется при смене браузера.
+    note=None/"" очищает заметку. Возвращает status=not_found, если элемента нет.
+    """
+    symbol = _normalize_symbol(symbol)
+    cleaned = normalize_note(note)
+    with get_session() as db:
+        row = (
+            db.query(WatchlistItem)
+            .filter(WatchlistItem.list_id == list_id, WatchlistItem.symbol == symbol)
+            .first()
+        )
+        if not row:
+            return {"status": "not_found", "list_id": list_id, "symbol": symbol}
+        row.note = cleaned
+        db.commit()
+        return {"status": "ok", "list_id": list_id, "symbol": symbol, "note": cleaned}
+
+
+def get_all_notes() -> dict[str, str]:
+    """Все непустые заметки из БД: {"list_id|SYMBOL": note}.
+
+    Аналог get_all_flags: фронтенд получает их разом при загрузке раздела,
+    чтобы показать иконки 📝 даже в списках, которые ещё не открывались
+    (syncListWithDb подтягивает note и для активного списка).
+    """
+    with get_session() as db:
+        rows = db.query(WatchlistItem).filter(WatchlistItem.note.isnot(None)).all()
+        return {f"{r.list_id}|{r.symbol}": r.note for r in rows if r.note}
 
 
 def add_symbol(list_id: str, symbol: str, list_name: str | None = None) -> dict:
@@ -365,19 +419,20 @@ def set_order(
 ) -> dict:
     """Заменяет содержимое/порядок списка на переданный (используется для drag&drop).
 
-    Флажки и состояние свёрнутости разделов сохраняются за существующими
-    строками (обновляется только position); новые элементы получают значения
-    из items (если фронтенд передал flag_color/collapsed) либо умолчания.
-    items: необязательный список {symbol, flag_color?, collapsed?} — источник
-    флажков для новых/пересозданных строк.
+    Флажки, состояние свёрнутости и заметки существующих элементов сохраняются
+    за строками БД (обновляется только position); новые элементы получают
+    значения из items (если фронтенд передал flag_color/collapsed/note) либо
+    умолчания.
+    items: необязательный список {symbol, flag_color?, collapsed?, note?} —
+    источник метаданных для новых/пересозданных строк.
     """
     cleaned = []
     for s in symbols:
         if not s or not s.strip():
             continue
         cleaned.append(_normalize_symbol(s))
-    # map symbol -> (flag_color, collapsed) из расширенного payload
-    meta: dict[str, tuple[str | None, bool]] = {}
+    # map symbol -> (flag_color, collapsed, note) из расширенного payload
+    meta: dict[str, tuple[str | None, bool, str | None]] = {}
     for it in (items or []):
         sym = _normalize_symbol(str(it.get("symbol", "")))
         if not sym:
@@ -386,7 +441,7 @@ def set_order(
         color = str(color).strip().lower() if color else None
         if color and color not in VALID_FLAG_COLORS:
             color = None
-        meta[sym] = (color, bool(it.get("collapsed")))
+        meta[sym] = (color, bool(it.get("collapsed")), normalize_note(it.get("note")))
     ensure_list(list_id, list_name)
     with get_session() as db:
             old = db.query(WatchlistItem).filter(WatchlistItem.list_id == list_id).all()
@@ -403,10 +458,10 @@ def set_order(
                 if row:
                     row.position = i
                 else:
-                    color, collapsed = meta.get(sym, (None, False))
+                    color, collapsed, note = meta.get(sym, (None, False, None))
                     db.add(WatchlistItem(
                         list_id=list_id, symbol=sym, position=i,
-                        flag_color=color, collapsed=collapsed,
+                        flag_color=color, collapsed=collapsed, note=note,
                     ))
             db.commit()
             return {"status": "ok", "list_id": list_id, "count": len(cleaned)}

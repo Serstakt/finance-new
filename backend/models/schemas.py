@@ -37,10 +37,11 @@ class WatchlistRemove(BaseModel):
 
 
 class WatchlistOrderItem(BaseModel):
-    """Расширенный элемент для /order: порядок + флажок/свёрнутость."""
+    """Расширенный элемент для /order: порядок + флажок/свёрнутость/заметка."""
     symbol: str
     flag_color: Optional[str] = None
     collapsed: Optional[bool] = None
+    note: Optional[str] = None
 
 
 class WatchlistOrder(BaseModel):
@@ -48,9 +49,9 @@ class WatchlistOrder(BaseModel):
     symbols: List[str]
     # См. WatchlistAdd: настоящее название списка при автосоздании строки в watchlists.
     list_name: str | None = None
-    # Необязательные метаданные (flag_color/collapsed) — нужны, чтобы при
-    # пересоздании строк флажки не терялись. Для существующих элементов БД
-    # значения сохраняются автоматически, даже если items не передан.
+    # Необязательные метаданные (flag_color/collapsed/note) — нужны, чтобы при
+    # пересоздании строк флажки и заметки не терялись. Для существующих элементов
+    # БД значения сохраняются автоматически, даже если items не передан.
     items: Optional[List[WatchlistOrderItem]] = None
 
 
@@ -67,6 +68,17 @@ class WatchlistCollapse(BaseModel):
     list_id: str = "default"
     symbol: str  # SECTION:<название>
     collapsed: bool = True
+
+
+class WatchlistNote(BaseModel):
+    """Постановка/обновление/снятие текстовой заметки к тикеру элемента списка.
+
+    note=None/"" очищает заметку; иначе сохраняется в watchlist_items.note
+    (обрезается до NOTE_MAX_LEN символов на бэкенде).
+    """
+    list_id: str = "default"
+    symbol: str
+    note: Optional[str] = None
 
 
 class WatchlistRename(BaseModel):
