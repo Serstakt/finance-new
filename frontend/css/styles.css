@@ -376,11 +376,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #markup-toolbar button.active { color: #ffca28; border-color: #ffca28; background: #313743; }
 #markup-toolbar #markup-status { font-size: 11px; color: #787b86; margin-left: 4px; }
 
-/* Прозрачный холст разметки: лежит над iframe графика, но НЕ перехватывает
-   мышь, пока активен инструмент рисования (pointer-events включает JS). */
+/* Прозрачный холст разметки: лежит НАД iframe графика, но прикреплён к
+   #chart-container (внутри #tradingview_chart вёрстку перезаписывает сам
+   виджет TV). Пока активен инструмент рисования, pointer-events включает JS.
+   Растягивается JS-ом (style.width/height) ровно по контейнеру графика —
+   чтобы не перекрывать панель «Новости / Заметки» и шкалу времени снизу. */
 #markup-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   z-index: 10;
   pointer-events: none;
 }

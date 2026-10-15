@@ -101,14 +101,17 @@ window.persistActiveMarkup = function() {
 
 // --- Создание/синхронизация canvas -----------------------------------------
 
+// ВАЖНО: canvas/hint вешаем на #chart-container, а НЕ внутрь #tradingview_chart.
+// Виджет TradingView при инициализации полностью перезаписывает innerHTML
+// своего контейнера (tv.js делает container.innerHTML = ...), поэтому узлы,
+// добавленные внутрь #tradingview_chart, уничтожаются — клики «не работали».
 window.ensureOverlayCanvas = function() {
-  const chartBox = document.getElementById('tradingview_chart');
+  const chartBox = document.getElementById('chart-container')
+                || document.getElementById('tradingview_chart');
   if (!chartBox) return null;
   if (window.__overlayCanvas && window.__overlayCanvas.parentElement === chartBox) {
     return window.__overlayCanvas;
   }
-  // TradingView сам создаёт внутри контейнера div с position:relative —
-  // делаем его позиционированными родителем для canvas, если вдруг нет.
   if (getComputedStyle(chartBox).position === 'static') {
     chartBox.style.position = 'relative';
   }
@@ -127,18 +130,34 @@ window.ensureOverlayCanvas = function() {
   return canvas;
 };
 
+// Холст прикреплён к #chart-container, но должен покрывать ровно контейнер
+// графика #tradingview_chart (чтобы не перекрывать панель новостей и шкалу
+// времени). Поэтому растягиваем его через style.width/height и учитываем
+// смещение графика относительно холста (top/left offsets).
+window.overlayGeometry = function() {
+  const canvas = window.__overlayCanvas;
+  if (!canvas) return null;
+  const host = canvas.parentElement; // #chart-container
+  const tvBox = document.getElementById('tradingview_chart');
+  if (!host || !tvBox) return null;
+  const rh = host.getBoundingClientRect();
+  const rt = tvBox.getBoundingClientRect();
+  return { left: rt.left - rh.left, top: rt.top - rh.top, w: rt.width, h: rt.height };
+};
+
 window.resizeOverlayCanvas = function() {
   const canvas = window.__overlayCanvas;
-  const chartBox = document.getElementById('tradingview_chart');
-  if (!canvas || !chartBox) return;
+  const g = overlayGeometry();
+  if (!canvas || !g || g.w <= 0 || g.h <= 0) return;
   const dpr = window.devicePixelRatio || 1;
-  const w = chartBox.clientWidth, h = chartBox.clientHeight;
-  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+  canvas.style.left = Math.round(g.left) + 'px';
+  canvas.style.top = Math.round(g.top) + 'px';
+  canvas.style.width = Math.round(g.w) + 'px';
+  canvas.style.height = Math.round(g.h) + 'px';
+  if (canvas.width !== Math.round(g.w * dpr) || canvas.height !== Math.round(g.h * dpr)) {
+    canvas.width = Math.round(g.w * dpr);
+    canvas.height = Math.round(g.h * dpr);
   }
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 };
@@ -146,24 +165,38 @@ window.resizeOverlayCanvas = function() {
 // --- Перевод координат: цена/время <-> пиксели ------------------------------
 
 // getChartScaleInfo берёт данные из iframe-а виджета; может вернуть null,
-// если scale ещё не готов. height задаётся явно (canvas = размер контейнера).
+// если scale ещё не готов. height = высота ОБЛАСТИ ГРАФИКА: полотно лежит на
+// #chart-container и CSS-ом ограничено снизу панелью новостей (bottom:120px),
+// а сверху — стандартной панелью инструментов TradingView (~38px внутри
+// контейнера графика). Координаты кликов/рисования — в системе полотна.
+const TV_TOOLBAR_H = 38; // примерная высота верхней панели tv.js
+
+function chartAreaHeight() {
+  const canvas = window.__overlayCanvas;
+  if (!canvas) return 400;
+  const h = canvas.getBoundingClientRect().height - TV_TOOLBAR_H;
+  return Math.max(h, 100);
+}
+
 window.priceToY = function(price) {
   try {
     const info = window.widget && window.widgetReady
-      ? window.widget.getChartScaleInfo(window.__overlayCanvas?.clientHeight || 400)
+      ? window.widget.getChartScaleInfo(chartAreaHeight())
       : null;
     if (!info || !isFinite(info.from) || !isFinite(info.to) || info.height <= 0) return null;
-    return info.height - ((price - info.from) / (info.to - info.from)) * info.height;
+    // y шкалы -> y полотна (область графика начинается под панелью инструментов)
+    return TV_TOOLBAR_H + info.height - ((price - info.from) / (info.to - info.from)) * info.height;
   } catch (e) { return null; }
 };
 
 window.yToPrice = function(y) {
   try {
     const info = window.widget && window.widgetReady
-      ? window.widget.getChartScaleInfo(window.__overlayCanvas?.clientHeight || 400)
+      ? window.widget.getChartScaleInfo(chartAreaHeight())
       : null;
     if (!info || info.height <= 0) return null;
-    return info.from + (info.height - y) / info.height * (info.to - info.from);
+    const localY = y - TV_TOOLBAR_H;
+    return info.from + (info.height - localY) / info.height * (info.to - info.from);
   } catch (e) { return null; }
 };
 
@@ -171,7 +204,9 @@ window.timeToX = function(t) {
   try {
     if (!(window.widget && window.widgetReady)) return null;
     const x = window.widget.convertTime(t, 'UTC');
-    return (x === -1 || x == null || !isFinite(x)) ? null : x;
+    if (x === -1 || x == null || !isFinite(x)) return null;
+    // Полотно выровнено по левому краю контейнера графика -> x совпадает.
+    return x;
   } catch (e) { return null; }
 };
 
@@ -193,6 +228,9 @@ window.drawMarkup = function() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
 
+  // Область самого графика на холсте (под панелью инструментов TradingView).
+  const top = TV_TOOLBAR_H;
+
   for (const it of window.__markupItems) {
     if (it.type === 'hline') {
       const y = priceToY(it.price);
@@ -210,10 +248,10 @@ window.drawMarkup = function() {
       ctx.strokeStyle = it.color || '#2962ff';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, h); ctx.stroke();
       ctx.setLineDash([]);
       const label = `${fmtDate(it.time)}${it.text ? ' · ' + it.text : ''}`;
-      drawChip(ctx, label, Math.min(Math.max(x + 6, 6), w - 120), 8, it.color || '#2962ff');
+      drawChip(ctx, label, Math.min(Math.max(x + 6, 6), w - 120), top + 4, it.color || '#2962ff');
     } else if (it.type === 'text') {
       drawChip(ctx, it.text || '…', 10, h - 30, it.color || '#26a69a');
     }
@@ -365,15 +403,24 @@ window.toggleMarkupToolbar = function() {
   if (!tb) return;
   const show = tb.style.display === 'none' || !tb.style.display;
   tb.style.display = show ? 'flex' : 'none';
-  if (show && !window.__markupSubscribed) subscribeMarkupSync();
+  if (show) {
+    // Canvas создаём лениво — при первом включении разметки. Если бы он
+    // создавался на DOMContentLoaded, вёрстка TradingView могла бы его
+    // уничтожить/перекрыть, и клики по графику «не работали» бы.
+    ensureOverlayCanvas();
+    drawMarkup();
+    subscribeMarkupSync();
+  } else {
+    setMarkupTool(null); // скрываем тулбар — выходим из режима рисования
+  }
 };
 
 window.setMarkupTool = function(tool) {
-  window.__markupTool = (window.__markupTool === tool) ? null : tool;
+  window.__markupTool = (window.__markupTool === tool && tool) ? null : tool;
   document.querySelectorAll('#markup-toolbar [data-tool]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tool === window.__markupTool);
   });
-  const canvas = window.__overlayCanvas;
+  let canvas = ensureOverlayCanvas(); // на всякий случай: холст должен существовать
   if (canvas) {
     // В режиме рисования холст ловит мышь; иначе насквозь — график живёт своей жизнью.
     canvas.classList.toggle('drawing', !!window.__markupTool);
@@ -398,6 +445,9 @@ function showHint(text) {
 
 // При зуме/сдвиге/смене символа TradingView рассылает события внутри iframe.
 // subscribe доступен на объекте виджета tv.js; подписываемся один раз.
+// Дополнительно ставим «страховой» таймер перерисовки: если событий виджета
+// не дождёмся (блокировки, смена версии tv.js), линии всё равно будут
+// подтягиваться при активном режиме рисования.
 window.subscribeMarkupSync = function() {
   const doSubscribe = () => {
     if (!(window.widget && window.widgetReady) || window.__markupSubscribed) return;
@@ -412,6 +462,13 @@ window.subscribeMarkupSync = function() {
   };
   doSubscribe();
   if (!window.__markupSubscribed) setTimeout(doSubscribe, 1500);
+  if (!window.__markupDrawTimer) {
+    window.__markupDrawTimer = setInterval(() => {
+      // Рисуем только когда есть что рисовать или активен инструмент —
+      // иначе таймер холостой и не грузит страницу.
+      if (window.__markupItems.length || window.__markupTool) drawMarkup();
+    }, 700);
+  }
 };
 
 // Вызывается из createChart (ui.js) после смены символа: подгружаем разметку.
@@ -421,16 +478,21 @@ window.refreshMarkupForSymbol = function(symbol) {
   loadActiveMarkupFromDb(); // асинхронно перезапишет, если в БД есть данные
 };
 
-// Инициализация: создаём canvas, вешаем перерисовку на изменение размеров.
+// Инициализация: canvas создаётся лениво (при первом включении разметки,
+// см. toggleMarkupToolbar) — здесь только вешаем слушателей перерисовки.
 window.initMarkupOverlay = function() {
-  ensureOverlayCanvas();
   window.addEventListener('resize', () => drawMarkup());
-  // Разделитель высоты графика (#resizer) и любые изменения размера контейнера —
-  // ResizeObserver надёжнее перехвата style/mousemove.
-  const chartBox = document.getElementById('tradingview_chart');
-  if (chartBox && 'ResizeObserver' in window) {
-    const ro = new ResizeObserver(() => drawMarkup());
-    ro.observe(chartBox);
+  // Разделитель/скрытие watchlist и любые изменения размера — ResizeObserver
+  // надёжнее перехвата style/mousemove. Следим за контейнером холста
+  // (#chart-container) и за самим графиком (#tradingview_chart).
+  if ('ResizeObserver' in window) {
+    const ro = new ResizeObserver(() => {
+      if (window.__overlayCanvas) drawMarkup();
+    });
+    for (const id of ['chart-container', 'tradingview_chart']) {
+      const el = document.getElementById(id);
+      if (el) ro.observe(el);
+    }
   }
   // Двойной клик по линии — удалить объект
   document.addEventListener('dblclick', (e) => {
