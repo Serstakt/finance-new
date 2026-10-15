@@ -280,6 +280,12 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-change-percent { min-width: 44px; }
 .positive-bg { background-color: rgba(38, 166, 154, 0.15); color: #26a69a; }
 .negative-bg { background-color: rgba(239, 83, 80, 0.15); color: #ef5350; }
+/* Подсветка строки цены при инкрементальном обновлении (значение изменилось) */
+.price-flash { animation: price-flash 0.9s ease-out; border-radius: 3px; }
+@keyframes price-flash {
+  0%   { background-color: rgba(41, 98, 255, 0.35); }
+  100% { background-color: transparent; }
+}
 .ticker-remove { color: #787b86; cursor: pointer; font-size: 12px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
 .ticker-item:hover .ticker-remove { opacity: 1; }
 .ticker-remove:hover { color: #ef5350; }
