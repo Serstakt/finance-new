@@ -175,9 +175,7 @@ window.switchBottomTab = function(tab) {
   document.querySelectorAll('#bottom-tabs .tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  const nw = document.getElementById('news-panel-symbol-wrap');
   const nwBtn = document.getElementById('news-refresh-btn');
-  if (nw) nw.style.display = tab === 'news' ? '' : 'none';
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
 
   if (tab === 'notes') {

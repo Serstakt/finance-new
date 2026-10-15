@@ -196,9 +196,8 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
 
   const newsPanel = document.getElementById('news-panel');
   const newsList = document.getElementById('news-list');
-  const symbolSpan = document.getElementById('news-panel-symbol');
 
-  if (!newsPanel || !newsList || !symbolSpan) {
+  if (!newsPanel || !newsList) {
     console.error("❌ [DEBUG] Не найдены элементы!");
     return;
   }
@@ -207,7 +206,6 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
   newsPanel.style.display = 'flex';
   // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости)
   if (typeof switchBottomTab === 'function') switchBottomTab(sessionStorage.getItem('bottomTab') || 'news');
-  symbolSpan.textContent = symbol;
 
   // Показываем скелетон только если это принудительное обновление или первый запуск
   if (forceRefresh || newsList.children.length === 0) {
