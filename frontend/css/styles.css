@@ -292,6 +292,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    без анимации «звона», приглушённый (в отличие от .active) */
 .alert-bell.triggered { opacity: 0.45; color: #787b86; }
 
+/* --- Заметки к тикерам (watchlist_items.note) ---
+   ✎ — заметки нет (едва виден, появляется при наведении на строку),
+   📝 — заметка есть (подсвечен; в title/tooltip — полный текст).
+   Клик открывает редактирование через prompt (editNote в main.js). */
+.note-icon { font-size: 11px; cursor: pointer; opacity: 0; transition: all 0.2s; margin-left: 6px; user-select: none; display: inline-block; line-height: 1.2; }
+.ticker-item:hover .note-icon { opacity: 0.45; }
+.note-icon.has-note { opacity: 0.9; }
+.note-icon:hover { opacity: 1; transform: scale(1.1); }
+
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
   background-size: 200% 100%; animation: skeleton-loading 1.5s infinite linear;

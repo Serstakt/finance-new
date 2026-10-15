@@ -174,6 +174,17 @@ window.render = async function() {
     if (bellStatus === 'active') bellClass += ' active';
     else if (bellStatus === 'triggered') bellClass += ' triggered';
 
+    // Заметка «почему слежу» за тикером (колонка watchlist_items.note, кэш
+    // appState.notes). Иконка 📝 показывается только если заметка есть;
+    // tooltip содержит полный текст, клик открывает редактирование (editNote
+    // в main.js). В fav_-списках заметки не редактируются (они привязаны
+    // к паре «список-тикер» обычных списков), но показываются из исходного
+    // списка, если совпадает ключ.
+    const noteText = appState.notes ? (appState.notes[noteKey(appState.activeListId, sym)] || '') : '';
+    const noteHtml = noteText
+      ? `<span class="note-icon has-note" data-symbol="${escapeHtml(sym)}" title="${escapeHtml(noteText)}" onclick="event.stopPropagation(); editNote('${escapeHtml(sym)}')">📝</span>`
+      : `<span class="note-icon" data-symbol="${escapeHtml(sym)}" title="Добавить заметку (клик — редактировать)" onclick="event.stopPropagation(); editNote('${escapeHtml(sym)}')">✎</span>`;
+
     let logoInnerHtml = buildLogoHtml(sym, baseTicker, data);
 
     div.innerHTML = `
@@ -191,6 +202,7 @@ window.render = async function() {
       <div class="ticker-logo-container">${logoInnerHtml}</div>
       <div class="ticker-info">
         <a href="${smartLabUrl}" target="_blank" rel="noopener noreferrer" class="ticker-symbol-link" title="Открыть ${baseTicker} на Smart-Lab" onclick="event.stopPropagation();">${baseTicker}</a>
+        ${noteHtml}
       </div>
       <div class="ticker-price" id="price-${safeId}">${data?.price ? formatNumber(data.price) : '<div class="skeleton skeleton-price"></div>'}</div>
       <div class="ticker-change" id="change-val-${safeId}">${data?.changeValue !== undefined && data?.changeValue !== null ? '' : '<div class="skeleton skeleton-change"></div>'}</div>
@@ -199,7 +211,7 @@ window.render = async function() {
       <span class="ticker-remove" data-symbol="${sym}" title="Удалить">×</span>`;
 
     div.addEventListener('click', (e) => {
-      if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') || e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') || e.target.classList.contains('alert-bell')) return;
+      if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') || e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') || e.target.classList.contains('alert-bell') || e.target.classList.contains('note-icon')) return;
       currentList.activeSymbol = sym;
       saveState();
       createChart(sym);

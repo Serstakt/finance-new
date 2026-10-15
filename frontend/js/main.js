@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Флажки (избранное) тянем из колонки watchlist_items.flag_color — так
   // избранное восстанавливается даже в чистом браузере без localStorage.
   await loadFlagsFromDb();
+  // Заметки к тикерам — из колонки watchlist_items.note (GET /api/watchlist-notes),
+  // чтобы иконки 📝 отрисовались сразу при первой перерисовке списка.
+  await loadNotesFromDb();
   syncListWithDb(appState.activeListId);
 
   const savedPage = sessionStorage.getItem('activePage') || 'home';
@@ -36,9 +39,9 @@ window.navigateTo = function(pageName) {
   if (pageName === 'watchlist') {
     render();
     // При открытии раздела названия и тикеры списков подтягиваются из БД,
-    // а не из localStorage. Флажки (избранное) — тоже из БД
-    // (watchlist_items.flag_color).
-    loadListNamesFromDb().then(loadFlagsFromDb).then(() => syncListWithDb(appState.activeListId));
+    // а не из localStorage. Флажки (избранное) и заметки — тоже из БД
+    // (watchlist_items.flag_color / watchlist_items.note).
+    loadListNamesFromDb().then(loadFlagsFromDb).then(loadNotesFromDb).then(() => syncListWithDb(appState.activeListId));
     const currentList = getCurrentList();
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
       setTimeout(() => { if (!widget) createChart(currentList.activeSymbol); }, 100);
@@ -119,6 +122,41 @@ window.deleteCurrentList = async function() {
   await deleteListInDb(deletedId);
   syncListWithDb(appState.activeListId);
   log(`Удален список: ${currentName}`, 'info');
+};
+
+// === ЗАМЕТКИ К ТИКЕРАМ ===
+// Заметка («почему слежу за тикером») хранится в колонке watchlist_items.note,
+// источник истины — БД. Иконка 📝/✎ рисуется в ui.js; клик по ней вызывает
+// эту функцию: prompt с текущим текстом → мгновенное обновление локального
+// кэша appState.notes и перерисовка → сохранение на сервер через setNoteInDb.
+// Пустой ввод очищает заметку, «Отмена» ничего не меняет.
+const NOTE_MAX_LEN = 500; // должен совпадать с backend/services/watchlist_service.py
+
+window.editNote = async function(symbol) {
+  if (!appState.notes) appState.notes = {};
+  const listId = appState.activeListId;
+  if (listId.startsWith('fav_')) {
+    window.alert('Заметки можно редактировать только в обычных списках (в цветовых они управляются автоматически).');
+    return;
+  }
+  const key = noteKey(listId, symbol);
+  const current = appState.notes[key] || '';
+  const input = prompt(current ? 'Заметка для ' + symbol + ':' : 'Новая заметка для ' + symbol + ':', current);
+  if (input === null) return; // пользователь нажал «Отмена»
+  const trimmed = input.trim().slice(0, NOTE_MAX_LEN);
+
+  // Мгновенно обновляем локальный кэш и UI (не ждём ответа сервера)
+  if (trimmed) appState.notes[key] = trimmed;
+  else delete appState.notes[key];
+  saveState();
+  render();
+
+  const saved = await setNoteInDb(listId, symbol, trimmed || null);
+  if (saved) {
+    log(trimmed ? `Заметка ${symbol} сохранена${trimmed.length >= NOTE_MAX_LEN ? ' (обрезана до ' + NOTE_MAX_LEN + ' симв.)' : ''}` : `Заметка ${symbol} удалена`, 'success');
+  } else {
+    log(`Не удалось сохранить заметку ${symbol} в БД — изменения только локально`, 'error');
+  }
 };
 
 window.toggleFavoritePicker = function(symbol, event) {
