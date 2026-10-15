@@ -132,6 +132,16 @@ async def get_watchlist(list_id: str):
         "list_id": list_id,
         "name": name,
         "symbols": [i["symbol"] for i in items],
+        # расширенные данные: флажок/свёрнутость каждого элемента — источник
+        # истины для избранного и свёрнутых разделов (БД, а не localStorage)
+        "items": [
+            {
+                "symbol": i["symbol"],
+                "flag_color": i["flag_color"],
+                "collapsed": i["collapsed"],
+            }
+            for i in items
+        ],
     }
 
 
@@ -139,6 +149,16 @@ async def get_watchlist(list_id: str):
 async def get_watchlists():
     """Возвращает все списки (id -> name) с названиями из БД."""
     return {"lists": watchlist_service.get_all_names()}
+
+
+@app.get("/api/watchlist-flags")
+async def get_watchlist_flags():
+    """Все цветные флажки (избранное) из БД: {"list_id|SYMBOL": color}.
+
+    Фронтенд вызывает при загрузке раздела WATCHLIST, чтобы восстановить
+    избранное на любом браузере/устройстве.
+    """
+    return {"flags": watchlist_service.get_all_flags()}
 
 
 @app.post("/api/watchlist/create")
@@ -205,8 +225,41 @@ async def remove_watchlist_ticker(payload: schemas.WatchlistRemove):
 
 @app.post("/api/watchlist/order")
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
-    """Сохраняет новый порядок/состав списка (drag&drop, разделы)."""
-    return watchlist_service.set_order(payload.list_id, payload.symbols, payload.list_name)
+    """Сохраняет новый порядок/состав списка (drag&drop, разделы).
+
+    Флажки и свёрнутость существующих элементов сохраняются в БД автоматически;
+    через items можно передать flag_color/collapsed для новых элементов.
+    """
+    items = [i.model_dump() for i in payload.items] if payload.items else None
+    return watchlist_service.set_order(payload.list_id, payload.symbols, payload.list_name, items)
+
+
+@app.post("/api/watchlist/flag")
+async def set_watchlist_flag(payload: schemas.WatchlistFlag):
+    """Ставит/снимает цветной флажок (избранное) у элемента списка.
+
+    Флаг хранится в колонке watchlist_items.flag_color — избранное больше не
+    зависит от localStorage и переживает смену браузера/устройства.
+    """
+    try:
+        result = watchlist_service.set_flag(payload.list_id, payload.symbol, payload.color)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Тикер не найден в списке")
+    return result
+
+
+@app.post("/api/watchlist/collapse")
+async def set_watchlist_collapse(payload: schemas.WatchlistCollapse):
+    """Запоминает состояние свёрнутого раздела (SECTION:...) в БД."""
+    try:
+        result = watchlist_service.set_collapsed(payload.list_id, payload.symbol, payload.collapsed)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Раздел не найден в списке")
+    return result
 
 
 # =============================================================================

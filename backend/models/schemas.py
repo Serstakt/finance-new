@@ -36,11 +36,37 @@ class WatchlistRemove(BaseModel):
     symbol: str
 
 
+class WatchlistOrderItem(BaseModel):
+    """Расширенный элемент для /order: порядок + флажок/свёрнутость."""
+    symbol: str
+    flag_color: Optional[str] = None
+    collapsed: Optional[bool] = None
+
+
 class WatchlistOrder(BaseModel):
     list_id: str = "default"
     symbols: List[str]
     # См. WatchlistAdd: настоящее название списка при автосоздании строки в watchlists.
     list_name: str | None = None
+    # Необязательные метаданные (flag_color/collapsed) — нужны, чтобы при
+    # пересоздании строк флажки не терялись. Для существующих элементов БД
+    # значения сохраняются автоматически, даже если items не передан.
+    items: Optional[List[WatchlistOrderItem]] = None
+
+
+class WatchlistFlag(BaseModel):
+    """Постановка/снятие цветного флажка (избранное) у элемента списка."""
+    list_id: str = "default"
+    symbol: str
+    # red/blue/yellow/orange/green либо None/"" — снять флажок
+    color: Optional[str] = None
+
+
+class WatchlistCollapse(BaseModel):
+    """Сохранение состояния свёрнутого раздела (SECTION:...) в БД."""
+    list_id: str = "default"
+    symbol: str  # SECTION:<название>
+    collapsed: bool = True
 
 
 class WatchlistRename(BaseModel):

@@ -13,6 +13,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Загружаем списки (названия и тикеры) из БД — источник истины не localStorage
   await loadListNamesFromDb();
+  // Флажки (избранное) тянем из колонки watchlist_items.flag_color — так
+  // избранное восстанавливается даже в чистом браузере без localStorage.
+  await loadFlagsFromDb();
   syncListWithDb(appState.activeListId);
 
   const savedPage = sessionStorage.getItem('activePage') || 'home';
@@ -33,8 +36,9 @@ window.navigateTo = function(pageName) {
   if (pageName === 'watchlist') {
     render();
     // При открытии раздела названия и тикеры списков подтягиваются из БД,
-    // а не из localStorage
-    loadListNamesFromDb().then(() => syncListWithDb(appState.activeListId));
+    // а не из localStorage. Флажки (избранное) — тоже из БД
+    // (watchlist_items.flag_color).
+    loadListNamesFromDb().then(loadFlagsFromDb).then(() => syncListWithDb(appState.activeListId));
     const currentList = getCurrentList();
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
       setTimeout(() => { if (!widget) createChart(currentList.activeSymbol); }, 100);
@@ -151,6 +155,13 @@ window.setFavorite = function(symbol, color) {
   }
   activePickerSymbol = null;
   saveState();
+  // Сохраняем флажок в БД (watchlist_items.flag_color): избранное живёт на
+  // сервере и восстанавливается в другом браузере через loadFlagsFromDb().
+  // fav_-списки — производные от флага, их флажок не храним.
+  const listId = appState.activeListId;
+  if (!listId.startsWith('fav_')) {
+    setFlagInDb(listId, symbol, color || null);
+  }
   render();
 };
 

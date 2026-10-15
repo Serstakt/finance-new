@@ -107,9 +107,13 @@ window.render = async function() {
       div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!currentList.collapsedSections) currentList.collapsedSections = [];
-        if (currentList.collapsedSections.includes(sym)) currentList.collapsedSections = currentList.collapsedSections.filter(s => s !== sym);
-        else currentList.collapsedSections.push(sym);
+        const nowCollapsed = !currentList.collapsedSections.includes(sym);
+        if (nowCollapsed) currentList.collapsedSections.push(sym);
+        else currentList.collapsedSections = currentList.collapsedSections.filter(s => s !== sym);
         saveState(); render();
+        // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
+        // а не только в localStorage — переживает смену браузера
+        setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
       });
 
       div.querySelector('.ticker-remove').addEventListener('click', async (e) => {

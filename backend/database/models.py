@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text
+from sqlalchemy import Boolean, Column, String, Integer, Float, DateTime, Text
 from datetime import datetime
 from .database import Base
 
@@ -12,13 +12,22 @@ class NewsCache(Base):
 
 
 class WatchlistItem(Base):
-    """Тикер watchlist, привязанный к конкретному списку."""
+    """Тикер watchlist, привязанный к конкретному списку.
+
+    flag_color — цвет флажка «избранного» (red/blue/yellow/orange/green) или None.
+    collapsed — признак свёрнутого раздела (SECTION:...).
+    Раньше и то, и другое жило только в localStorage браузера; теперь это
+    колонки БД, поэтому избранное и свёрнутые разделы не теряются при смене
+    браузера/устройства.
+    """
     __tablename__ = "watchlist_items"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     list_id = Column(String, nullable=False, index=True, default="default")
     symbol = Column(String, nullable=False, index=True)
     position = Column(Integer, nullable=False, default=0)
+    flag_color = Column(String, nullable=True)
+    collapsed = Column(Boolean, nullable=False, default=False)
     added_at = Column(DateTime, default=datetime.utcnow)
 
 

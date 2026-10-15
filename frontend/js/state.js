@@ -89,6 +89,9 @@ window.syncListWithDb = async function(listId) {
     const list = appState.lists[listId];
     if (!list) return;
     const dbSymbols = data.symbols || [];
+    // Новые колонки БД: flag_color и collapsed у каждого элемента.
+    // Это источник истины для избранного и свёрнутых разделов (не localStorage).
+    const dbItems = Array.isArray(data.items) ? data.items : null;
 
     // Название списка тянем из БД: оно является источником истины при загрузке раздела.
     // Исключение — заглушки («Новый список», list_<timestamp>, пустое): если локально
@@ -114,10 +117,17 @@ window.syncListWithDb = async function(listId) {
     if (dbSymbols.length === 0 && list.tickers.length > 0) {
       // Заодно сохраняем текущее название в БД, чтобы дальше оно жило на сервере
       await window.renameListInDb(listId, list.name);
+      // Передаём и флажки/свёрнутость локальных элементов (одноразовая
+      // миграция localStorage -> БД), чтобы избранное не потерялось.
+      const items = list.tickers.map(sym => ({
+        symbol: sym,
+        flag_color: (!listId.startsWith('fav_') && appState.favorites[sym]) || null,
+        collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym))
+      }));
       await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list_id: listId, symbols: list.tickers, list_name: list.name })
+        body: JSON.stringify({ list_id: listId, symbols: list.tickers, list_name: list.name, items })
       }, 15000);
       if (typeof log === 'function') log(`Локальный список "${list.name}" мигрирован в БД (${list.tickers.length} эл.)`, 'info');
       saveState();
@@ -126,6 +136,30 @@ window.syncListWithDb = async function(listId) {
     }
 
     list.tickers = dbSymbols;
+
+    // Флажки и свёрнутые разделы: источник истины — колонки БД
+    // (watchlist_items.flag_color / collapsed). Для fav_-списков (они
+    // вычисляются из флага родительского списка) ничего не делаем.
+    if (dbItems && !listId.startsWith('fav_')) {
+      let flagsChanged = false;
+      for (const it of dbItems) {
+        const sym = it.symbol;
+        if (!sym || sym.startsWith('SECTION:')) continue;
+        const prev = appState.favorites[sym];
+        if (it.flag_color) {
+          if (prev !== it.flag_color) { appState.favorites[sym] = it.flag_color; flagsChanged = true; }
+        } else if (prev) {
+          delete appState.favorites[sym]; flagsChanged = true;
+        }
+      }
+      if (flagsChanged) rebuildFavoriteLists();
+      // collapsed разделов из БД перезаписывают локальный список
+      const collapsedFromDb = dbItems
+        .filter(it => it.symbol && it.symbol.startsWith('SECTION:') && it.collapsed)
+        .map(it => it.symbol);
+      list.collapsedSections = collapsedFromDb;
+    }
+
     saveState();
     if (listId === appState.activeListId && typeof render === 'function') render();
     if (typeof populateListSelector === 'function') populateListSelector();
@@ -346,15 +380,116 @@ window.saveOrderToDb = async function(listId, symbols) {
   if (!listId || listId.startsWith('fav_')) return;
   await window.waitForListNameSaved(listId);
   const listName = (appState.lists[listId] && appState.lists[listId].name) || null;
+  // Флажки и свёрнутость разделов едут вместе с порядком: если элемент будет
+  // пересоздан в БД, его flag_color/collapsed не потеряются.
+  const items = (symbols || []).map(sym => ({
+    symbol: sym,
+    flag_color: (!sym.startsWith('SECTION:') && appState.favorites[sym]) || null,
+    collapsed: !!(appState.lists[listId] && appState.lists[listId].collapsedSections
+                  && appState.lists[listId].collapsedSections.includes(sym))
+  }));
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ list_id: listId, symbols: symbols, list_name: listName })
+      body: JSON.stringify({ list_id: listId, symbols: symbols, list_name: listName, items })
     }, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e) {
     if (typeof log === 'function') log('Ошибка сохранения порядка в БД: ' + e.message, 'error');
+  }
+};
+
+// Ставит/снимает цветной флажок элемента в БД (watchlist_items.flag_color).
+// Теперь избранное живёт на сервере и не теряется при смене браузера.
+window.setFlagInDb = async function(listId, symbol, color) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/flag`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, symbol: symbol, color: color || null })
+    }, 15000);
+    if (res.status === 404) return true; // элемента нет в этом списке — не ошибка
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось сохранить флажок в БД: ' + e.message, 'error');
+    return false;
+  }
+};
+
+// Сохраняет состояние свёрнутого раздела в БД (watchlist_items.collapsed).
+window.setCollapsedInDb = async function(listId, sectionSymbol, collapsed) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/collapse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, symbol: sectionSymbol, collapsed: !!collapsed })
+    }, 15000);
+    if (res.status === 404) return true;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось сохранить состояние раздела в БД: ' + e.message, 'error');
+    return false;
+  }
+};
+
+// Пересобирает служебные fav_-списки из appState.favorites (после загрузки
+// флажков из БД или их изменения).
+window.rebuildFavoriteLists = function() {
+  for (const id of Object.keys(appState.lists)) {
+    if (id.startsWith('fav_')) delete appState.lists[id];
+  }
+  for (const [sym, color] of Object.entries(appState.favorites || {})) {
+    if (!color || !window.FLAG_COLORS[color]) continue;
+    const favId = `fav_${color}`;
+    if (!appState.lists[favId]) {
+      appState.lists[favId] = {
+        name: `${FLAG_COLORS[color].icon} ${FLAG_COLORS[color].name}`,
+        tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true
+      };
+    }
+    if (!appState.lists[favId].tickers.includes(sym)) {
+      appState.lists[favId].tickers.push(sym);
+    }
+  }
+};
+
+// Загружает ВСЕ флажки из БД (GET /api/watchlist-flags) и применяет их к
+// appState.favorites. Вызывается при старте, чтобы избранное восстановилось
+// в новом браузере без localStorage.
+window.loadFlagsFromDb = async function() {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist-flags`, {}, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const flags = data.flags || {};
+    let changed = false;
+    for (const [key, color] of Object.entries(flags)) {
+      const sep = key.indexOf('|');
+      if (sep === -1) continue;
+      const listId = key.slice(0, sep);
+      const sym = key.slice(sep + 1);
+      if (listId.startsWith('fav_')) continue; // служебные списки — производные
+      if (!window.FLAG_COLORS[color]) continue;
+      if (appState.favorites[sym] !== color) {
+        appState.favorites[sym] = color;
+        changed = true;
+      }
+    }
+    if (changed) {
+      rebuildFavoriteLists();
+      saveState();
+      if (typeof populateListSelector === 'function') populateListSelector();
+      if (typeof render === 'function' && sessionStorage.getItem('activePage') === 'watchlist') render();
+    }
+    return flags;
+  } catch (e) {
+    if (typeof log === 'function') log('Не удалось загрузить флажки из БД: ' + e.message, 'error');
+    return {};
   }
 };
 
