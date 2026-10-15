@@ -17,6 +17,7 @@
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
+    <button class="nav-btn" data-page="testchart" onclick="navigateTo('testchart')">Тестовый график</button>
 </nav>
 
 <div id="main-content">
@@ -299,6 +300,73 @@
         </div>
     </div>
 
+    <!-- Тестовый график: сравнение двух вариантов работы с TradingView.
+         Вариант A — текущий функционал Watchlist (публичный виджет + наша
+         canvas-разметка поверх). Вариант B — переход на tradingview.com
+         (при наличии сессии TradingView открывается ваш аккаунт без
+         отдельного экрана входа; если сессии нет — TradingView сам покажет
+         форму логина, т.е. авторизация «условная»). -->
+    <div id="testchart-page" class="page">
+        <div class="portfolio-container" style="max-width:100%; width:100%;">
+            <div class="portfolio-header">
+                <h2 class="portfolio-title">🧪 Тестовый график</h2>
+                <div class="portfolio-actions">
+                    <button class="btn-secondary" onclick="openTestChartTVTab()" title="Вариант B: открыть полный TradingView в новой вкладке (как кнопка Chart в Watchlist)">B: Новая вкладка</button>
+                    <button class="btn-primary" onclick="openTestChartTVSameTab()" title="Вариант B-alt: тот же TradingView, но в текущем окне (страница терминала будет загружена заново при возврате)">B-alt: В этом окне</button>
+                </div>
+            </div>
+
+            <div class="portfolio-summary">
+                <div class="summary-card" style="text-align:left;">
+                    <h4>Вариант A — виджет + разметка (текущий)</h4>
+                    <p style="color:#9aa0ab; font-size:13px; line-height:1.5; margin:8px 0 0;">
+                        Публичный TradingView-виджет внутри терминала. Наша разметка рисуется
+                        canvas-оверлеем поверх графика и сохраняется по тикеру.
+                        Плюсы: списки, новости и разметка всегда под рукой, ничего не покидает страницу.
+                        Минусы: нет вашего аккаунта TradingView, ограниченный набор инструментов.
+                    </p>
+                </div>
+                <div class="summary-card" style="text-align:left;">
+                    <h4>Вариант B — условная авторизация на TradingView</h4>
+                    <p style="color:#9aa0ab; font-size:13px; line-height:1.5; margin:8px 0 0;">
+                        Кнопки справа ведут на tradingview.com/chart с выбранным символом.
+                        Если вы уже залогинены в браузере — сразу откроется ваш график с saved-layout;
+                        если нет — TradingView сам предложит войти (авторизация только когда нужна).
+                        Минусы: разметка оверлея там недоступна; «в этом окне» уходит весь контекст терминала.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Блок варианта A: копия связки «график + разметка» из Watchlist,
+                 с независимым контейнером, чтобы не конфликтовать с основным виджетом. -->
+            <div class="chart-container" style="margin-top:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap;">
+                    <h3 class="chart-title" style="margin-bottom:0;">Вариант A: виджет + разметка поверх</h3>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <input type="text" id="testchart-symbol" placeholder="Например, MOEX:SBER" style="background:#2a2e39; border:1px solid #363a45; color:#d1d4dc; padding:8px 12px; border-radius:6px;" />
+                        <button class="btn-primary" onclick="loadTestChart()">Показать график</button>
+                        <button class="btn-secondary" id="testchart-markup-toggle" onclick="toggleTestMarkupToolbar()" title="Показать/скрыть инструменты разметки">🖊 Разметка</button>
+                    </div>
+                </div>
+                <div id="testchart-chart-box" style="position:relative; height:560px; background:#131722; border-radius:8px; overflow:hidden;">
+                    <div id="testchart-markup-toolbar" style="display:none;">
+                        <button data-tool="hline" onclick="setTestMarkupTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
+                        <button data-tool="vline" onclick="setTestMarkupTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
+                        <button data-tool="text" onclick="setTestMarkupTool('text')" title="Текстовая заметка">🅰 Текст</button>
+                        <button onclick="undoTestMarkup()" title="Удалить последний объект">↩️</button>
+                        <button onclick="clearTestMarkup()" title="Очистить всю разметку этого символа">🧹</button>
+                        <span id="testmarkup-status"></span>
+                    </div>
+                    <div id="testchart_tv_chart" style="height:100%;"></div>
+                </div>
+                <div style="margin-top:10px; color:#787b86; font-size:12px;">
+                    Подсказка: разметка здесь хранится отдельно от Watchlist (ключ localStorage
+                    «testchart_markup:<символ>») — можно сравнивать, не портя боевые данные.
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
     <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
@@ -337,6 +405,7 @@
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
+<script defer src="js/testchart.js"></script>
 <script defer src="js/portfolio.js"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
