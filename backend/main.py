@@ -132,13 +132,14 @@ async def get_watchlist(list_id: str):
         "list_id": list_id,
         "name": name,
         "symbols": [i["symbol"] for i in items],
-        # расширенные данные: флажок/свёрнутость каждого элемента — источник
-        # истины для избранного и свёрнутых разделов (БД, а не localStorage)
+        # расширенные данные: флажок/свёрнутость/заметка каждого элемента — источник
+        # истины для избранного, свёрнутых разделов и заметок (БД, а не localStorage)
         "items": [
             {
                 "symbol": i["symbol"],
                 "flag_color": i["flag_color"],
                 "collapsed": i["collapsed"],
+                "note": i.get("note"),
             }
             for i in items
         ],
@@ -159,6 +160,17 @@ async def get_watchlist_flags():
     избранное на любом браузере/устройстве.
     """
     return {"flags": watchlist_service.get_all_flags()}
+
+
+@app.get("/api/watchlist-notes")
+async def get_watchlist_notes():
+    """Все непустые заметки к тикерам из БД: {"list_id|SYMBOL": note}.
+
+    Аналог /api/watchlist-flags: фронтенд вызывает при загрузке раздела
+    WATCHLIST, чтобы показать иконки 📝 со tooltip даже для списков, которые
+    ещё не открывались в этой сессии.
+    """
+    return {"notes": watchlist_service.get_all_notes()}
 
 
 @app.post("/api/watchlist/create")
@@ -259,6 +271,20 @@ async def set_watchlist_collapse(payload: schemas.WatchlistCollapse):
         raise HTTPException(status_code=400, detail=str(ve))
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Раздел не найден в списке")
+    return result
+
+
+@app.post("/api/watchlist/note")
+async def set_watchlist_note(payload: schemas.WatchlistNote):
+    """Ставит/обновляет/снимает текстовую заметку к тикеру элемента списка.
+
+    Заметка хранится в колонке watchlist_items.note — тезисы «почему слежу»
+    больше не зависят от localStorage и переживают смену браузера/устройства.
+    Пустая строка/null снимает заметку; длиннее NOTE_MAX_LEN — обрезается.
+    """
+    result = watchlist_service.set_note(payload.list_id, payload.symbol, payload.note)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Тикер не найден в списке")
     return result
 
 

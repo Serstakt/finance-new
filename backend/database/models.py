@@ -16,9 +16,10 @@ class WatchlistItem(Base):
 
     flag_color — цвет флажка «избранного» (red/blue/yellow/orange/green) или None.
     collapsed — признак свёрнутого раздела (SECTION:...).
-    Раньше и то, и другое жило только в localStorage браузера; теперь это
-    колонки БД, поэтому избранное и свёрнутые разделы не теряются при смене
-    браузера/устройства.
+    note — пользовательская заметка/комментарий к тикеру (тезис «почему слежу»),
+    хранится в TEXT, до NOTE_MAX_LEN символов.
+    Раньше флажки, свёрнутость и заметки жили только в localStorage браузера;
+    теперь это колонки БД, поэтому они не теряются при смене браузера/устройства.
     """
     __tablename__ = "watchlist_items"
 
@@ -28,6 +29,7 @@ class WatchlistItem(Base):
     position = Column(Integer, nullable=False, default=0)
     flag_color = Column(String, nullable=True)
     collapsed = Column(Boolean, nullable=False, default=False)
+    note = Column(Text, nullable=True)
     added_at = Column(DateTime, default=datetime.utcnow)
 
 

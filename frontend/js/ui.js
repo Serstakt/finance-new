@@ -11,6 +11,14 @@ window.formatChange = function(change, isPercent = true) {
   return `<span>${sign}${formatted}</span>`;
 };
 
+// Экранирование для безопасной вставки пользовательских строк (заметки,
+// названия разделов) в HTML-шаблоны innerHTML.
+window.escapeHtml = function(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+};
+
 window.sortList = function(list, dataMap) {
   if (!currentSort.field) return list;
   const blocks = [];
