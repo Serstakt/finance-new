@@ -58,3 +58,22 @@ class WatchlistRepair(BaseModel):
     """
     names: Dict[str, str]
 
+
+# === ЦЕНОВЫЕ АЛЕРТЫ (хранятся в БД, таблица price_alerts) ===
+
+class AlertCreate(BaseModel):
+    symbol: str
+    condition: str = "above"          # above | below
+    target: float
+    # Текущая цена на момент создания (сохраняется в price_at_creation
+    # для отображения «от какой цены ждали»).
+    price_at_creation: Optional[float] = None
+
+
+class AlertMigrate(BaseModel):
+    """Перенос старых алертов из localStorage ('price_alerts') в БД.
+
+    legacy-формат записи: {id, symbol, condition, target, active, status?, cancelled?}
+    """
+    alerts: List[Dict[str, Any]]
+

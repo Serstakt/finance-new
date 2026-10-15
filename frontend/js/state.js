@@ -63,7 +63,9 @@ window.loadState = function() {
         localStorage.removeItem('my_watchlist');
       }
     }
-    if (typeof trimAlertsHistory === 'function') trimAlertsHistory();
+    // trimAlertsHistory() убран: история алертов теперь режется на бэкенде
+    // (alert_service.trim_history), localStorage 'price_alerts' больше не
+    // источник истины — из него выполняется только одноразовая миграция в БД.
   } catch (e) { console.error('Ошибка загрузки состояния:', e); }
 
   // Пользовательские списки: названия хранятся в БД (таблица watchlists),
