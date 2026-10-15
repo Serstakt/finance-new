@@ -4,11 +4,15 @@
 //              (копия функционала Watchlist, но с независимым контейнером,
 //              отдельным объектом виджета и отдельным хранилищем разметки,
 //              чтобы не трогать window.widget / localStorage «chart_markup»).
-//   Вариант B: переход на tradingview.com/chart — «условная авторизация»:
+//   Вариант B: tradingview.com/chart — «условная авторизация»:
 //              если в браузере есть сессия TradingView, откроется ваш
 //              аккаунт с сохранёнными layout; если нет — TradingView сам
-//              покажет форму входа. Реализовано двумя кнопками: в новой
-//              вкладке (_blank) и в текущем окне (location.href).
+//              покажет форму входа. Реализовано двумя кнопками: переход
+//              в новой вкладке (_blank) и попытка встроить график во
+//              фрейм прямо на странице (loadTestChartEmbed). Учтите:
+//              полный chart запрещён к встраиванию на стороне TV
+//              (CSP frame-ancestors 'none'), поэтому для фрейма
+//              предусмотрена понятная заглушка с fallback-кнопкой.
 // Подключение: скрипт идёт ПОСЛЕ chart_overlay.js — нужны общие утилиты
 // roundRect/fmtPrice/fmtDate (инкапсулированы ниже, чтобы не зависеть от
 // порядка загрузки и не конфликтовать с основной страницей).
@@ -445,15 +449,57 @@
     status(`B: открыт tradingview.com (${symbol}) в новой вкладке`);
   };
 
-  // Вариант B-alt: тот же TradingView, но в текущем окне.
-  // Предупреждение — потому что уход с терминала теряет контекст (watchlist,
-  // разметка оверлея остаётся здесь; вернётесь через «Назад», страница
-  // перезагрузится).
-  window.openTestChartTVSameTab = function () {
+  // Вариант B-embed: график tradingview.com во фрейме прямо на странице.
+  // ВАЖНО: полный chart на tradingview.com защищён заголовком
+  // Content-Security-Policy: frame-ancestors 'none' (проверено), поэтому
+  // браузер, скорее всего, заблокирует загрузку iframe'а. Мы не можем это
+  // обойти со своей страницы, но корректно обрабатываем случай: если через
+  // несколько секунд документ iframe недоступен (blocked) или пуст —
+  // показываем понятную заглушку с кнопкой «открыть в новой вкладке».
+  let testEmbedTimer = null;
+
+  window.loadTestChartEmbed = function () {
     const symbol = resolveTestSymbol();
     if (!symbol) return;
-    if (!confirm(`Перейти на tradingview.com в ЭТОМ окне?\nТерминал будет выгружен (вернуться — кнопкой «Назад» браузера).\n\nСимвол: ${symbol}`)) return;
-    window.location.href = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+    const block = document.getElementById('testchart-b-block');
+    const frame = document.getElementById('testchart-b-frame');
+    const fallback = document.getElementById('testchart-b-fallback');
+    const label = document.getElementById('testchart-b-symbol');
+    if (!block || !frame || !fallback) return;
+
+    fallback.style.display = 'none';
+    if (label) label.textContent = `— ${symbol}`;
+    block.style.display = 'block';
+    frame.src = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+    block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    clearTimeout(testEmbedTimer);
+    testEmbedTimer = setTimeout(() => {
+      let blocked = false;
+      try {
+        // При блокировке CSP/NOFROMACCESS документ iframe нам не доступен.
+        const doc = frame.contentDocument;
+        blocked = !doc || doc.location.href === 'about:blank';
+      } catch (e) {
+        blocked = true; // SecurityError — кросс-документный доступ запрещён
+      }
+      if (blocked) {
+        fallback.style.display = 'block';
+        status('B: TradingView запретил встраивание полного графика (frame-ancestors \'none\')');
+      } else {
+        status(`B: график встроен во фрейм (${symbol})`);
+      }
+    }, 5000);
+  };
+
+  window.closeTestChartEmbed = function () {
+    const block = document.getElementById('testchart-b-block');
+    const frame = document.getElementById('testchart-b-frame');
+    const fallback = document.getElementById('testchart-b-fallback');
+    clearTimeout(testEmbedTimer);
+    if (frame) frame.src = 'about:blank';
+    if (fallback) fallback.style.display = 'none';
+    if (block) block.style.display = 'none';
   };
 
   // --- Перерисовка при изменении размеров / возврате на страницу -------------
