@@ -91,8 +91,6 @@ window.NOTE_MAX_LEN = 500; // должен совпадать с backend/service
 window.renderNotesTab = function(symbol) {
   const editor = document.getElementById('notes-editor');
   const statusEl = document.getElementById('notes-editor-status');
-  const symSpan = document.getElementById('notes-panel-symbol');
-  if (symSpan) symSpan.textContent = symbol || '-';
   if (!editor) return;
 
   const valid = !!symbol && !symbol.startsWith('SECTION:');
@@ -179,10 +177,8 @@ window.switchBottomTab = function(tab) {
   });
   const nw = document.getElementById('news-panel-symbol-wrap');
   const nwBtn = document.getElementById('news-refresh-btn');
-  const tw = document.getElementById('notes-panel-symbol-wrap');
   if (nw) nw.style.display = tab === 'news' ? '' : 'none';
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
-  if (tw) tw.style.display = tab === 'notes' ? '' : 'none';
 
   if (tab === 'notes') {
     initNotesEditor(); // вешаем автосохранение при первом открытии вкладки
