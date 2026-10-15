@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from pathlib import Path
 from .services import moex_service, crypto_service, telegram_news_service
 from .services import portfolio_service
 from .services import watchlist_service
+from .services import alert_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -20,7 +22,21 @@ async def lifespan(application: FastAPI):
     """Монтируем статику фронтенда при старте, чтобы "/..." не перехватывал /api/*-маршруты."""
     application.mount("/css", StaticFiles(directory=FRONTEND_PATH / "css"), name="css")
     application.mount("/js", StaticFiles(directory=FRONTEND_PATH / "js"), name="js")
-    yield
+
+    # Фоновый цикл проверки ценовых алертов: алерты живут в таблице
+    # price_alerts и проверяются сервером каждые 60 с — даже когда вкладка
+    # браузера закрыта (раньше проверка шла только в JS при открытом терминале).
+    stop_event = asyncio.Event()
+    checker_task = asyncio.create_task(alert_service.run_background_checker(stop_event=stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        checker_task.cancel()
+        try:
+            await checker_task
+        except BaseException:  # noqa: BLE001 — graceful shutdown (CancelledError и пр.)
+            pass
 
 
 app = FastAPI(title="Financial Terminal API", lifespan=lifespan)
@@ -191,6 +207,76 @@ async def remove_watchlist_ticker(payload: schemas.WatchlistRemove):
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
     """Сохраняет новый порядок/состав списка (drag&drop, разделы)."""
     return watchlist_service.set_order(payload.list_id, payload.symbols, payload.list_name)
+
+
+# =============================================================================
+# ЦЕНОВЫЕ АЛЕРТЫ (таблица price_alerts; проверка условий — на бэкенде)
+# =============================================================================
+
+@app.get("/api/alerts")
+async def get_alerts(symbol: str | None = Query(default=None),
+                     status: str | None = Query(default=None)):
+    """Список алертов из БД. Фильтры: ?symbol=MOEX:SBER&status=active."""
+    try:
+        return {"alerts": alert_service.list_alerts(symbol=symbol, status=status)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/alerts")
+async def create_alert_endpoint(payload: schemas.AlertCreate):
+    """Создаёт алерт и сохраняет его в таблицу price_alerts."""
+    try:
+        return alert_service.create_alert(
+            payload.symbol, payload.condition, payload.target, payload.price_at_creation
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/alerts/{alert_id}/cancel")
+async def cancel_alert_endpoint(alert_id: int):
+    """Отменяет активный алерт (запись остаётся в истории со статусом 'cancelled')."""
+    try:
+        return alert_service.cancel_alert(alert_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Алерт не найден")
+
+
+@app.delete("/api/alerts/{alert_id}")
+async def delete_alert_endpoint(alert_id: int):
+    """Полностью удаляет запись алерта из БД."""
+    try:
+        return alert_service.delete_alert(alert_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Алерт не найден")
+
+
+@app.post("/api/alerts/check")
+async def check_alerts_endpoint():
+    """Принудительная проверка всех активных алертов против текущих цен.
+
+    Вызывается фронтендом после каждой загрузки цен, чтобы мгновенно получить
+    свежие статусы (звук/уведомление в браузере) не дожидаясь фонового цикла.
+    Возвращает список сработавших за эту итерацию алертов.
+    """
+    try:
+        return {"triggered": await alert_service.check_all_active()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/alerts/migrate")
+async def migrate_alerts_endpoint(payload: schemas.AlertMigrate):
+    """Переносит старые алерты из localStorage ('price_alerts') в БД.
+
+    Фронтенд вызывает один раз при первой загрузке, если в localStorage
+    остались записи клиентской версии; после успешного переноса ключ очищается.
+    """
+    try:
+        return alert_service.migrate_from_client(payload.alerts)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================

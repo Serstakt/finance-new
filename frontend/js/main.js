@@ -5,6 +5,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   startAutoRefresh();
   requestNotificationPermission();
 
+  // Алерты: сначала переносим старые клиентские алерты из localStorage
+  // в таблицу price_alerts (однократно), затем загружаем актуальный снимок
+  // из БД — по нему рисуются колокольчики и список алертов.
+  await migrateAlertsToDb();
+  await loadAlertsFromDb();
+
   // Загружаем списки (названия и тикеры) из БД — источник истины не localStorage
   await loadListNamesFromDb();
   syncListWithDb(appState.activeListId);
@@ -219,16 +225,25 @@ window.refreshAllPrices = function() {
   updateCountdownDisplay();
 };
 
-window.exportAllData = function() {
+window.exportAllData = async function() {
   try {
-    const exportData = { appState: appState, alerts: JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]') };
+    // Алерты живут в БД (таблица price_alerts) — берём их оттуда, а не из localStorage
+    let alerts = [];
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, {}, 15000);
+      if (res.ok) {
+        const data = await res.json();
+        alerts = Array.isArray(data.alerts) ? data.alerts : [];
+      }
+    } catch (e) { console.error('Не удалось получить алерты из БД для экспорта:', e); }
+    const exportData = { appState: appState, alerts: alerts };
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `terminal_backup_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(a.href);
-    log('Экспорт успешен (включая алерты)', 'success');
+    log('Экспорт успешен (включая алерты из БД)', 'success');
   } catch (e) { log('Ошибка экспорта', 'error'); }
 };
 
@@ -239,12 +254,11 @@ window.importAllData = function() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const imported = JSON.parse(ev.target.result);
         if (imported.appState) {
           appState = imported.appState;
-          if (imported.alerts) localStorage.setItem(ALERTS_KEY, JSON.stringify(imported.alerts));
         } else {
           appState = imported;
         }
@@ -256,7 +270,26 @@ window.importAllData = function() {
         currentSort = { field: null, direction: 'asc' };
         document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
         populateListSelector(); render();
-        log('Импорт успешен (включая алерты)', 'success');
+
+        // Алерты из бэкапа переносим в БД через тот же механизм миграции
+        // (бэкенд отсекает дубликаты активных и невалидные записи).
+        if (Array.isArray(imported.alerts) && imported.alerts.length > 0) {
+          try {
+            const res = await fetchWithTimeout(`${API_BASE}/api/alerts/migrate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ alerts: imported.alerts })
+            }, 15000);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            log(`Импорт завершён, алертов перенесено в БД: ${data.imported} (пропущено ${data.skipped})`, 'success');
+            await loadAlertsFromDb();
+          } catch (err) {
+            log(`Алерты не удалось перенести в БД: ${err.message}`, 'error');
+          }
+        } else {
+          log('Импорт успешен', 'success');
+        }
       } catch (err) {
         log('Ошибка импорта: ' + err.message, 'error');
         window.alert('Ошибка чтения файла.');
