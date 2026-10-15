@@ -30,6 +30,10 @@ class WatchlistItem(Base):
     flag_color = Column(String, nullable=True)
     collapsed = Column(Boolean, nullable=False, default=False)
     note = Column(Text, nullable=True)
+    # Разметка графика (JSON-массив объектов: уровни/отметки/текст), см.
+    # frontend/js/chart_overlay.js. Хранится как текст, чтобы переживать
+    # смену браузера/устройства так же, как заметки.
+    markup = Column(Text, nullable=True)
     added_at = Column(DateTime, default=datetime.utcnow)
 
 
