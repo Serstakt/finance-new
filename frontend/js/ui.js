@@ -157,13 +157,10 @@ window.render = async function() {
     const flagClass = flagColor ? '' : 'empty';
     const pickerActiveClass = activePickerSymbol === sym ? 'active' : '';
 
-    const alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-    const hasActiveAlert = alerts.some(a => a.symbol === sym && a.status === 'active');
-    const hasTriggeredAlert = alerts.some(a => a.symbol === sym && a.status === 'triggered');
-
+    const bellStatus = getBellStatusForSymbol(sym);
     let bellClass = 'alert-bell';
-    if (hasActiveAlert) bellClass += ' active';
-    else if (hasTriggeredAlert) bellClass += ' triggered';
+    if (bellStatus === 'active') bellClass += ' active';
+    else if (bellStatus === 'triggered') bellClass += ' triggered';
 
     let logoInnerHtml = buildLogoHtml(sym, baseTicker, data);
 
@@ -253,16 +250,79 @@ window.render = async function() {
 };
 
 // === АЛЕРТЫ UI ===
-window.updateBellIconStatus = function(symbol, status) {
+// Однократная миграция хранилища алертов: чинит «залипшие» записи из старых
+// версий приложения, где при срабатывании сбрасывался флаг active, но поле
+// status оставалось 'active'. Такие алерты выглядели активными вечно.
+// Правило: active === false ⇒ статус не может быть 'active' — исправляем на
+// 'triggered' (сработавший) или сохраняем 'cancelled', если он уже был отменён.
+window.normalizeAlertsStorage = function() {
+  let alerts;
+  try {
+    alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  } catch (e) {
+    alerts = [];
+  }
+  if (!Array.isArray(alerts)) alerts = [];
+  let changed = false;
+  for (const a of alerts) {
+    if (a.active === false && (a.status === 'active' || !a.status)) {
+      a.status = a.cancelled ? 'cancelled' : 'triggered';
+      changed = true;
+    } else if (a.active !== false && !a.status) {
+      a.status = 'active';
+      changed = true;
+    }
+  }
+  if (changed) localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
+  return alerts;
+};
+
+// Единая функция определения состояния колокольчика для символа.
+// Всегда читает актуальный список алертов из localStorage, поэтому результат
+// мгновенно отражает любые изменения (установка, отмена, удаление, срабатывание)
+// без необходимости перезагрузки страницы или ожидания ближайшего render().
+window.getBellStatusForSymbol = function(symbol) {
+  const alerts = normalizeAlertsStorage();
+  let hasTriggered = false;
+  for (const a of alerts) {
+    if (a.symbol !== symbol) continue;
+    // Ключевое правило: флаг active === false имеет приоритет над любым
+    // устаревшим/некорректным значением поля status. Такие записи могли
+    // появиться в старых версиях приложения (status остался 'active', хотя
+    // алерт уже сработал и active был сброшен в false). Без этой проверки
+    // колокольчик продолжал выглядеть активным даже после срабатывания.
+    if (a.active === false) {
+      hasTriggered = true;
+      continue;
+    }
+    const st = a.status || 'active'; // legacy-записи без status, но active !== false
+    if (st === 'active') return 'active';
+    if (st === 'triggered') hasTriggered = true;
+  }
+  if (hasTriggered) return 'triggered';
+  return 'none';
+};
+
+// Мгновенно перерисовывает колокольчики всех тикеров в DOM по фактическому
+// состоянию хранилища — вызывается после любого изменения статуса алертов.
+window.refreshAllBells = function() {
   const items = document.querySelectorAll('.ticker-item');
   items.forEach(item => {
     const bell = item.querySelector('.alert-bell');
-    if (bell && bell.getAttribute('data-symbol') === symbol) {
-      bell.classList.remove('active', 'triggered');
-      if (status === 'active') bell.classList.add('active');
-      else if (status === 'triggered') bell.classList.add('triggered');
-    }
+    if (!bell) return;
+    const sym = bell.getAttribute('data-symbol');
+    if (!sym) return;
+    const st = getBellStatusForSymbol(sym);
+    bell.classList.remove('active', 'triggered');
+    if (st === 'active') bell.classList.add('active');
+    else if (st === 'triggered') bell.classList.add('triggered');
   });
+};
+
+// Обновляет колокольчик одного символа (делегировано в refreshAllBells,
+// чтобы вся логика статуса была в одном месте).
+window.updateBellIconStatus = function(symbol, status) {
+  refreshAllBells();
 };
 
 window.openAlertModal = function(symbol) {
@@ -270,8 +330,12 @@ window.openAlertModal = function(symbol) {
   document.getElementById('alert-symbol-name').textContent = symbol;
   document.getElementById('alert-modal').classList.add('active');
 
-  const alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-  const existingAlert = alerts.find(a => a.symbol === symbol && a.status === 'active');
+  const alerts = normalizeAlertsStorage();
+  const existingAlert = alerts.find(a => {
+    if (a.symbol !== symbol) return false;
+    if (a.active === false) return false;
+    return a.status ? a.status === 'active' : true;
+  });
 
   const deleteBtn = document.getElementById('alert-delete-btn');
   if (existingAlert) {
@@ -291,7 +355,7 @@ window.closeAlertModal = function() {
 };
 
 window.trimAlertsHistory = function() {
-  let alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  let alerts = normalizeAlertsStorage();
   const symbolCounts = {};
   const newAlerts = [];
   for (let i = alerts.length - 1; i >= 0; i--) {
@@ -315,20 +379,22 @@ window.saveAlert = function() {
     return;
   }
 
-  let alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  let alerts = normalizeAlertsStorage();
   alerts.push({ id: Date.now().toString(), symbol: currentAlertSymbol, condition: condition, target: target, active: true, status: 'active' });
 
   localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
   trimAlertsHistory();
   log(`Алерт установлен для ${currentAlertSymbol}: ${condition} ${target}`, 'success');
   closeAlertModal();
-  updateBellIconStatus(currentAlertSymbol, 'active');
+  // Мгновенно обновляем колокольчик по фактическому состоянию хранилища —
+  // без ожидания ближайшего render()/автообновления цен.
+  refreshAllBells();
 };
 
 window.deleteAlert = function() {
   if (!currentAlertSymbol) return;
-  let alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-  const indexToRemove = alerts.findIndex(a => a.symbol === currentAlertSymbol && a.status === 'active');
+  let alerts = normalizeAlertsStorage();
+  const indexToRemove = alerts.findIndex(a => a.symbol === currentAlertSymbol && a.active !== false && a.status === 'active');
   if (indexToRemove !== -1) alerts.splice(indexToRemove, 1);
 
   localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
@@ -336,8 +402,7 @@ window.deleteAlert = function() {
   log(`Алерт для ${currentAlertSymbol} удален`, 'info');
   closeAlertModal();
 
-  const hasRemainingActive = alerts.some(a => a.symbol === currentAlertSymbol && a.status === 'active');
-  updateBellIconStatus(currentAlertSymbol, hasRemainingActive ? 'active' : 'none');
+  refreshAllBells();
 };
 
 window.openAlertsListModal = function() {
@@ -356,7 +421,7 @@ window.closeAlertsListModal = function() {
 };
 
 window.renderAlertsList = function(symbol) {
-  const alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  const alerts = normalizeAlertsStorage();
   const symbolAlerts = alerts.filter(a => a.symbol === symbol);
   const container = document.getElementById('alerts-list-content');
   container.innerHTML = '';
@@ -401,48 +466,69 @@ window.renderAlertsList = function(symbol) {
 };
 
 window.cancelAlert = function(symbol, originalIndex) {
-  let alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  let alerts = normalizeAlertsStorage();
   if (alerts[originalIndex]) {
     alerts[originalIndex].active = false;
     alerts[originalIndex].status = 'cancelled';
     localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
     trimAlertsHistory();
     renderAlertsList(symbol);
-    const hasRemainingActive = alerts.some(a => a.symbol === symbol && a.status === 'active');
-    updateBellIconStatus(symbol, hasRemainingActive ? 'active' : 'none');
+    // Мгновенно синхронизируем колокольчик с новым состоянием алертов
+    refreshAllBells();
     log(`Алерт для ${symbol} отменен вручную`, 'info');
   }
 };
 
 window.checkAlerts = function(symbol, currentPrice) {
-  let alerts = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-  const alertIndex = alerts.findIndex(a => a.symbol === symbol && a.active === true && a.status !== 'cancelled');
-  if (alertIndex === -1) return;
+  let alerts = normalizeAlertsStorage();
+  // Ищем только реально активные алерты: active !== false И статус 'active'.
+  // Флаг active === false всегда означает «алерт погашен» (сработал/отменён),
+  // даже если поле status осталось устаревшим — иначе сработавший алерт
+  // продолжал бы проверяться и подсвечиваться как активный.
+  // Сработавшие ('triggered') и отменённые ('cancelled') алерты больше не проверяем.
+  const activeIndices = [];
+  alerts.forEach((a, i) => {
+    if (a.symbol !== symbol) return;
+    if (a.active === false) return;
+    const isActive = a.status ? a.status === 'active' : true;
+    if (isActive) activeIndices.push(i);
+  });
+  if (activeIndices.length === 0) return;
 
-  const alertData = alerts[alertIndex];
   const current = parseFloat(currentPrice);
-  const target = parseFloat(alertData.target);
+  if (isNaN(current)) return;
 
-  if (isNaN(current) || isNaN(target)) return;
+  let changed = false;
+  for (const alertIndex of activeIndices) {
+    const alertData = alerts[alertIndex];
+    const target = parseFloat(alertData.target);
+    if (isNaN(target)) continue;
 
-  let triggered = false;
-  if (alertData.condition === 'above' && current >= target) triggered = true;
-  if (alertData.condition === 'below' && current <= target) triggered = true;
+    let triggered = false;
+    if (alertData.condition === 'above' && current >= target) triggered = true;
+    if (alertData.condition === 'below' && current <= target) triggered = true;
 
-  if (triggered) {
-    const msg = `🚨 ${alertData.symbol}: Цена ${current} достигла цели (${alertData.condition === 'above' ? 'выше' : 'ниже'} ${target})`;
-    playAlertSound();
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("Финансовый терминал: Алерт!", { body: msg });
-    } else {
-      window.alert(msg);
+    if (triggered) {
+      const msg = `🚨 ${alertData.symbol}: Цена ${current} достигла цели (${alertData.condition === 'above' ? 'выше' : 'ниже'} ${target})`;
+      playAlertSound();
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("Финансовый терминал: Алерт!", { body: msg });
+      } else {
+        window.alert(msg);
+      }
+      log(`Алерт сработал: ${msg}`, 'success');
+      alerts[alertIndex].active = false;
+      alerts[alertIndex].status = 'triggered';
+      changed = true;
     }
-    log(`Алерт сработал: ${msg}`, 'success');
-    alerts[alertIndex].active = false;
-    alerts[alertIndex].status = 'triggered';
+  }
+
+  if (changed) {
     localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
     trimAlertsHistory();
-    updateBellIconStatus(symbol, 'triggered');
+    // Колокольчик должен стать неактивным: алерт сработал и больше не активен
+    const hasRemainingActive = alerts.some(a => a.symbol === symbol && a.status === 'active');
+    updateBellIconStatus(symbol, hasRemainingActive ? 'active' : 'none');
   }
 };
 

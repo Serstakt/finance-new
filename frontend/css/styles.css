@@ -288,7 +288,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .alert-bell { font-size: 12px; cursor: pointer; opacity: 0.4; transition: all 0.2s; }
 .alert-bell:hover { opacity: 1; transform: scale(1.1); }
 .alert-bell.active { opacity: 1; color: #ffca28; animation: ring 2s infinite; }
-.alert-bell.triggered { opacity: 1; color: #26a69a; animation: ring-triggered 1.5s infinite; }
+/* Сработавший алерт — НЕ активное состояние: колокольчик спокойный,
+   без анимации «звона», приглушённый (в отличие от .active) */
+.alert-bell.triggered { opacity: 0.45; color: #787b86; }
 
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
@@ -533,11 +535,6 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   0%, 100% { transform: rotate(0); }
   10%, 30%, 50% { transform: rotate(10deg); }
   20%, 40% { transform: rotate(-10deg); }
-}
-@keyframes ring-triggered {
-  0%, 100% { transform: rotate(0) scale(1); }
-  10%, 30%, 50% { transform: rotate(15deg) scale(1.1); }
-  20%, 40% { transform: rotate(-15deg) scale(1.1); }
 }
 @keyframes skeleton-loading {
   0% { background-position: 100% 50%; }
