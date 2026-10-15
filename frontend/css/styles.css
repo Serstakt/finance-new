@@ -293,13 +293,26 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .alert-bell.triggered { opacity: 0.45; color: #787b86; }
 
 /* --- Заметки к тикерам (watchlist_items.note) ---
-   ✎ — заметки нет (едва виден, появляется при наведении на строку),
-   📝 — заметка есть (подсвечен; в title/tooltip — полный текст).
-   Клик открывает редактирование через prompt (editNote в main.js). */
-.note-icon { font-size: 11px; cursor: pointer; opacity: 0; transition: all 0.2s; margin-left: 6px; user-select: none; display: inline-block; line-height: 1.2; }
-.ticker-item:hover .note-icon { opacity: 0.45; }
-.note-icon.has-note { opacity: 0.9; }
-.note-icon:hover { opacity: 1; transform: scale(1.1); }
+   Иконки заметок из строк watchlist убраны: редактирование доступно только
+   во вкладке «Заметки» под графиком — единым текстовым полотном без кнопок. */
+
+/* Полотно заметок (вкладка «Заметки»): textarea растягивается на всю панель */
+#notes-list { display: flex; flex-direction: column; }
+#notes-editor {
+  flex: 1; min-height: 0; width: 100%; resize: none;
+  background: #1e222d; color: #d1d4dc; border: none; outline: none;
+  padding: 16px 20px; font-family: inherit; font-size: 14px; line-height: 1.6;
+}
+#notes-editor::placeholder { color: #787b86; }
+#notes-editor:focus { background: #22262f; }
+#notes-editor:disabled { opacity: 0.55; cursor: not-allowed; }
+#notes-editor-status {
+  flex-shrink: 0; padding: 4px 20px 8px; font-size: 12px; color: #787b86;
+  text-align: right; min-height: 22px;
+}
+#notes-editor-status.saved { color: #26a69a; }
+#notes-editor-status.error { color: #ef5350; }
+#notes-editor-status.saving { color: #ffca28; }
 
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
@@ -329,7 +342,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 .error-msg { color: #ef5350; padding: 20px; font-size: 14px; line-height: 1.5; }
 
-/* === ПАНЕЛЬ НОВОСТЕЙ === */
+/* === ПАНЕЛЬ «НОВОСТИ / ЗАМЕТКИ» (две вкладки под графиком) === */
 #news-panel {
   flex: 1;
   min-height: 0;
@@ -341,6 +354,42 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   border: 1px solid #2a2e39;
   overflow: hidden;
 }
+
+/* Шапка с вкладками */
+#bottom-tabs {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid #2a2e39;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+#bottom-tabs .tabs-group { display: flex; gap: 4px; }
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: #787b86;
+  padding: 8px 14px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.tab-btn:hover { color: #d1d4dc; background: #2a2e39; }
+.tab-btn.active { color: #2962ff; background: #2a2e39; border-color: #363a45; }
+#bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
+#bottom-tabs .tab-actions button {
+  background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;
+}
+#bottom-tabs .tab-actions button:hover { background: #363a45; }
+
+/* Контейнеры вкладок: показываем только активную (display задаёт JS) */
+.tab-pane { flex: 1; overflow-y: auto; min-height: 0; }
 
 #news-list {
   flex: 1;

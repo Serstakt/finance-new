@@ -138,21 +138,30 @@
         <div id="chart-container">
             <!-- Сам график TradingView -->
             <div id="tradingview_chart"></div>
-            <!-- Панель новостей под графиком -->
+            <!-- Панель «Новости / Заметки» под графиком: две вкладки.
+                 По умолчанию активна вкладка «Новости», заметки (функционал
+                 watchlist_items.note) перенесены сюда во вторую вкладку. -->
             <div id="news-panel">
-                <div style="padding: 16px 20px; border-bottom: 1px solid #2a2e39; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
-                    <h3 style="margin: 0; font-size: 16px; color: #d1d4dc;">
-                        📰 Новости: <span id="news-panel-symbol" style="color: #2962ff;">-</span>
-                    </h3>
-                    <button onclick="refreshNews()" style="background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;" onmouseover="this.style.background='#363a45'" onmouseout="this.style.background='#2a2e39'">
-                        🔄 Обновить
-                    </button>
+                <div id="bottom-tabs">
+                    <div class="tabs-group">
+                        <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
+                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
+                    </div>
+                    <div class="tab-actions">
+                        <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
+                    </div>
                 </div>
 
-                <div id="news-list">
+                <div id="news-list" class="tab-pane">
                     <div style="padding: 20px; text-align: center; color: #787b86;">
                         Выберите тикер для загрузки новостей
                     </div>
+                </div>
+                <!-- Вкладка «Заметки»: единое текстовое полотно (без карточек
+                     и кнопки «Редактировать»). Сохраняется автоматически. -->
+                <div id="notes-list" class="tab-pane" style="display: none;">
+                    <textarea id="notes-editor" placeholder="Здесь можно вести заметки по выбранному тикеру…" spellcheck="false"></textarea>
+                    <div id="notes-editor-status"></div>
                 </div>
             </div>
         </div>

@@ -181,6 +181,10 @@ window.detectExchange = function(symbol) {
 };
 
 // === ЛЕНТА НОВОСТЕЙ ИЗ TELEGRAM (@newssmartlab) ===
+// Панель под графиком — двухтабовая («Новости» / «Заметки»). Вкладка
+// «Новости» активна по умолчанию; loadTickerNews показывает панель, но
+// НЕ переключает табы — если пользователь открыл «Заметки», новости
+// догружаются в скрытую вкладку.
 window.loadTickerNews = async function(symbol, forceRefresh = false) {
   console.log("🚀 [DEBUG] loadTickerNews вызвана для:", symbol, "Force:", forceRefresh);
 
@@ -192,16 +196,16 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
 
   const newsPanel = document.getElementById('news-panel');
   const newsList = document.getElementById('news-list');
-  const symbolSpan = document.getElementById('news-panel-symbol');
 
-  if (!newsPanel || !newsList || !symbolSpan) {
+  if (!newsPanel || !newsList) {
     console.error("❌ [DEBUG] Не найдены элементы!");
     return;
   }
 
   console.log("✅ [DEBUG] Показываем панель и скелетон...");
   newsPanel.style.display = 'flex';
-  symbolSpan.textContent = symbol;
+  // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости)
+  if (typeof switchBottomTab === 'function') switchBottomTab(sessionStorage.getItem('bottomTab') || 'news');
 
   // Показываем скелетон только если это принудительное обновление или первый запуск
   if (forceRefresh || newsList.children.length === 0) {
