@@ -81,6 +81,18 @@ class WatchlistNote(BaseModel):
     note: Optional[str] = None
 
 
+class WatchlistMarkup(BaseModel):
+    """Сохранение разметки графика (уровни/отметки/текст) для тикера.
+
+    markup — JSON-массив объектов вида [{id,type,price|time|text,color}]
+    (формат см. frontend/js/chart_overlay.js); хранится как текст в
+    watchlist_items.markup. None/""/"[]" очищает разметку.
+    """
+    list_id: str = "default"
+    symbol: str
+    markup: Optional[str] = None
+
+
 class WatchlistRename(BaseModel):
     list_id: str = "default"
     name: str

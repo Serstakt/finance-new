@@ -136,6 +136,17 @@
         </div>
         <div id="resizer" title="Потяните, чтобы изменить размер"></div>
         <div id="chart-container">
+            <!-- Тулбар разметки поверх графика (см. js/chart_overlay.js):
+                 TradingView-виджет не позволяет рисовать внутри iframe, поэтому
+                 разметка лежит на canvas-оверлее над контейнером графика. -->
+            <div id="markup-toolbar" style="display: none;">
+                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
+                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
+                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика">🅰 Текст</button>
+                <button onclick="undoLastMarkup()" title="Удалить последний объект">↩️</button>
+                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера">🧹</button>
+                <span id="markup-status"></span>
+            </div>
             <!-- Сам график TradingView -->
             <div id="tradingview_chart"></div>
             <!-- Панель «Новости / Заметки» под графиком: две вкладки.
@@ -149,6 +160,7 @@
                     </div>
                     <div class="tab-actions">
                         <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
+                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика">🖊 Разметка</button>
                     </div>
                 </div>
 
@@ -324,6 +336,7 @@
 <script defer src="js/api.js"></script>
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
+<script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,

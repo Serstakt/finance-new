@@ -132,14 +132,16 @@ async def get_watchlist(list_id: str):
         "list_id": list_id,
         "name": name,
         "symbols": [i["symbol"] for i in items],
-        # расширенные данные: флажок/свёрнутость/заметка каждого элемента — источник
-        # истины для избранного, свёрнутых разделов и заметок (БД, а не localStorage)
+        # расширенные данные: флажок/свёрнутость/заметка/разметка каждого элемента —
+        # источник истины для избранного, свёрнутых разделов, заметок и разметки
+        # графика (БД, а не localStorage)
         "items": [
             {
                 "symbol": i["symbol"],
                 "flag_color": i["flag_color"],
                 "collapsed": i["collapsed"],
                 "note": i.get("note"),
+                "markup": i.get("markup"),
             }
             for i in items
         ],
@@ -283,6 +285,24 @@ async def set_watchlist_note(payload: schemas.WatchlistNote):
     Пустая строка/null снимает заметку; длиннее NOTE_MAX_LEN — обрезается.
     """
     result = watchlist_service.set_note(payload.list_id, payload.symbol, payload.note)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Тикер не найден в списке")
+    return result
+
+
+@app.post("/api/watchlist/markup")
+async def set_watchlist_markup(payload: schemas.WatchlistMarkup):
+    """Сохраняет разметку графика тикера (см. frontend/js/chart_overlay.js).
+
+    Разметка — JSON-массив объектов (уровни/отметки по дате/текст), рисуемых
+    на canvas-оверлее поверх TradingView-виджета. Хранится в колонке
+    watchlist_items.markup — переживает смену браузера/устройства.
+    Пустой массив/null очищает разметку; невалидный JSON -> 400.
+    """
+    try:
+        result = watchlist_service.set_markup(payload.list_id, payload.symbol, payload.markup)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Тикер не найден в списке")
     return result

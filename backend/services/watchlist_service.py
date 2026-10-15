@@ -8,6 +8,7 @@ flag_color и collapsed раньше жили только в localStorage бр�
 колонки БД, поэтому избранное (флажки) и свёрнутые разделы не теряются при
 смене браузера/устройства.
 """
+import json
 import sqlite3
 
 from backend.database.database import Base, DB_PATH, engine, get_session, safe_create_all
@@ -50,6 +51,8 @@ def migrate_columns() -> None:
                 )
             if "note" not in cols:
                 con.execute("ALTER TABLE watchlist_items ADD COLUMN note TEXT")
+            if "markup" not in cols:
+                con.execute("ALTER TABLE watchlist_items ADD COLUMN markup TEXT")
             con.commit()
         finally:
             con.close()
@@ -211,7 +214,7 @@ def delete_list(list_id: str) -> dict:
 def get_list_symbols(list_id: str) -> list[dict]:
     """Возвращает элементы списка в порядке позиции.
 
-    Каждый элемент — dict {symbol, position, flag_color, collapsed, note}.
+    Каждый элемент — dict {symbol, position, flag_color, collapsed, note, markup}.
     """
     with get_session() as db:
             rows = (
@@ -227,6 +230,7 @@ def get_list_symbols(list_id: str) -> list[dict]:
                     "flag_color": r.flag_color,
                     "collapsed": bool(r.collapsed),
                     "note": r.note,
+                    "markup": r.markup,
                 }
                 for r in rows
             ]
@@ -335,6 +339,54 @@ def get_all_notes() -> dict[str, str]:
     with get_session() as db:
         rows = db.query(WatchlistItem).filter(WatchlistItem.note.isnot(None)).all()
         return {f"{r.list_id}|{r.symbol}": r.note for r in rows if r.note}
+
+
+MARKUP_MAX_LEN = 200_000  # ~ограничение размера JSON-массива объектов разметки
+
+
+def normalize_markup(markup: str | None) -> str | None:
+    """Проверяет, что разметка — корректный JSON-массив, и возвращает его
+    канонический вид. Пустой массив/None/'' очищает разметку (возвращает None).
+
+    Храним только массивы — чтобы фронтенд (chart_overlay.js) никогда не
+    получал битый JSON; всё остальное считаем ошибкой ввода.
+    """
+    if markup is None:
+        return None
+    s = str(markup).strip()
+    if not s or s == "[]":
+        return None
+    if len(s) > MARKUP_MAX_LEN:
+        raise ValueError("Разметка слишком большая")
+    try:
+        parsed = json.loads(s)
+    except (ValueError, TypeError):
+        raise ValueError("Разметка должна быть JSON-массивом")
+    if not isinstance(parsed, list):
+        raise ValueError("Разметка должна быть JSON-массивом")
+    return json.dumps(parsed, ensure_ascii=False)
+
+
+def set_markup(list_id: str, symbol: str, markup: str | None) -> dict:
+    """Сохраняет разметку графика тикера в колонку watchlist_items.markup.
+
+    Разметка (уровни/отметки/текст поверх TradingView-виджета) живёт в БД,
+    поэтому переживает смену браузера/устройства так же, как заметки.
+    markup=None/""/'[]' очищает разметку. status=not_found — если элемента нет.
+    """
+    symbol = _normalize_symbol(symbol)
+    cleaned = normalize_markup(markup)
+    with get_session() as db:
+        row = (
+            db.query(WatchlistItem)
+            .filter(WatchlistItem.list_id == list_id, WatchlistItem.symbol == symbol)
+            .first()
+        )
+        if not row:
+            return {"status": "not_found", "list_id": list_id, "symbol": symbol}
+        row.markup = cleaned
+        db.commit()
+        return {"status": "ok", "list_id": list_id, "symbol": symbol}
 
 
 def add_symbol(list_id: str, symbol: str, list_name: str | None = None) -> dict:

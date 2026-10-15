@@ -874,8 +874,19 @@ window.createChart = function(symbol) {
             "container_id": "tradingview_chart",
             "onready": () => {
                 window.widgetReady = true;
+                // Разметка поверх графика (chart_overlay.js): перерисовать по
+                // новой шкале и подписать события перерисовки виджета.
+                if (typeof window.subscribeMarkupSync === 'function') {
+                    window.subscribeMarkupSync();
+                    window.drawMarkup();
+                }
             }
         });
+    }
+
+    // Разметка: подгружаем объекты нового символа (localStorage + БД)
+    if (typeof window.refreshMarkupForSymbol === 'function') {
+        window.refreshMarkupForSymbol(symbol);
     }
 
     // ЯВНЫЙ ВЫЗОВ НОВОСТЕЙ
