@@ -126,57 +126,12 @@ window.deleteCurrentList = async function() {
 
 // === ЗАМЕТКИ К ТИКЕРАМ ===
 // Заметка («почему слежу за тикером») хранится в колонке watchlist_items.note,
-// источник истины — БД. Иконка 📝/✎ рисуется в ui.js; клик по ней вызывает
-// эту функцию: prompt с текущим текстом → мгновенное обновление локального
-// кэша appState.notes и перерисовка → сохранение на сервер через setNoteInDb.
-// Пустой ввод очищает заметку, «Отмена» ничего не меняет.
-// NOTE_MAX_LEN объявлен в ui.js (window.NOTE_MAX_LEN) — используется и
-// вкладкой «Заметки», и этим кодом.
+// источник истины — БД. Редактирование доступно только во вкладке «Заметки»
+// под графиком: там нет кнопок и prompt-диалогов — вместо них единое текстовое
+// полотно (<textarea id="notes-editor">) с автосохранением (см. renderNotesTab
+// и initNotesEditor в ui.js). NOTE_MAX_LEN объявлен в ui.js
+// (window.NOTE_MAX_LEN) и используется полотном заметок.
 const NOTE_MAX_LEN = window.NOTE_MAX_LEN || 500; // совпадает с backend/services/watchlist_service.py
-
-window.editNote = async function(symbolOrListId, symbolArg) {
-  if (!appState.notes) appState.notes = {};
-  // Совместимость: editNote(symbol) — редактирование для активного списка;
-  // editNote(listId, symbol) — вызов из вкладки «Заметки» (карточка заметки
-  // конкретного списка).
-  let listId, symbol;
-  if (symbolArg !== undefined && symbolArg !== null) {
-    listId = symbolOrListId; symbol = symbolArg;
-  } else {
-    listId = appState.activeListId; symbol = symbolOrListId;
-  }
-  if (!symbol || symbol.startsWith('SECTION:')) {
-    window.alert('Сначала выберите тикер в списке!');
-    return;
-  }
-  if (listId.startsWith('fav_')) {
-    window.alert('Заметки можно редактировать только в обычных списках (в цветовых они управляются автоматически).');
-    return;
-  }
-  const key = noteKey(listId, symbol);
-  const current = appState.notes[key] || '';
-  const listName = (appState.lists[listId] || {}).name || listId;
-  const input = prompt(current ? `Заметка для ${symbol} (список «${listName}»):` : `Новая заметка для ${symbol} (список «${listName}»):`, current);
-  if (input === null) return; // пользователь нажал «Отмена»
-  const trimmed = input.trim().slice(0, NOTE_MAX_LEN);
-
-  // Мгновенно обновляем локальный кэш и UI (не ждём ответа сервера)
-  if (trimmed) appState.notes[key] = trimmed;
-  else delete appState.notes[key];
-  saveState();
-  render();
-  // Если открыта вкладка «Заметки» — перерисовываем её сразу, не дожидаясь БД
-  if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('bottomTab') === 'notes') {
-    renderNotesTab(getCurrentList().activeSymbol || '');
-  }
-
-  const saved = await setNoteInDb(listId, symbol, trimmed || null);
-  if (saved) {
-    log(trimmed ? `Заметка ${symbol} сохранена${trimmed.length >= NOTE_MAX_LEN ? ' (обрезана до ' + NOTE_MAX_LEN + ' симв.)' : ''}` : `Заметка ${symbol} удалена`, 'success');
-  } else {
-    log(`Не удалось сохранить заметку ${symbol} в БД — изменения только локально`, 'error');
-  }
-};
 
 window.toggleFavoritePicker = function(symbol, event) {
   event.stopPropagation();

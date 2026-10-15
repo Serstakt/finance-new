@@ -84,81 +84,80 @@ window.setupColumnHeaders = function() {
 // переключение не сбрасывалось при перерисовке списка.
 window.NOTE_MAX_LEN = 500; // должен совпадать с backend/services/watchlist_service.py
 
-window.getNotesForSymbol = function(sym) {
-  const res = [];
-  if (!sym || !appState.notes) return res;
-  for (const [key, note] of Object.entries(appState.notes)) {
-    if (!note) continue;
-    const sep = key.indexOf('|');
-    if (sep === -1) continue;
-    const listId = key.slice(0, sep);
-    const kSym = key.slice(sep + 1);
-    if (kSym !== sym) continue;
-    const list = appState.lists[listId];
-    res.push({
-      key, listId, note,
-      // fav_-списки — производные от флажков, заметки в них не редактируются
-      editable: !listId.startsWith('fav_') && !!list,
-      listName: list ? list.name : listId,
-      active: listId === appState.activeListId
-    });
-  }
-  // заметка активного списка — сверху
-  res.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
-  return res;
-};
-
-// Пересчёт счётчика заметок на вкладке «Заметки» (по активному тикеру).
-window.updateNotesTabBadge = function() {
-  const badge = document.getElementById('notes-tab-count');
-  if (!badge) return;
-  const cur = getCurrentList();
-  const sym = (cur && cur.activeSymbol && !cur.activeSymbol.startsWith('SECTION:')) ? cur.activeSymbol : '';
-  badge.textContent = sym ? String(getNotesForSymbol(sym).length) : '';
-};
-
 // Отрисовка содержимого вкладки «Заметки» для выбранного тикера.
+// Кнопок «Редактировать»/карточек больше нет: вместо них — единое текстовое
+// полотно (<textarea id="notes-editor">), которое заполняется заметкой текущего
+// тикера и сохраняет её автоматически (см. initNotesEditor ниже).
 window.renderNotesTab = function(symbol) {
-  const notesList = document.getElementById('notes-list');
-  if (!notesList) return;
+  const editor = document.getElementById('notes-editor');
+  const statusEl = document.getElementById('notes-editor-status');
   const symSpan = document.getElementById('notes-panel-symbol');
   if (symSpan) symSpan.textContent = symbol || '-';
+  if (!editor) return;
 
-  if (!symbol || symbol.startsWith('SECTION:')) {
-    notesList.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер в списке, чтобы посмотреть его заметки</div>';
-    updateNotesTabBadge();
-    return;
-  }
+  const valid = !!symbol && !symbol.startsWith('SECTION:');
+  const key = valid ? noteKey(appState.activeListId, symbol) : '';
+  const editable = valid && !String(appState.activeListId || '').startsWith('fav_');
 
-  const items = getNotesForSymbol(symbol);
-  if (items.length === 0) {
-    notesList.innerHTML = `
-      <div style="padding: 30px 20px; text-align: center; color: #787b86;">
-        <div style="font-size: 26px; margin-bottom: 10px;">📝</div>
-        Для <strong style="color: #d1d4dc;">${escapeHtml(symbol)}</strong> пока нет заметок.<br/>
-        ${appState.activeListId.startsWith('fav_')
-          ? 'В цветовых списках заметки не редактируются — откройте обычный список.'
-          : 'Нажмите «✎ Редактировать», чтобы добавить первую.'}
-      </div>`;
-  } else {
-    notesList.innerHTML = `
-      <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
-        ${items.map(it => `
-        <div style="padding: 16px; background: #2a2e39; border-radius: 8px; border: 1px solid ${it.active ? '#2962ff' : '#363a45'};">
-          <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px;">
-            <div style="font-size: 12px; color: #787b86;">
-              📒 Список: <strong style="color: ${it.active ? '#2962ff' : '#d1d4dc'};">${escapeHtml(it.listName)}</strong>${it.active ? ' · текущий' : ''}
-            </div>
-            ${it.editable ? `<span class="note-actions">
-              <button onclick="editNote('${escapeHtml(it.listId)}', '${escapeHtml(symbol)}')" title="Изменить заметку">✎ Изменить</button>
-              <button class="danger" onclick="deleteNote('${escapeHtml(it.listId)}', '${escapeHtml(symbol)}')" title="Удалить заметку">×</button>
-            </span>` : ''}
-          </div>
-          <div style="font-size: 14px; color: #d1d4dc; line-height: 1.5; white-space: pre-wrap; word-break: break-word;">${escapeHtml(it.note)}</div>
-        </div>`).join('')}
-      </div>`;
-  }
-  updateNotesTabBadge();
+  editor.value = valid ? (appState.notes[key] || '') : '';
+  editor.disabled = !editable;
+  editor.placeholder = !valid
+    ? 'Выберите тикер в списке, чтобы вести заметки'
+    : (editable ? 'Здесь можно вести заметки по выбранному тикеру…'
+                : 'В цветовых списках заметки не редактируются — откройте обычный список');
+  if (statusEl) statusEl.textContent = '';
+  // Запоминаем состояние, чтобы автосохранение не сработало на самой загрузке
+  window.__notesEditorState = { key, symbol: valid ? symbol : '', value: editor.value };
+};
+
+// Автосохранение текста из полотна заметок: без кнопки «Редактировать»
+// пользователь просто печатает — изменения пишутся в кэш appState.notes
+// и в БД (setNoteInDb) с дебаунсом. Пустой текст очищает заметку.
+window.initNotesEditor = function() {
+  const editor = document.getElementById('notes-editor');
+  if (!editor || editor.dataset.initialized === '1') return;
+  editor.dataset.initialized = '1';
+  let saveTimer = null;
+
+  const setStatus = (text, cls) => {
+    const el = document.getElementById('notes-editor-status');
+    if (!el) return;
+    el.textContent = text;
+    el.className = cls || '';
+  };
+
+  const doSave = async () => {
+    const st = window.__notesEditorState;
+    if (!st || !st.key || editor.disabled) return;
+    const trimmed = editor.value.trim().slice(0, NOTE_MAX_LEN);
+    if (trimmed === st.value) return; // ничего не изменилось
+    st.value = trimmed;
+    if (trimmed) appState.notes[st.key] = trimmed;
+    else delete appState.notes[st.key];
+    saveState();
+    setStatus('Сохраняю…', 'saving');
+    const [listId] = st.key.split('|');
+    const saved = await setNoteInDb(listId, st.symbol, trimmed || null);
+    if (saved) setStatus(trimmed ? '💾 Сохранено' : '🗑 Заметка очищена', 'saved');
+    else setStatus('⚠ Не удалось сохранить в БД — изменения только локально', 'error');
+    setTimeout(() => setStatus('', ''), 2500);
+  };
+
+  editor.addEventListener('input', () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(doSave, 600);
+  });
+  editor.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      clearTimeout(saveTimer);
+      doSave();
+    }
+  });
+  editor.addEventListener('blur', () => {
+    clearTimeout(saveTimer);
+    doSave();
+  });
 };
 
 // Переключение вкладок «Новости» / «Заметки».
@@ -172,7 +171,8 @@ window.switchBottomTab = function(tab) {
 
   newsPanel.style.display = 'flex';
   newsList.style.display = tab === 'news' ? 'block' : 'none';
-  notesList.style.display = tab === 'notes' ? 'block' : 'none';
+  // для #notes-list базовый display задаёт CSS (flex — полотно растягивается)
+  notesList.style.display = tab === 'notes' ? '' : 'none';
 
   document.querySelectorAll('#bottom-tabs .tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
@@ -180,27 +180,15 @@ window.switchBottomTab = function(tab) {
   const nw = document.getElementById('news-panel-symbol-wrap');
   const nwBtn = document.getElementById('news-refresh-btn');
   const tw = document.getElementById('notes-panel-symbol-wrap');
-  const tBtn = document.getElementById('notes-edit-btn');
   if (nw) nw.style.display = tab === 'news' ? '' : 'none';
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
   if (tw) tw.style.display = tab === 'notes' ? '' : 'none';
-  if (tBtn) tBtn.style.display = tab === 'notes' ? '' : 'none';
 
   if (tab === 'notes') {
+    initNotesEditor(); // вешаем автосохранение при первом открытии вкладки
     const cur = getCurrentList();
     renderNotesTab(cur ? cur.activeSymbol : '');
   }
-};
-
-window.deleteNote = async function(listId, symbol) {
-  if (!confirm(`Удалить заметку для ${symbol} из списка «${(appState.lists[listId] || {}).name || listId}»?`)) return;
-  const key = noteKey(listId, symbol);
-  delete appState.notes[key];
-  saveState();
-  const saved = await setNoteInDb(listId, symbol, null);
-  render(); // обновит иконки ✎/📝 и, если открыта вкладка, её содержимое
-  if (saved) log(`Заметка ${symbol} удалена`, 'success');
-  else log(`Не удалось удалить заметку ${symbol} из БД — изменения только локально`, 'error');
 };
 
 window.render = async function() {
@@ -396,9 +384,8 @@ window.render = async function() {
     document.getElementById('tradingview_chart').innerHTML = '<div class="error-msg" style="display:flex;align-items:center;justify-content:center;height:100%;">Добавьте тикер в список</div>';
   }
 
-  // Панель «Новости / Заметки»: синхронизируем содержимое активной вкладки
-  // с выбранным тикером (заметки могли измениться/переехать вместе со списком).
-  updateNotesTabBadge();
+  // Панель «Новости / Заметки»: синхронизируем полотно заметок с выбранным
+  // тикером (заметки могли измениться/переехать вместе со списком).
   if (sessionStorage.getItem('bottomTab') === 'notes' && currentList.activeSymbol) {
     const np = document.getElementById('news-panel');
     if (np) np.style.display = 'flex';

@@ -145,13 +145,12 @@
                 <div id="bottom-tabs">
                     <div class="tabs-group">
                         <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
-                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки <span id="notes-tab-count" class="tab-badge"></span></button>
+                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
                     </div>
                     <div class="tab-actions">
                         <span id="news-panel-symbol-wrap">📰 Новости: <span id="news-panel-symbol" style="color: #2962ff;">-</span></span>
                         <span id="notes-panel-symbol-wrap" style="display:none;">📝 Заметки: <span id="notes-panel-symbol" style="color: #2962ff;">-</span></span>
                         <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
-                        <button id="notes-edit-btn" onclick="editNote(getCurrentList().activeSymbol || '')">✎ Редактировать</button>
                     </div>
                 </div>
 
@@ -160,7 +159,12 @@
                         Выберите тикер для загрузки новостей
                     </div>
                 </div>
-                <div id="notes-list" class="tab-pane" style="display: none;"></div>
+                <!-- Вкладка «Заметки»: единое текстовое полотно (без карточек
+                     и кнопки «Редактировать»). Сохраняется автоматически. -->
+                <div id="notes-list" class="tab-pane" style="display: none;">
+                    <textarea id="notes-editor" placeholder="Здесь можно вести заметки по выбранному тикеру…" spellcheck="false"></textarea>
+                    <div id="notes-editor-status"></div>
+                </div>
             </div>
         </div>
     </div>

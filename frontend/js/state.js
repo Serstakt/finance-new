@@ -455,8 +455,8 @@ window.setCollapsedInDb = async function(listId, sectionSymbol, collapsed) {
 // Ставит/обновляет/снимает текстовую заметку элемента в БД
 // (watchlist_items.note). Заметка привязана к паре (список, тикер): у одного
 // тикера в разных списках могут быть разные тезисы «почему слежу».
-// Локальный кэш appState.notes обновляет вызывающий код (main.js editNote),
-// чтобы UI перерисовался мгновенно без перезагрузки из БД.
+// Локальный кэш appState.notes обновляет вызывающий код (полотно заметок —
+// initNotesEditor в ui.js), чтобы UI перерисовался мгновенно без перезагрузки из БД.
 window.setNoteInDb = async function(listId, symbol, note) {
   if (!listId || listId.startsWith('fav_')) return false;
   try {
