@@ -77,6 +77,132 @@ window.setupColumnHeaders = function() {
   });
 };
 
+// === ВКЛАДКИ «НОВОСТИ / ЗАМЕТКИ» (панель под графиком) ===
+// Заметки перенесены из watchlist-строк в блок с новостями: теперь это
+// вторая вкладка той же панели. По умолчанию активна вкладка «Новости».
+// Выбранная вкладка запоминается в sessionStorage ('bottomTab'), чтобы
+// переключение не сбрасывалось при перерисовке списка.
+window.NOTE_MAX_LEN = 500; // должен совпадать с backend/services/watchlist_service.py
+
+window.getNotesForSymbol = function(sym) {
+  const res = [];
+  if (!sym || !appState.notes) return res;
+  for (const [key, note] of Object.entries(appState.notes)) {
+    if (!note) continue;
+    const sep = key.indexOf('|');
+    if (sep === -1) continue;
+    const listId = key.slice(0, sep);
+    const kSym = key.slice(sep + 1);
+    if (kSym !== sym) continue;
+    const list = appState.lists[listId];
+    res.push({
+      key, listId, note,
+      // fav_-списки — производные от флажков, заметки в них не редактируются
+      editable: !listId.startsWith('fav_') && !!list,
+      listName: list ? list.name : listId,
+      active: listId === appState.activeListId
+    });
+  }
+  // заметка активного списка — сверху
+  res.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+  return res;
+};
+
+// Пересчёт счётчика заметок на вкладке «Заметки» (по активному тикеру).
+window.updateNotesTabBadge = function() {
+  const badge = document.getElementById('notes-tab-count');
+  if (!badge) return;
+  const cur = getCurrentList();
+  const sym = (cur && cur.activeSymbol && !cur.activeSymbol.startsWith('SECTION:')) ? cur.activeSymbol : '';
+  badge.textContent = sym ? String(getNotesForSymbol(sym).length) : '';
+};
+
+// Отрисовка содержимого вкладки «Заметки» для выбранного тикера.
+window.renderNotesTab = function(symbol) {
+  const notesList = document.getElementById('notes-list');
+  if (!notesList) return;
+  const symSpan = document.getElementById('notes-panel-symbol');
+  if (symSpan) symSpan.textContent = symbol || '-';
+
+  if (!symbol || symbol.startsWith('SECTION:')) {
+    notesList.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер в списке, чтобы посмотреть его заметки</div>';
+    updateNotesTabBadge();
+    return;
+  }
+
+  const items = getNotesForSymbol(symbol);
+  if (items.length === 0) {
+    notesList.innerHTML = `
+      <div style="padding: 30px 20px; text-align: center; color: #787b86;">
+        <div style="font-size: 26px; margin-bottom: 10px;">📝</div>
+        Для <strong style="color: #d1d4dc;">${escapeHtml(symbol)}</strong> пока нет заметок.<br/>
+        ${appState.activeListId.startsWith('fav_')
+          ? 'В цветовых списках заметки не редактируются — откройте обычный список.'
+          : 'Нажмите «✎ Редактировать», чтобы добавить первую.'}
+      </div>`;
+  } else {
+    notesList.innerHTML = `
+      <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
+        ${items.map(it => `
+        <div style="padding: 16px; background: #2a2e39; border-radius: 8px; border: 1px solid ${it.active ? '#2962ff' : '#363a45'};">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px;">
+            <div style="font-size: 12px; color: #787b86;">
+              📒 Список: <strong style="color: ${it.active ? '#2962ff' : '#d1d4dc'};">${escapeHtml(it.listName)}</strong>${it.active ? ' · текущий' : ''}
+            </div>
+            ${it.editable ? `<span class="note-actions">
+              <button onclick="editNote('${escapeHtml(it.listId)}', '${escapeHtml(symbol)}')" title="Изменить заметку">✎ Изменить</button>
+              <button class="danger" onclick="deleteNote('${escapeHtml(it.listId)}', '${escapeHtml(symbol)}')" title="Удалить заметку">×</button>
+            </span>` : ''}
+          </div>
+          <div style="font-size: 14px; color: #d1d4dc; line-height: 1.5; white-space: pre-wrap; word-break: break-word;">${escapeHtml(it.note)}</div>
+        </div>`).join('')}
+      </div>`;
+  }
+  updateNotesTabBadge();
+};
+
+// Переключение вкладок «Новости» / «Заметки».
+window.switchBottomTab = function(tab) {
+  tab = (tab === 'notes') ? 'notes' : 'news';
+  sessionStorage.setItem('bottomTab', tab);
+  const newsPanel = document.getElementById('news-panel');
+  const newsList = document.getElementById('news-list');
+  const notesList = document.getElementById('notes-list');
+  if (!newsPanel || !newsList || !notesList) return;
+
+  newsPanel.style.display = 'flex';
+  newsList.style.display = tab === 'news' ? 'block' : 'none';
+  notesList.style.display = tab === 'notes' ? 'block' : 'none';
+
+  document.querySelectorAll('#bottom-tabs .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  const nw = document.getElementById('news-panel-symbol-wrap');
+  const nwBtn = document.getElementById('news-refresh-btn');
+  const tw = document.getElementById('notes-panel-symbol-wrap');
+  const tBtn = document.getElementById('notes-edit-btn');
+  if (nw) nw.style.display = tab === 'news' ? '' : 'none';
+  if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
+  if (tw) tw.style.display = tab === 'notes' ? '' : 'none';
+  if (tBtn) tBtn.style.display = tab === 'notes' ? '' : 'none';
+
+  if (tab === 'notes') {
+    const cur = getCurrentList();
+    renderNotesTab(cur ? cur.activeSymbol : '');
+  }
+};
+
+window.deleteNote = async function(listId, symbol) {
+  if (!confirm(`Удалить заметку для ${symbol} из списка «${(appState.lists[listId] || {}).name || listId}»?`)) return;
+  const key = noteKey(listId, symbol);
+  delete appState.notes[key];
+  saveState();
+  const saved = await setNoteInDb(listId, symbol, null);
+  render(); // обновит иконки ✎/📝 и, если открыта вкладка, её содержимое
+  if (saved) log(`Заметка ${symbol} удалена`, 'success');
+  else log(`Не удалось удалить заметку ${symbol} из БД — изменения только локально`, 'error');
+};
+
 window.render = async function() {
   const currentList = getCurrentList();
   const container = document.getElementById('ticker-list');
@@ -276,6 +402,15 @@ window.render = async function() {
     createChart(currentList.activeSymbol);
   } else {
     document.getElementById('tradingview_chart').innerHTML = '<div class="error-msg" style="display:flex;align-items:center;justify-content:center;height:100%;">Добавьте тикер в список</div>';
+  }
+
+  // Панель «Новости / Заметки»: синхронизируем содержимое активной вкладки
+  // с выбранным тикером (заметки могли измениться/переехать вместе со списком).
+  updateNotesTabBadge();
+  if (sessionStorage.getItem('bottomTab') === 'notes' && currentList.activeSymbol) {
+    const np = document.getElementById('news-panel');
+    if (np) np.style.display = 'flex';
+    renderNotesTab(currentList.activeSymbol);
   }
 };
 

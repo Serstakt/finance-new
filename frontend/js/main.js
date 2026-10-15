@@ -130,18 +130,33 @@ window.deleteCurrentList = async function() {
 // эту функцию: prompt с текущим текстом → мгновенное обновление локального
 // кэша appState.notes и перерисовка → сохранение на сервер через setNoteInDb.
 // Пустой ввод очищает заметку, «Отмена» ничего не меняет.
-const NOTE_MAX_LEN = 500; // должен совпадать с backend/services/watchlist_service.py
+// NOTE_MAX_LEN объявлен в ui.js (window.NOTE_MAX_LEN) — используется и
+// вкладкой «Заметки», и этим кодом.
+const NOTE_MAX_LEN = window.NOTE_MAX_LEN || 500; // совпадает с backend/services/watchlist_service.py
 
-window.editNote = async function(symbol) {
+window.editNote = async function(symbolOrListId, symbolArg) {
   if (!appState.notes) appState.notes = {};
-  const listId = appState.activeListId;
+  // Совместимость: editNote(symbol) — редактирование для активного списка;
+  // editNote(listId, symbol) — вызов из вкладки «Заметки» (карточка заметки
+  // конкретного списка).
+  let listId, symbol;
+  if (symbolArg !== undefined && symbolArg !== null) {
+    listId = symbolOrListId; symbol = symbolArg;
+  } else {
+    listId = appState.activeListId; symbol = symbolOrListId;
+  }
+  if (!symbol || symbol.startsWith('SECTION:')) {
+    window.alert('Сначала выберите тикер в списке!');
+    return;
+  }
   if (listId.startsWith('fav_')) {
     window.alert('Заметки можно редактировать только в обычных списках (в цветовых они управляются автоматически).');
     return;
   }
   const key = noteKey(listId, symbol);
   const current = appState.notes[key] || '';
-  const input = prompt(current ? 'Заметка для ' + symbol + ':' : 'Новая заметка для ' + symbol + ':', current);
+  const listName = (appState.lists[listId] || {}).name || listId;
+  const input = prompt(current ? `Заметка для ${symbol} (список «${listName}»):` : `Новая заметка для ${symbol} (список «${listName}»):`, current);
   if (input === null) return; // пользователь нажал «Отмена»
   const trimmed = input.trim().slice(0, NOTE_MAX_LEN);
 
@@ -150,6 +165,10 @@ window.editNote = async function(symbol) {
   else delete appState.notes[key];
   saveState();
   render();
+  // Если открыта вкладка «Заметки» — перерисовываем её сразу, не дожидаясь БД
+  if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('bottomTab') === 'notes') {
+    renderNotesTab(getCurrentList().activeSymbol || '');
+  }
 
   const saved = await setNoteInDb(listId, symbol, trimmed || null);
   if (saved) {

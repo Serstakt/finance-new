@@ -301,6 +301,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .note-icon.has-note { opacity: 0.9; }
 .note-icon:hover { opacity: 1; transform: scale(1.1); }
 
+/* Кнопки действий на карточках заметок (вкладка «Заметки» под графиком) */
+.note-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.note-actions button {
+  background: #1e222d; border: 1px solid #363a45; color: #d1d4dc;
+  padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.2s;
+}
+.note-actions button:hover { border-color: #787b86; background: #363a45; }
+.note-actions button.danger:hover { border-color: #ef5350; color: #ef5350; }
+
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
   background-size: 200% 100%; animation: skeleton-loading 1.5s infinite linear;
@@ -329,7 +338,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 .error-msg { color: #ef5350; padding: 20px; font-size: 14px; line-height: 1.5; }
 
-/* === ПАНЕЛЬ НОВОСТЕЙ === */
+/* === ПАНЕЛЬ «НОВОСТИ / ЗАМЕТКИ» (две вкладки под графиком) === */
 #news-panel {
   flex: 1;
   min-height: 0;
@@ -341,6 +350,55 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   border: 1px solid #2a2e39;
   overflow: hidden;
 }
+
+/* Шапка с вкладками */
+#bottom-tabs {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid #2a2e39;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+#bottom-tabs .tabs-group { display: flex; gap: 4px; }
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: #787b86;
+  padding: 8px 14px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.tab-btn:hover { color: #d1d4dc; background: #2a2e39; }
+.tab-btn.active { color: #2962ff; background: #2a2e39; border-color: #363a45; }
+.tab-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 5px;
+  margin-left: 2px;
+  border-radius: 8px;
+  background: #2962ff;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+.tab-badge:empty { display: none; }
+#bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
+#bottom-tabs .tab-actions button {
+  background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;
+}
+#bottom-tabs .tab-actions button:hover { background: #363a45; }
+
+/* Контейнеры вкладок: показываем только активную (display задаёт JS) */
+.tab-pane { flex: 1; overflow-y: auto; min-height: 0; }
 
 #news-list {
   flex: 1;
