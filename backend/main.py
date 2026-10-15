@@ -11,6 +11,7 @@ from .services import moex_service, crypto_service, telegram_news_service
 from .services import portfolio_service
 from .services import watchlist_service
 from .services import alert_service
+from .services import history_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -82,6 +83,19 @@ async def get_price(symbol: str):
             return await crypto_service.fetch_crypto_price(upper.replace("BINANCE:", ""))
         # Неизвестная биржа — считаем тикером Мосбиржи (Yahoo Finance не используется)
         return await moex_service.fetch_moex_price(upper)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/history/{symbol}")
+async def get_history(symbol: str, days: int = Query(default=180, ge=10, le=365)):
+    """Дневные OHLC-свечи для тестовых графиков (Lightweight Charts/ECharts/Chart.js/D3).
+
+    MOEX -> ISS history candles; BINANCE -> CoinGecko market_chart.
+    Ответ: {"symbol", "source", "candles": [{time, open, high, low, close}, ...]}
+    """
+    try:
+        return await history_service.fetch_history(symbol, days)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
