@@ -167,13 +167,21 @@ window.resizeOverlayCanvas = function() {
 // Раньше использовались widget.getChartScaleInfo()/widget.convertTime(), но
 // в обычном объекте TradingView.widget (tv.js) таких методов НЕТ — они всегда
 // падали в null, и уровень НЕ СТАВИЛСЯ на график («шкала ещё не готова»).
-// Теперь шкала восстанавливается по пост-сообщениям iframe-а виджета
-// (телеметрия «chart_data» / «series_data» Advanced Charts API): из них берём
-// видимый ценовой диапазон и геометрию области рисования. Если телеметрии от
-// TV нет (обычный публичный виджет), включается ФОЛБЭК: масштаб по последним
-// барам наших жеAPI (кэты цен в appState) — уровень ставится всегда.
+//
+// ВАЖНО ПРО ЦЕНУ: iframe виджета TradingView живёт в ДРУГОМ ИСТОЧНИКЕ
+// (tradingview.com) и НЕ рассылает postMessage с телеметрией графика —
+// слушатель 'message' ниже никогда не заполняется (эта ветка оставлена как
+// фолбэк на случай будущих версий tv.js). Поэтому цена уровня строится
+// вокруг ТЕКУЩЕЙ ЦЕНЫ ТИКЕРА (см. recentBarRange): у дневного графика
+// последняя цена почти всегда стоит примерно по центру окна, и клик чуть
+// выше/ниже центра даёт цену рядом с текущей. Диапазон ±3% подобран так,
+// чтобы весь экран соответствовал реалистичному коридору цены за пару
+// недель; при зуме TradingView синхронизировать его снаружи невозможно.
+// Поэтому после постановки уровня цена ПОДТВЕРЖДАЕТСЯ/КОРРЕКТИРУЕТСЯ через
+// prompt — если линия встала не там, где вы хотели, просто введите нужную
+// цифру, и уровень перерисуется на точной цене (она же сохранится в БД).
 
-window.__chartData = null;   // последний снимок postMessage-телеметрии TV
+window.__chartData = null;   // последний снимок postMessage-телеметрии TV (если появится)
 
 // Приём телеметрии: слушатель вешаем сразу при загрузке скрипта (до
 // включения разметки), чтобы данные накопились к моменту первого клика.
@@ -192,26 +200,61 @@ if (!window.__markupCdListenerAttached) {
 const TV_TOOLBAR_H = 38;
 
 // Геометрия области рисования относительно ВЕРХНЕГО КРАЯ ХОЛСТА.
-// Холст растянут ровно по #tradingview_chart, поэтому координаты iframe
-// практически совпадают с координатами холста (кроме ±1px округления).
+// Холст растянут ровно по #tradingview_chart (весь iframe), поэтому его
+// координаты совпадают с координатами окна графика TradingView. Из высоты
+// вычитаем верхнюю панель инструментов и нижнюю шкалу времени, из ширины —
+// правую ценовую шкалу: линия должна ложиться ровно на область свечей.
 function plotRectOnCanvas() {
   const canvas = window.__overlayCanvas;
   if (!canvas) return null;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!(w > 0 && h > 0)) return null;
   const cd = window.__chartData;
-  const psW = (cd && cd.priceScale && isFinite(cd.priceScale.width)) ? cd.priceScale.width : 60;
-  const tsH = (cd && cd.timeScale && isFinite(cd.timeScale.height)) ? cd.timeScale.height : 24;
+  const psW = isFinite(cd?.priceScale?.width) ? cd.priceScale.width : 60;
+  const tsH = isFinite(cd?.timeScale?.height) ? cd.timeScale.height : 24;
   return { top: TV_TOOLBAR_H, h: Math.max(h - TV_TOOLBAR_H - tsH, 50),
            left: 0, w: Math.max(w - psW, 50) };
 }
 
-// Диапазон [min..max] вокруг последней известной цены тикера. Используется
-// как ФОЛБЭК, когда TradingView не присылает телеметрию (публичный виджет
-// tv.js её не рассылает): уровень ставится относительно текущей цены —
-// всегда в пределах видимого графика. Цены берём из DOM-строок watchlist
-// (ui.js рендерит их при каждом автообновлении) и из кэса /api/prices.
+// Диапазон [min..max] для перевода «цена <-> пиксель». Используется когда
+// TradingView НЕ присылает телеметрию (публичный виджет tv.js её не
+// рассылает): строим шкалу по РЕАЛЬНЫМ дневным свечам тикера с бэкенда
+// (/api/candles, источник MOEX ISS) — high/low последних ~120 баров. Это
+// тот же период, который TradingView показывает по умолчанию, поэтому
+// линии ложатся близко к ценовой шкале самого графика. Если candles ещё
+// не загружены — временный фолбэк ±3% вокруг последней цены из DOM-строк
+// watchlist / кэша appState / /api/prices.
 const __lastKnownPrices = Object.create(null); // symbol -> price
+const __candleRangeCache = Object.create(null); // symbol -> {min,max,ts}
+const CANDLE_RANGE_TTL = 10 * 60 * 1000; // перезапрашиваем диапазон раз в 10 мин
+
+function activeSymbol() {
+  try { return getCurrentList().activeSymbol || ''; } catch (e) { return ''; }
+}
+
+async function refreshCandleRange(symbol) {
+  if (!symbol || typeof API_BASE === 'undefined' || !window.fetchWithTimeout) return;
+  const cached = __candleRangeCache[symbol];
+  if (cached && Date.now() - cached.ts < CANDLE_RANGE_TTL) return;
+  try {
+    const res = await window.fetchWithTimeout(
+      `${API_BASE}/api/candles/${encodeURIComponent(symbol)}?interval=1d&limit=120`, {}, 10000);
+    if (!res.ok) return;
+    const data = await res.json();
+    const arr = Array.isArray(data) ? data : (data && (data.candles || data.data));
+    if (!Array.isArray(arr) || !arr.length) return;
+    let lo = Infinity, hi = -Infinity;
+    for (const b of arr.slice(-120)) {
+      const l = isFinite(b.low) ? b.low : b.close;
+      const h = isFinite(b.high) ? b.high : b.close;
+      if (isFinite(l)) lo = Math.min(lo, l);
+      if (isFinite(h)) hi = Math.max(hi, h);
+    }
+    if (isFinite(lo) && isFinite(hi) && hi > lo) {
+      __candleRangeCache[symbol] = { min: lo, max: hi, ts: Date.now() };
+    }
+  } catch (e) { /* нет сети — работаем по фолбэку от цены */ }
+}
 
 function rememberPriceFromDom() {
   try {
@@ -244,7 +287,7 @@ async function fetchFallbackPrice(symbol) {
 
 function recentBarRange() {
   try {
-    const symbol = getCurrentList().activeSymbol;
+    const symbol = activeSymbol();
     if (!symbol) return null;
     let p = __lastKnownPrices[symbol];
     if (!isFinite(p) || p <= 0) {
@@ -272,7 +315,8 @@ function recentBarRange() {
   } catch (e) { return null; }
 }
 
-// Актуальный видимый ценовой диапазон: сначала телеметрия TV, затем фолбэк.
+// Актуальный видимый ценовой диапазон: сначала телеметрия TV, затем реальные
+// свечи с бэкенда, затем фолбэк ±3% от текущей цены.
 function visiblePriceRange() {
   const cd = window.__chartData;
   if (cd) {
@@ -294,6 +338,12 @@ function visiblePriceRange() {
       return { min: cd.currentUnitPriceRangeMin, max: cd.currentUnitPriceRangeMax };
     }
   }
+  const symbol = activeSymbol();
+  const cr = symbol && __candleRangeCache[symbol];
+  if (cr && Date.now() - cr.ts < CANDLE_RANGE_TTL && cr.max > cr.min) {
+    return { min: cr.min, max: cr.max };
+  }
+  if (symbol) refreshCandleRange(symbol); // догрузим к следующему клику/перерисовке
   return recentBarRange();
 }
 
