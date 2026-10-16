@@ -256,9 +256,10 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
     };
 
 // Обрезка текста новости для UI: Telegram-посты часто заканчиваются словами
-// «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости» всё,
-// начиная с этих слов и до конца, отсекаем (полный текст всегда доступен по
-// клику на карточку — она ведёт на исходный пост).
+// «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости», а также
+// на вкладке «🚩 Избранные» (новости, отмеченные флажком), всё начиная с этих
+// слов и до конца отсекаем (полный текст всегда доступен по клику на карточку —
+// она ведёт на исходный пост).
 const trimNewsTeaser = (text) => {
   const s = String(text == null ? '' : text);
   const re = /(?:читать\s+далее|подробнее\s+в\s+источнике|перейти\s+к\s+публикации|показать\s+полностью|смотреть\s+полностью|читать\s+полностью|\bread\s+more\b|\bview\s+post\b|\bopen\s+post\b)/i;
@@ -509,6 +510,9 @@ function drawNewsFavorites(pane, items) {
     const tickerBadge = n.ticker
       ? `<span style="display:inline-block; margin-right:8px; padding:2px 8px; background:#363a45; border-radius:4px; font-size:11px; color:#2962ff; font-weight:600;">${escapeHtml(n.ticker)}</span>`
       : '';
+    // Как и на вкладке «Новости»: на UI показываем только «тизер» — текст до
+    // слов «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.
+    const teaser = trimNewsTeaser(n.title || link);
     return `
     <div class="news-item" data-link="${escapeHtml(link)}" style="display: flex; align-items: stretch;">
         <button type="button" title="Убрать из избранного" aria-pressed="true"
@@ -517,7 +521,7 @@ function drawNewsFavorites(pane, items) {
                 onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🚩</button>
         <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${tickerBadge}${escapeHtml(n.title || link)}</div>
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${tickerBadge}${escapeHtml(teaser)}</div>
                 <div style="font-size: 12px; color: #787b86;">Smart-Lab News</div>
             </div>
             <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
