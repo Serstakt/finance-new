@@ -217,6 +217,88 @@ async def _moex_session_history(session: aiohttp.ClientSession, ticker: str,
     return None
 
 
+async def fetch_moex_intraday(ticker: str, interval: str) -> list[dict]:
+    """Часовые свечи MOEX через iss/engines/stock/markets/{market}/boards/{board}/
+    securities/{ticker}/candles?begin_time=...&end_time=...&interval=60.
+
+    ВАЖНО: этот эндпоинт хранит внутридневные данные только за последние
+    ~10 торговых дней (глубина зависит от ликвидности инструмента). Если
+    свечей мало или эндпоинт не подошёл — вызывающий код показывает
+    дневную историю с подсказкой (см. fetch_candles)."""
+    if interval != "hour":
+        return []
+    now = datetime.now(timezone.utc)
+    begin = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    timeout = aiohttp.ClientTimeout(total=30)
+    urls = [
+        f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
+        f"?from={begin}&till={end}&interval=60&iss.only=candles&iss.meta=off",
+        f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{ticker}/candles.json"
+        f"?from={begin}&till={end}&interval=60&iss.only=candles&iss.meta=off",
+        f"https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities/{ticker}/candles.json"
+        f"?from={begin}&till={end}&interval=60&iss.only=candles&iss.meta=off",
+    ]
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for url in urls:
+            try:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json(content_type=None)
+            except Exception:
+                continue
+            candles_block = (data or {}).get("candles") or {}
+            cols = [str(c).upper() for c in candles_block.get("columns", [])]
+            rows = candles_block.get("data", [])
+            if not cols or not rows:
+                continue
+            idx = {c: i for i, c in enumerate(cols)}
+            # Колонки candles-эндпоинта: OPEN CLOSE HIGH LOW VALUE VOLUME BEGIN END
+            # (BEGIN — метка времени свечи; TRADE_DATE встречается в других рынках)
+            time_idx = idx.get("BEGIN", idx.get("TRADE_DATE", idx.get("BEGIN_AT")))
+            if time_idx is None or not all(k in idx for k in ("OPEN", "CLOSE")):
+                continue
+            out = []
+            for row in rows:
+                try:
+                    t_raw = row[time_idx]
+                    o, c = row[idx["OPEN"]], row[idx["CLOSE"]]
+                    h = row[idx["HIGH"]] if "HIGH" in idx else None
+                    l = row[idx["LOW"]] if "LOW" in idx else None
+                    v = row[idx["VOLUME"]] if "VOLUME" in idx else (
+                        row[idx["VALUE"]] if "VALUE" in idx else None)
+                except (IndexError, KeyError, TypeError):
+                    continue
+                if not t_raw or o is None or c is None:
+                    continue
+                ts = str(t_raw)[:19]
+                try:
+                    dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                except ValueError:
+                    try:
+                        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        continue
+                # Время MOEX — MSK (UTC+3); переводим в UTC для KLineChart
+                dt = dt.replace(tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
+                try:
+                    fo, fc = float(o), float(c)
+                    candle = {"time": int(dt.timestamp() * 1000), "open": fo,
+                              "high": float(h) if h is not None else max(fo, fc),
+                              "low": float(l) if l is not None else min(fo, fc),
+                              "close": fc, "volume": float(v) if v is not None else 0.0}
+                except (ValueError, TypeError):
+                    continue
+                out.append(candle)
+            # Дедуп по времени (защита от перескрытий страниц), сортировка
+            dedup = {cd["time"]: cd for cd in out}
+            res = [dedup[k] for k in sorted(dedup)]
+            if len(res) >= 2:
+                return res
+    return []
+
+
 async def fetch_moex_candles(ticker: str, interval: str) -> list[dict]:
     """Дневные/недельные/месячные свечи MOEX. Максимальная глубина истории:
     запрос идёт с 1995 года — сколько биржа отдаёт, столько и покажем (10+ лет).
@@ -461,6 +543,19 @@ async def fetch_candles(symbol: str, interval: str) -> dict:
             candles = await fetch_crypto_candles(code, interval)
             result = {"symbol": f"BINANCE:{code}", "interval": interval,
                       "source": "coingecko", "candles": candles}
+        elif interval == "hour":
+            # Часовые свечи MOEX: iss/.../candles (глубина ~2 недели).
+            # Если эндпоинт не дал данных — показываем дневную историю и
+            # просим переключить интервал (вкладка не должна выглядеть пустой).
+            intraday = await fetch_moex_intraday(code, "hour")
+            if len(intraday) >= 5:
+                result = {"symbol": f"MOEX:{code}", "interval": interval,
+                          "source": "moex_iss_candles", "candles": intraday}
+            else:
+                daily = await fetch_moex_candles(code, "day")
+                result = {"symbol": f"MOEX:{code}", "interval": "day",
+                          "source": "moex_iss", "candles": daily,
+                          "note": "Часовая история MOEX недоступна для этого инструмента — показаны дневные свечи"}
         else:
             candles = await fetch_moex_candles(code, interval)
             result = {"symbol": f"MOEX:{code}", "interval": interval,
@@ -468,6 +563,6 @@ async def fetch_candles(symbol: str, interval: str) -> dict:
 
         # Пустые ответы не кешируем: пусть следующий запрос повторит
         # попытку (например, MOEX временно недоступен).
-        if candles:
+        if result.get("candles"):
             _candle_cache[key] = (int(_time_mod.time() * 1000), result)
         return result
