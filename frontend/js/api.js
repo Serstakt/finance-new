@@ -237,6 +237,23 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       }
     }
 
+    // Избранное новостей подтягиваем параллельно с лентой (см. newsFavorites).
+    // Флажок 🚩 рисуется слева от карточки новости; клик по нему отмечает
+    // новость избранной / снимает отметку (хранится в БД, таблица news_favorites).
+    if (!window.newsFavorites) window.newsFavorites = {};
+    const favsReady = window.loadNewsFavorites().catch(() => {});
+
+    // Ждём избранное до отрисовки ленты: иначе уже избранные новости
+    // мелькнули бы серыми флажками (догоняющая перерисовка выглядит дёрганьем).
+    await favsReady;
+
+    // Ссылка на пост — каноничный идентификатор новости (как на бэкенде:
+    // https-схема, без хвостового слэша), по нему сверяем флажки.
+    const normLink = (l) => {
+      let s = (l || '').trim();
+      if (s.startsWith('http://')) s = 'https://' + s.slice(7);
+      return s.replace(/\/+$/, '');
+    };
 
 // Отображаем новости. Padding вынесен во внутренний div, чтобы скролл не обрезал низ
 newsList.innerHTML = `
@@ -246,17 +263,27 @@ newsList.innerHTML = `
     </div>
 </div>
 <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
-    ${news.map(n => `
-    <a href="${n.link}" target="_blank" style="display: flex; gap: 16px; padding: 16px; background: #2a2e39; border-radius: 8px; border: 1px solid #363a45; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#2a2e39'; this.style.transform='translateY(0)'">
-        <div style="flex: 1; min-width: 0;">
-            <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${n.title}</div>
-            <div style="font-size: 12px; color: #787b86;">${n.publisher}</div>
-        </div>
-        <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
-            ${n.time || ''}
-        </div>
-    </a>
-    `).join('')}
+    ${news.map(n => {
+    const link = normLink(n.link);
+    const isFav = !!window.newsFavorites[link];
+    return `
+    <div class="news-item" data-link="${link}" style="display: flex; align-items: stretch;">
+        <button type="button" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"
+                onclick="toggleNewsFavorite('${encodeURIComponent(link)}', this)"
+                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px 0 0; color: ${isFav ? '#ef5350' : '#5a5f6b'}; transition: transform .15s;"
+                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${isFav ? '🚩' : '⚑'}</button>
+        <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
+            <div style="flex: 1; min-width: 0;">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${n.title}</div>
+                <div style="font-size: 12px; color: #787b86;">${n.publisher}</div>
+            </div>
+            <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
+                ${n.time || ''}
+            </div>
+        </a>
+    </div>
+    `;
+    }).join('')}
 </div>
 `;
 
@@ -272,6 +299,92 @@ window.refreshNews = function() {
   if (currentList && currentList.activeSymbol) {
     // Передаем true, чтобы бэкенд проигнорировал кэш и спарсил заново
     window.loadTickerNews(currentList.activeSymbol, true);
+  }
+};
+
+// === ИЗБРАННЫЕ НОВОСТИ (вкладка «Новости» раздела WATCHLIST) ===
+// newsFavorites — актуальное избранное {link: {ticker, title}} из БД.
+// Флажок-кнопка слева от новости: ⚑ (серый контурный) = не избранная,
+// 🚩 (красный) = избранная. Отметка ставится/снимается на сервере
+// (POST /api/news/favorite), поэтому переживает смену браузера/устройства.
+window.newsFavorites = window.newsFavorites || {};
+
+window.loadNewsFavorites = async function() {
+  try {
+    const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorites`, {}, 15000);
+    if (!res.ok) return;
+    const data = await res.json();
+    window.newsFavorites = data.favorites || {};
+    // Если лента уже отрисована — обновляем флажки без полной перерисовки
+    document.querySelectorAll('#news-list .news-item').forEach(updateNewsItemFlag);
+  } catch (e) {
+    console.error('Ошибка загрузки избранного новостей:', e);
+  }
+};
+
+// Перекрашивает одну карточку новости под текущее состояние избранного
+// (ищет карточку по data-link).
+window.updateNewsItemFlag = function(itemOrLink) {
+  const item = (typeof itemOrLink === 'string')
+    ? document.querySelector(`#news-list .news-item[data-link="${CSS.escape(itemOrLink)}"]`)
+    : itemOrLink;
+  if (!item) return;
+  const link = item.dataset.link || '';
+  const isFav = !!window.newsFavorites[link];
+  const btn = item.querySelector('button');
+  const card = item.querySelector('a');
+  if (btn) {
+    btn.textContent = isFav ? '🚩' : '⚑';
+    btn.style.color = isFav ? '#ef5350' : '#5a5f6b';
+    btn.title = isFav ? 'Убрать из избранного' : 'В избранное';
+    btn.setAttribute('aria-pressed', String(isFav));
+  }
+  if (card) {
+    card.style.background = isFav ? '#33272a' : '#2a2e39';
+    card.style.borderColor = isFav ? '#ef5350' : '#363a45';
+    // hover-обработчики инлайновые — пересоздаём их с новым «базовым» цветом
+    card.onmouseover = () => { card.style.background = '#363a45'; card.style.transform = 'translateY(-2px)'; };
+    card.onmouseout = () => { card.style.background = isFav ? '#33272a' : '#2a2e39'; card.style.transform = 'translateY(0)'; };
+  }
+};
+
+// Клик по флажку: ставим/снимаем избранное. Ссылка передаётся закодированной,
+// чтобы не ломать inline-обработчик спецсимволами.
+window.toggleNewsFavorite = async function(encodedLink, btnEl) {
+  let link = encodedLink;
+  try { link = decodeURIComponent(encodedLink); } catch (e) { /* оставляем как есть */ }
+  if (!link) return;
+
+  const item = btnEl ? btnEl.closest('.news-item') : null;
+  const wasFav = !!window.newsFavorites[link];
+
+  // Мгновенный отклик: меняем вид флажка до ответа сервера
+  if (wasFav) delete window.newsFavorites[link];
+  else window.newsFavorites[link] = { ticker: null, title: null };
+  if (item) updateNewsItemFlag(item);
+
+  const titleEl = item ? item.querySelector('a div div') : null;
+  // Тикер, по которому открыта лента — сохраняем в контекст избранной новости
+  const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
+  const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
+  try {
+    const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        link: link,
+        favorite: !wasFav,
+        ticker: ticker,
+        title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null,
+      }),
+    }, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('Ошибка сохранения избранной новости:', e);
+    // откат оптимистичного изменения при ошибке сети/сервера
+    if (wasFav) window.newsFavorites[link] = { ticker: null, title: null };
+    else delete window.newsFavorites[link];
+    if (item) updateNewsItemFlag(item);
   }
 };
 
