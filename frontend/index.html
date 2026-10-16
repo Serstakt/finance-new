@@ -17,6 +17,7 @@
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
+    <button class="nav-btn" data-page="testchart" onclick="navigateTo('testchart')">Тест график</button>
 </nav>
 
 <div id="main-content">
@@ -299,6 +300,43 @@
         </div>
     </div>
 
+    <!-- ТЕСТ ГРАФИК: KLineChart (Apache-2.0, бесплатная библиотека с
+         встроенными инструментами рисования: трендовые линии, каналы,
+         фигуры, заметки). Данные — бесплатный MOEX ISS через бэкенд. -->
+    <div id="testchart-page" class="page">
+        <div class="testchart-container">
+            <div class="testchart-header">
+                <h2 class="testchart-title">📈 Тест графика (KLineChart)</h2>
+                <div class="testchart-controls">
+                    <input id="tc-symbol" placeholder="Тикер, напр. SBER / BTCUSDT" title="MOEX-тикер или крипто (CoinGecko)" />
+                    <select id="tc-interval" title="Интервал свечей">
+                        <option value="D">1 день</option>
+                        <option value="H">1 час (крипта)</option>
+                    </select>
+                    <button class="btn-primary" onclick="loadTestChartData()">Показать</button>
+                    <button class="btn-secondary" onclick="useActiveWatchlistSymbol()" title="Взять активный тикер из Watchlist">Из Watchlist</button>
+                </div>
+            </div>
+            <div id="tc-toolbar" class="testchart-toolbar">
+                <span class="tc-toolbar-label">Разметка:</span>
+                <button data-tool="trendline" title="Трендовая линия: клик — начало, клик — конец">📐 Линия</button>
+                <button data-tool="horizontalStraightLine" title="Горизонтальный уровень по цене">➖ Уровень</button>
+                <button data-tool="verticalStraightLine" title="Вертикальная отметка по времени">↕️ Дата</button>
+                <button data-tool="rayLine" title="Луч из точки">☀️ Луч</button>
+                <button data-tool="priceChannelLine" title="Ценовой канал">≋ Канал</button>
+                <button data-tool="fibonacciLine" title="Линии Фибоначчи">🌀 Фибо</button>
+                <button data-tool="simpleAnnotation" title="Заметка-метка на графике">📌 Метка</button>
+                <button data-tool="simpleTag" title="Тег на уровне цены">🏷 Тег</button>
+                <button data-tool="rectangle" title="Прямоугольник">▭ Прямоуг.</button>
+                <button data-tool="circle" title="Окружность">◯ Круг</button>
+                <button onclick="removeAllOverlayTools()" title="Удалить всю разметку">🧹 Очистить</button>
+                <span id="tc-status" class="tc-status"></span>
+            </div>
+            <div id="tc-chart"></div>
+            <div class="tc-hint">Совет: выберите инструмент разметки и кликайте по графику (Esc — отменить рисование, ПКМ по объекту — удалить). Часовые свечи доступны для крипто (CoinGecko), дневные — для MOEX и крипто.</div>
+        </div>
+    </div>
+
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
     <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
@@ -332,12 +370,14 @@
 
 <!-- defer: скрипты выполсятся строго в этом порядке после разбора HTML,
      но не будут блокировать отрисовку страницы -->
+<script defer src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
 <script defer src="js/state.js"></script>
 <script defer src="js/api.js"></script>
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
+<script defer src="js/testchart.js"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
      показываем предупреждение вместо «вечной загрузки» -->

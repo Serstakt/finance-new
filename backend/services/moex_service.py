@@ -1,8 +1,78 @@
 import asyncio
+import time
+
 import aiohttp
 
 
-import aiohttp
+# ---------------------------------------------------------------------------
+# ИСТОРИЯ СВЕЧЕЙ (для вкладки «Тест график» / KLineChart) — бесплатный MOEX ISS
+# ---------------------------------------------------------------------------
+_history_cache: dict[str, tuple[float, list[dict]]] = {}  # key -> (ts, candles)
+HISTORY_TTL = 300  # 5 минут — история не меняется чаще
+
+
+async def fetch_moex_history(ticker: str, interval: str = 'D', days: int = 365) -> list[dict]:
+    """OHLC-свечи с MOEX ISS. Возвращает список {timestamp, open, high, low, close}
+    в формате KLineChart (timestamp в миллисекундах)."""
+    ticker = ticker.upper().strip()
+    interval = (interval or 'D').upper()
+    cache_key = f"{ticker}:{interval}:{days}"
+    cached = _history_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) < HISTORY_TTL:
+        return cached[1]
+
+    from datetime import date, timedelta
+    start = (date.today() - timedelta(days=days)).isoformat()
+    end = date.today().isoformat()
+
+    if ticker in ['IMOEX', 'RTSI', 'RGBI', 'IRUS']:
+        base = "https://iss.moex.com/iss/history/engines/stock/markets/index/securities"
+    elif 'RUB' in ticker or ticker in ('USD000UTSTOM', 'EUR_RUB__TOM'):
+        base = "https://iss.moex.com/iss/history/engines/currency/markets/currencies/boards/CETS/securities"
+    else:
+        base = "https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities"
+
+    # Корректный эндпоинт истории ISS: /iss/history/.../{SECID}.json
+    url = f"{base}/{ticker}.json?from={start}&till={end}&limit=1500"
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                raise RuntimeError(f"MOEX ISS history status {response.status}")
+            data = await response.json()
+
+    rows = (data.get('history') or {}).get('data') or []
+    columns = (data.get('history') or {}).get('columns') or []
+
+    def col(row, name):
+        try:
+            return row[columns.index(name)]
+        except (ValueError, IndexError):
+            return None
+
+    candles = []
+    for row in rows:
+        # В /iss/history дата в колонке TRADEDATE (интрадневные интервалы MOEX
+        # на этом эндпоинте не отдаёт — для H фронтенд использует крипто-фолбэк)
+        dt = col(row, 'TRADEDATE') or col(row, 'TRADE_DATE') or col(row, 'BEGIN_AT')
+        o, h, l, c = (col(row, 'OPEN'), col(row, 'HIGH'), col(row, 'LOW'), col(row, 'CLOSE'))
+        if not dt or None in (o, h, l, c):
+            continue
+        try:
+            if interval == 'D':
+                ts = int(time.mktime(time.strptime(dt, '%Y-%m-%d'))) * 1000
+            else:
+                ts = int(time.mktime(time.strptime(dt[:16], '%Y-%m-%dT%H:%M'))) * 1000
+            candles.append({
+                "timestamp": ts,
+                "open": float(o), "high": float(h), "low": float(l), "close": float(c),
+                "volume": float(col(row, 'VOLUME') or 0),
+            })
+        except (ValueError, TypeError):
+            continue
+    candles.sort(key=lambda x: x['timestamp'])
+    _history_cache[cache_key] = (time.time(), candles)
+    return candles
+
 
 async def fetch_moex_price(ticker: str) -> dict:
     ticker = ticker.upper().strip()

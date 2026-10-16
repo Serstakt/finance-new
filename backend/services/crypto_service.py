@@ -410,3 +410,81 @@ async def fetch_crypto_prices_batch(symbols: list[str]) -> dict[str, dict]:
         for sym in unresolved:
             out[sym] = {"symbol": f"BINANCE:{sym}", "error": "Not found"}
     return out
+
+
+# ---------------------------------------------------------------------------
+# ИСТОРИЯ OHLC (CoinGecko free) — для вкладки «Тест график» / KLineChart.
+# /coins/{id}/ohlc отдаёт готовые свечи: [ms, open, high, low, close].
+# Поддерживаемые интервалы API: 1д (auto), 7д/30д (4ч), 90д+ (4дня).
+# Часовые свечи берём из market_chart (лимит бесплатного API ~365 дней).
+# ---------------------------------------------------------------------------
+_ohlc_cache: dict[str, tuple[float, list[dict]]] = {}
+OHLC_TTL = 3600  # час — история по определённому интервалу меняется редко
+
+
+def _to_ms(dt_str) -> int | None:
+    """'2024-05-28T03:00:00.000Z' -> unix ms"""
+    if not dt_str:
+        return None
+    try:
+        import datetime as _dt
+        s = str(dt_str).replace('Z', '+00:00')
+        return int(_dt.datetime.fromisoformat(s).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+async def fetch_crypto_history(symbol: str, interval: str = 'D', days: int = 90) -> list[dict]:
+    """Свечи {timestamp(ms), open, high, low, close} для крипто-пары (USDT-суффикс
+    отбрасывается при резолвинге монеты через resolve_coin_id)."""
+    symbol = symbol.upper().strip()
+    interval = (interval or 'D').upper()
+    cache_key = f"{symbol}:{interval}:{days}"
+    cached = _ohlc_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) < OHLC_TTL:
+        return cached[1]
+
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        coin_id = await resolve_coin_id(session, symbol)
+        if not coin_id:
+            return []
+
+        candles: list[dict] = []
+        if interval == 'H':
+            data = await _get(session, f"/coins/{coin_id}/market_chart", {
+                "vs_currency": "usd", "days": str(min(days, 90)), "interval": "hourly",
+            })
+            prices = (data or {}).get("prices") or []
+            vols = (data or {}).get("total_volumes") or []
+            vol_map = {int(p[0]): float(p[1]) for p in vols if p and p[0] is not None}
+            # группировка почасовых цен в OHLC-свечи
+            buckets: dict[int, list[float]] = {}
+            for p in prices:
+                if not p or p[0] is None or p[1] is None:
+                    continue
+                bucket = int(p[0]) // 3_600_000 * 3_600_000
+                buckets.setdefault(bucket, []).append(float(p[1]))
+            for b in sorted(buckets):
+                vs = buckets[b]
+                candles.append({
+                    "timestamp": b, "open": vs[0], "high": max(vs), "low": min(vs),
+                    "close": vs[-1], "volume": vol_map.get(b, 0.0),
+                })
+        else:
+            data = await _get(session, f"/coins/{coin_id}/ohlc", {
+                "vs_currency": "usd", "days": str(days),
+            })
+            if isinstance(data, list):
+                for row in data:
+                    if not row or len(row) < 5 or row[0] is None:
+                        continue
+                    ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
+                    if None in (o, h, l, c):
+                        continue
+                    candles.append({"timestamp": int(ts), "open": float(o), "high": float(h),
+                                    "low": float(l), "close": float(c), "volume": 0.0})
+
+    if candles:
+        _ohlc_cache[cache_key] = (time.time(), candles)
+    return candles

@@ -874,3 +874,67 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
     gap: 16px;
   }
 }
+
+/* === ТЕСТ ГРАФИК (KLineChart) — вкладка справа от «Портфель» === */
+.testchart-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    padding: 16px 20px;
+    box-sizing: border-box;
+    gap: 10px;
+    overflow: hidden;
+}
+.testchart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.testchart-title { margin: 0; font-size: 18px; color: #d1d4dc; }
+.testchart-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.testchart-controls input, .testchart-controls select {
+    background: #2a2e39;
+    border: 1px solid #363a45;
+    color: #d1d4dc;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    min-width: 200px;
+}
+.testchart-controls select { min-width: 120px; cursor: pointer; }
+.testchart-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: #2a2e39;
+    border: 1px solid #363a45;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+.tc-toolbar-label { color: #787b86; font-size: 12px; margin-right: 4px; }
+.testchart-toolbar button {
+    background: #1e222d;
+    color: #d1d4dc;
+    border: 1px solid #363a45;
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+}
+.testchart-toolbar button:hover { background: #2a2e39; border-color: #4a4f5c; }
+.testchart-toolbar button.active { background: #2962ff; border-color: #2962ff; color: #fff; }
+.tc-status { color: #787b86; font-size: 12px; margin-left: auto; }
+#tc-chart {
+    flex: 1;
+    min-height: 380px;
+    background: #131722;
+    border: 1px solid #363a45;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.tc-hint { color: #787b86; font-size: 12px; }

@@ -86,6 +86,50 @@ async def get_price(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/history/{symbol}")
+async def get_history(symbol: str, interval: str = Query("D", regex="^[DH]$"), days: int = Query(365, ge=1, le=3650)):
+    """Исторические OHLC-свечи для вкладки «Тест график» (KLineChart).
+    MOEX-тикер -> iss.moex.com; крипто-пара (BTCUSDT и т.п.) -> CoinGecko.
+    Формат ответа: {candles: [{timestamp(ms), open, high, low, close, volume}]}."""
+    upper = symbol.upper().strip()
+    if upper.startswith("MOEX:"):
+        upper = upper.replace("MOEX:", "")
+    is_crypto = upper.startswith("BINANCE:") or (
+        not any(upper == i or 'RUB' in upper for i in ['IMOEX', 'RTSI', 'RGBI', 'IRUS'])
+        and _looks_like_crypto(upper))
+    try:
+        if upper.startswith("BINANCE:"):
+            candles = await crypto_service.fetch_crypto_history(upper.replace("BINANCE:", ""), interval, min(days, 365))
+            return {"symbol": symbol, "source": "coingecko", "interval": interval, "candles": candles}
+        # Сначала пробуем MOEX; если тикер не найден и похож на крипту — CoinGecko
+        try:
+            candles = await moex_service.fetch_moex_history(upper, interval, days)
+        except Exception:
+            candles = []
+        if candles:
+            return {"symbol": symbol, "source": "moex", "interval": interval, "candles": candles}
+        cg = await crypto_service.fetch_crypto_history(upper, interval, min(days, 365))
+        if cg:
+            return {"symbol": symbol, "source": "coingecko", "interval": interval, "candles": cg}
+        if is_crypto:
+            raise HTTPException(status_code=404, detail="История не найдена")
+        raise HTTPException(status_code=404, detail="История не найдена для этого тикера")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Крипто-пары вида BTCUSDT/ETHUSDT/BTCRUB без биржевого префикса
+_CRYPTO_HINTS = ("USDT", "USD", "BTC", "ETH", "BNB", "SOL")
+
+
+def _looks_like_crypto(ticker: str) -> bool:
+    if ticker.endswith("RUB") and not ticker.endswith("USDRUB"):
+        return False
+    return any(ticker.endswith(h) or ticker.startswith(h) for h in _CRYPTO_HINTS)
+
+
 # =============================================================================
 # ПОРТФЕЛЬ
 # =============================================================================
