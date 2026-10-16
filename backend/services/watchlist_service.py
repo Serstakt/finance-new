@@ -8,7 +8,9 @@ flag_color и collapsed раньше жили только в localStorage бр�
 колонки БД, поэтому избранное (флажки) и свёрнутые разделы не теряются при
 смене браузера/устройства.
 """
+import html as html_lib
 import json
+import re
 import sqlite3
 
 from backend.database.database import Base, DB_PATH, engine, get_session, safe_create_all
@@ -20,7 +22,14 @@ safe_create_all()
 VALID_FLAG_COLORS = {"red", "blue", "yellow", "orange", "green"}
 
 # Максимальная длина заметки к тикеру (колонка watchlist_items.note).
+# Считается по ВИДИМОМУ тексту без HTML-разметки — совпадает с
+# window.NOTE_MAX_LEN на фронтенде.
 NOTE_MAX_LEN = 500
+
+# Разметка, которую приносит WYSIWYG-редактор заметок (вкладка «Заметки»):
+# <br> и закрытие блочных тегов — границы строк, остальные теги — просто стиль.
+_NOTE_LINE_BREAK_RE = re.compile(r"<(?:br\s*/?>|/div|/p|/li)[^>]*>", re.IGNORECASE)
+_NOTE_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -294,14 +303,23 @@ def set_collapsed(list_id: str, section_symbol: str, collapsed: bool) -> dict:
 
 
 def normalize_note(note: str | None) -> str | None:
-    """Приводит заметку к виду для хранения: обрезает пробелы, схлопывает
-    переводы строк в один (заметка — однострочный tooltip), ограничивает длину.
+    """Приводит заметку к виду для хранения: снимает HTML-разметку, которую
+    приносит WYSIWYG-редактор (вкладка «Заметки»), схлопывает пробелы,
+    ограничивает длину по видимому тексту.
+
+    NOTE_MAX_LEN считается по символам БЕЗ разметки — фронтенд хранит в БД
+    HTML (жирный/курсив/списки), но лимит и поиск должны относиться к тому,
+    что пользователь видит. Границы строк (<br>, </div|p|li>) сохраняются
+    как переводы строк, остальные теги вырезаются, сущности декодируются.
 
     Пустая/None возвращает None (заметка снимается).
     """
     if note is None:
         return None
-    cleaned = " ".join(str(note).split())  # strip + collapse \n, \t, множественные пробелы
+    text = _NOTE_LINE_BREAK_RE.sub("\n", str(note))
+    text = _NOTE_TAG_RE.sub("", text)
+    text = html_lib.unescape(text)
+    cleaned = " ".join(text.split())  # strip + collapse \n, \t, множественные пробелы
     if not cleaned:
         return None
     return cleaned[:NOTE_MAX_LEN]

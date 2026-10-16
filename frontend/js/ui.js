@@ -82,12 +82,15 @@ window.setupColumnHeaders = function() {
 // вторая вкладка той же панели. По умолчанию активна вкладка «Новости».
 // Выбранная вкладка запоминается в sessionStorage ('bottomTab'), чтобы
 // переключение не сбрасывалось при перерисовке списка.
-window.NOTE_MAX_LEN = 500; // должен совпадать с backend/services/watchlist_service.py
+// NOTE_MAX_LEN считается по ВИДИМОМУ тексту без разметки — совпадает с
+// лимитом колонки watchlist_items.note (backend/services/watchlist_service.py).
+window.NOTE_MAX_LEN = 500;
 
 // Отрисовка содержимого вкладки «Заметки» для выбранного тикера.
-// Кнопок «Редактировать»/карточек больше нет: вместо них — единое текстовое
-// полотно (<textarea id="notes-editor">), которое заполняется заметкой текущего
-// тикера и сохраняет её автоматически (см. initNotesEditor ниже).
+// Вкладка — WYSIWYG-редактор (подобие Word): панель форматирования +
+// contenteditable-полотно <div id="notes-editor">. Заметка хранится как
+// безопасный HTML (бэкенд дополнительно вырезает теги для поиска/лимитов).
+// Загрузка чужого HTML недопустима — содержимое прогоняется через санитайзер.
 window.renderNotesTab = function(symbol) {
   const editor = document.getElementById('notes-editor');
   const statusEl = document.getElementById('notes-editor-status');
@@ -97,64 +100,195 @@ window.renderNotesTab = function(symbol) {
   const key = valid ? noteKey(appState.activeListId, symbol) : '';
   const editable = valid && !String(appState.activeListId || '').startsWith('fav_');
 
-  editor.value = valid ? (appState.notes[key] || '') : '';
-  editor.disabled = !editable;
-  editor.placeholder = !valid
+  const raw = valid ? (appState.notes[key] || '') : '';
+  // Старые заметки хранились как обычный текст (без тегов) — переводим
+  // переводы строк в <br>, чтобы они корректно отображались в полотне.
+  editor.innerHTML = String(raw).includes('<') ? notesSanitize(raw)
+    : escapeHtml(raw).replace(/\n/g, '<br>');
+  editor.contentEditable = editable ? 'true' : 'false';
+  editor.classList.toggle('disabled', !editable);
+  editor.dataset.placeholder = !valid
     ? 'Выберите тикер в списке, чтобы вести заметки'
     : (editable ? 'Здесь можно вести заметки по выбранному тикеру…'
                 : 'В цветовых списках заметки не редактируются — откройте обычный список');
   if (statusEl) statusEl.textContent = '';
+  // data-empty нужен для плейсхолдера в contenteditable (там нет :placeholder)
+  editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
+  updateNotesToolbar();
   // Запоминаем состояние, чтобы автосохранение не сработало на самой загрузке
-  window.__notesEditorState = { key, symbol: valid ? symbol : '', value: editor.value };
+  window.__notesEditorState = { key, symbol: valid ? symbol : '', value: getNotesSerialize(editor) };
 };
 
-// Автосохранение текста из полотна заметок: без кнопки «Редактировать»
-// пользователь просто печатает — изменения пишутся в кэш appState.notes
-// и в БД (setNoteInDb) с дебаунсом. Пустой текст очищает заметку.
-window.initNotesEditor = function() {
-  const editor = document.getElementById('notes-editor');
-  if (!editor || editor.dataset.initialized === '1') return;
-  editor.dataset.initialized = '1';
-  let saveTimer = null;
+// Сериализация полотна заметок: пустое полотно -> '', убираем «мусорные»
+// <br> в конце; если видимый текст длиннее NOTE_MAX_LEN — сохраняем только
+// первые NOTE_MAX_LEN видимых символов (разметку при этом теряем, но данные
+// пользователя важнее форматирования сверх лимита).
+function getNotesSerialize(editor) {
+  let html = editor.innerHTML;
+  if (/^\s*(<br\s*\/?>|&nbsp;|\u00a0)+\s*$/i.test(html)) return '';
+  html = html.replace(/(<br\s*\/?>\s*)+$/i, '').trim();
+  const plain = (editor.textContent || '').replace(/\u00a0/g, ' ').trim();
+  if (!plain) return '';
+  if (plain.length > NOTE_MAX_LEN) {
+    return escapeHtml(plain.slice(0, NOTE_MAX_LEN)).replace(/\n/g, '<br>');
+  }
+  return html;
+}
 
+// Санитайзер HTML из contenteditable: разрешаем только теги форматирования,
+// которые создаёт сам редактор. Неразрешённые теги раскладываем в текст,
+// атрибуты снимаем (кроме безобидных у FONT и whitelisted-свойств у SPAN).
+const NOTES_ALLOWED_TAGS = new Set(['B','STRONG','I','EM','U','S','STRIKE','FONT','BR','DIV','P','UL','OL','LI','SPAN','BLOCKQUOTE']);
+const NOTES_ALLOWED_ATTRS = { FONT: ['color','size','face'], SPAN: ['style'] };
+window.notesSanitize = function(html) {
+  const doc = (typeof DOMParser !== 'undefined') ? new DOMParser().parseFromString(String(html || ''), 'text/html') : null;
+  if (!doc || !doc.body) return escapeHtml(String(html || ''));
+  const cleanNode = (node) => {
+    const kids = Array.from(node.childNodes);
+    for (const child of kids) {
+      if (child.nodeType === 3) continue; // текст оставляем как есть
+      if (child.nodeType !== 1) { node.removeChild(child); continue; }
+      const tag = String(child.tagName || '').toUpperCase();
+      if (!NOTES_ALLOWED_TAGS.has(tag)) {
+        // неразрешённый тег — заменяем его текстовым содержимым
+        const text = doc.createTextNode(child.textContent || '');
+        node.replaceChild(text, child);
+        continue;
+      }
+      const allowed = NOTES_ALLOWED_ATTRS[tag] || [];
+      for (const attr of Array.from(child.attributes || [])) {
+        if (!allowed.includes(String(attr.name).toLowerCase())) child.removeAttribute(attr.name);
+      }
+      if (tag === 'SPAN' && child.getAttribute && child.getAttribute('style')) {
+        const style = String(child.getAttribute('style'));
+        // пропускаем только цвет/шрифт/выравнивание — остальное удаляем
+        const safe = style.split(';').filter(s => /^(color|font-family|font-size|text-align|background-color)\s*:/i.test(s.trim())).join('; ');
+        if (safe.trim()) child.setAttribute('style', safe); else child.removeAttribute('style');
+      }
+      cleanNode(child);
+    }
+  };
+  cleanNode(doc.body);
+  return doc.body.innerHTML;
+};
+
+// Подсветка активных кнопок форматирования (как «нажатые» в Word).
+// queryCommandState может кидаться в нестандартных окружениях — молча игнорируем.
+window.updateNotesToolbar = function() {
+  if (typeof document.queryCommandState !== 'function') return;
+  document.querySelectorAll('#notes-toolbar button[data-cmd]').forEach(btn => {
+    let on = false;
+    try { on = document.queryCommandState(btn.dataset.cmd); } catch (e) { on = false; }
+    btn.classList.toggle('active', !!on);
+  });
+};
+
+// Выполнить команду форматирования над выделением в полотне заметок.
+window.notesExec = function(cmd) {
+  const editor = document.getElementById('notes-editor');
+  if (!editor || editor.classList.contains('disabled')) return;
+  editor.focus();
+  try { document.execCommand(cmd, false, null); } catch (e) { /* команда недоступна */ }
+  updateNotesToolbar();
+  notesOnInput();
+};
+
+// Команда с параметром (шрифт, размер, цвет).
+window.notesFormat = function(cmd, value) {
+  const editor = document.getElementById('notes-editor');
+  if (!editor || editor.classList.contains('disabled') || !value) return;
+  editor.focus();
+  notesRestoreSel();
+  try { document.execCommand(cmd, false, value); } catch (e) { /* команда недоступна */ }
+  const sel = cmd === 'fontName' ? 'notes-font-select' : (cmd === 'fontSize' ? 'notes-size-select' : null);
+  const selEl = sel && document.getElementById(sel);
+  if (selEl) selEl.value = '';
+  updateNotesToolbar();
+  notesOnInput();
+};
+
+// Выбор цвета: нативный color-input уводит фокус/выделение из полотна —
+// сохраняем диапазон перед открытием и восстанавливаем перед применением.
+window.notesSaveSel = function() {
+  const sel = (typeof window.getSelection === 'function') ? window.getSelection() : null;
+  if (!sel || sel.rangeCount === 0) return;
+  const editor = document.getElementById('notes-editor');
+  if (editor && editor.contains && editor.contains(sel.anchorNode)) {
+    window.__notesSavedRange = sel.getRangeAt(0).cloneRange();
+  }
+};
+window.notesRestoreSel = function() {
+  const r = window.__notesSavedRange;
+  if (!r || typeof window.getSelection !== 'function') return;
+  try {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  } catch (e) { /* ignore */ }
+};
+
+// Автосохранение из WYSIWYG-полотна заметок: пользователь печатает/форматирует —
+// изменения пишутся в кэш appState.notes и в БД (setNoteInDb) с дебаунсом.
+// Пустой текст очищает заметку. Ctrl+S сохраняет немедленно.
+let __notesSaveTimer = null;
+window.notesDoSave = async function() {
+  const editor = document.getElementById('notes-editor');
+  const st = window.__notesEditorState;
+  if (!editor || !st || !st.key || editor.classList.contains('disabled')) return;
+  const html = getNotesSerialize(editor);
+  if (html === st.value) return; // ничего не изменилось
+  st.value = html;
+  if (html) appState.notes[st.key] = html;
+  else delete appState.notes[st.key];
+  saveState();
   const setStatus = (text, cls) => {
     const el = document.getElementById('notes-editor-status');
     if (!el) return;
     el.textContent = text;
     el.className = cls || '';
   };
+  setStatus('Сохраняю…', 'saving');
+  const [listId] = st.key.split('|');
+  const saved = await setNoteInDb(listId, st.symbol, html || null);
+  if (saved) setStatus(html ? '💾 Сохранено' : '🗑 Заметка очищена', 'saved');
+  else setStatus('⚠ Не удалось сохранить в БД — изменения только локально', 'error');
+  setTimeout(() => setStatus('', ''), 2500);
+};
 
-  const doSave = async () => {
-    const st = window.__notesEditorState;
-    if (!st || !st.key || editor.disabled) return;
-    const trimmed = editor.value.trim().slice(0, NOTE_MAX_LEN);
-    if (trimmed === st.value) return; // ничего не изменилось
-    st.value = trimmed;
-    if (trimmed) appState.notes[st.key] = trimmed;
-    else delete appState.notes[st.key];
-    saveState();
-    setStatus('Сохраняю…', 'saving');
-    const [listId] = st.key.split('|');
-    const saved = await setNoteInDb(listId, st.symbol, trimmed || null);
-    if (saved) setStatus(trimmed ? '💾 Сохранено' : '🗑 Заметка очищена', 'saved');
-    else setStatus('⚠ Не удалось сохранить в БД — изменения только локально', 'error');
-    setTimeout(() => setStatus('', ''), 2500);
-  };
+// Общий обработчик «изменение в полотне»: обновляем видимость плейсхолдера
+// (в contenteditable нет нативного placeholder) и ставим автосохранение в очередь.
+window.notesOnInput = function() {
+  const editor = document.getElementById('notes-editor');
+  if (editor) editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
+  clearTimeout(__notesSaveTimer);
+  __notesSaveTimer = setTimeout(() => notesDoSave(), 600);
+};
 
-  editor.addEventListener('input', () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(doSave, 600);
+window.initNotesEditor = function() {
+  const editor = document.getElementById('notes-editor');
+  if (!editor || editor.dataset.initialized === '1') return;
+  editor.dataset.initialized = '1';
+
+  editor.addEventListener('input', notesOnInput);
+  editor.addEventListener('paste', (e) => {
+    // Вставляем только текст — иначе чужой HTML (стили/скрипты) попадёт в полотно
+    e.preventDefault();
+    const text = ((e.clipboardData || {}).getData) ? e.clipboardData.getData('text/plain') : '';
+    try { document.execCommand('insertText', false, text); } catch (err) { /* ignore */ }
+    notesOnInput();
+  });
+  editor.addEventListener('keyup', updateNotesToolbar);
+  editor.addEventListener('mouseup', updateNotesToolbar);
+  editor.addEventListener('blur', () => {
+    clearTimeout(__notesSaveTimer);
+    notesDoSave();
   });
   editor.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      clearTimeout(saveTimer);
-      doSave();
+      clearTimeout(__notesSaveTimer);
+      notesDoSave();
     }
-  });
-  editor.addEventListener('blur', () => {
-    clearTimeout(saveTimer);
-    doSave();
   });
 };
 
