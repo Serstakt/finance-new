@@ -10,6 +10,7 @@ from pathlib import Path
 from .services import moex_service, crypto_service, telegram_news_service
 from .services import portfolio_service
 from .services import watchlist_service
+from .services import news_favorites_service
 from .services import alert_service
 from .models import schemas
 
@@ -392,6 +393,42 @@ async def get_telegram_news(ticker: str, force_refresh: bool = Query(default=Fal
         force_refresh=force_refresh
     )
     return {"symbol": f"MOEX:{clean_ticker}", "news": news}
+
+
+# === ИЗБРАННЫЕ НОВОСТИ (вкладка «Новости» раздела WATCHLIST) ===
+# Флажок 🚩 ставится слева от конкретной новости; идентификатор новости —
+# постоянная ссылка на пост в Telegram. Хранится в БД (news_favorites),
+# поэтому избранное не теряется при смене браузера/устройства.
+
+@app.get("/api/news/favorites")
+async def get_news_favorites():
+    """Все избранные новости: {link: {"ticker": ..., "title": ...}}."""
+    return {"favorites": news_favorites_service.get_all()}
+
+
+@app.get("/api/news/favorites/list")
+async def get_news_favorites_list():
+    """Избранные новости списком для вкладки «Избранные Новости».
+
+    Записи уже отсортированы (свежие сверху) и по возможности обогащены
+    заголовком/временем поста из news_cache.
+    """
+    return {"news": news_favorites_service.list_favorites()}
+
+
+@app.post("/api/news/favorite")
+async def toggle_news_favorite(payload: schemas.NewsFavoriteToggle):
+    """Ставит/снимает красный флажок «избранное» у новости."""
+    link = (payload.link or "").strip()
+    if not link:
+        raise HTTPException(status_code=400, detail="Пустая ссылка на новость")
+    if payload.favorite:
+        return news_favorites_service.set_favorite(link, payload.ticker, payload.title)
+    result = news_favorites_service.remove_favorite(link)
+    if result.get("status") == "not_found":
+        # снятие уже снятого флажка — не ошибка, идемпотентный no-op
+        return {"status": "ok", "link": link, "favorite": False}
+    return result
 
 
 if __name__ == "__main__":

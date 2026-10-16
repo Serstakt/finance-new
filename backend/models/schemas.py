@@ -109,6 +109,21 @@ class WatchlistRepair(BaseModel):
     names: Dict[str, str]
 
 
+# === ИЗБРАННЫЕ НОВОСТИ (вкладка «Новости» раздела WATCHLIST) ===
+
+class NewsFavoriteToggle(BaseModel):
+    """Отметка/снятие флага «избранное» у конкретной новости.
+
+    link — постоянная ссылка на пост в Telegram (https://t.me/newssmartlab/<id>),
+    используется как идентификатор новости; favorite=True ставит красный флажок
+    слева от новости, favorite=False снимает его.
+    """
+    link: str
+    favorite: bool = True
+    ticker: Optional[str] = None   # тикер, по которому найдена новость
+    title: Optional[str] = None    # текст заголовка для отображения вне контекста
+
+
 # === ЦЕНОВЫЕ АЛЕРТЫ (хранятся в БД, таблица price_alerts) ===
 
 class AlertCreate(BaseModel):

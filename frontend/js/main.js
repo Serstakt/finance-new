@@ -21,6 +21,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadNotesFromDb();
   syncListWithDb(appState.activeListId);
 
+  // Избранные новости: подтягиваем флажки из БД (news_favorites), чтобы
+  // вкладка «🚩 Избранные» между «Новостями» и «Заметками» появилась сразу,
+  // если избранное уже есть (и не появилась, если его нет).
+  if (typeof window.loadNewsFavorites === 'function') {
+    window.loadNewsFavorites().catch(() => {});
+  }
+
   const savedPage = sessionStorage.getItem('activePage') || 'home';
   navigateTo(savedPage);
 });

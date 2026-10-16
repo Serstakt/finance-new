@@ -11,6 +11,23 @@ class NewsCache(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
+class NewsFavorite(Base):
+    """Избранная новость из вкладки «Новости» раздела Watchlist.
+
+    Новости парсятся из Telegram-канала и кэшируются в news_cache на 5 минут,
+    поэтому идентификатором новости служит постоянная ссылка на пост в t.me
+    (news.link). Флажок (красный 🚩) ставится слева от новости и хранится в БД,
+    чтобы избранное не терялось при смене браузера/устройства — так же, как
+    флажки тикеров в watchlist_items.
+    """
+    __tablename__ = "news_favorites"
+
+    link = Column(String, primary_key=True)   # постоянная ссылка на пост t.me
+    ticker = Column(String, nullable=True, index=True)  # тикер, по которому нашли
+    title = Column(String, nullable=True)     # для отображения вне контекста
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class WatchlistItem(Base):
     """Тикер watchlist, привязанный к конкретному списку.
 
