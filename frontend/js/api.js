@@ -255,6 +255,19 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       return s.replace(/\/+$/, '');
     };
 
+// Обрезка текста новости для UI: Telegram-посты часто заканчиваются словами
+// «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости» всё,
+// начиная с этих слов и до конца, отсекаем (полный текст всегда доступен по
+// клику на карточку — она ведёт на исходный пост).
+const trimNewsTeaser = (text) => {
+  const s = String(text == null ? '' : text);
+  const re = /(?:читать\s+далее|подробнее\s+в\s+источнике|перейти\s+к\s+публикации|показать\s+полностью|смотреть\s+полностью|читать\s+полностью|\bread\s+more\b|\bview\s+post\b|\bopen\s+post\b)/i;
+  const m = re.exec(s);
+  if (!m) return s.trim();
+  return s.slice(0, m.index).replace(/[\s….,:;«»"'\-\u2013\u2014]+$/g, '').trim();
+};
+window.trimNewsTeaser = trimNewsTeaser;
+
 // Отображаем новости. Padding вынесен во внутренний div, чтобы скролл не обрезал низ
 newsList.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
@@ -266,6 +279,8 @@ newsList.innerHTML = `
     ${news.map(n => {
     const link = normLink(n.link);
     const isFav = !!window.newsFavorites[link];
+    // На UI показываем только «тизер»: текст до слов «Читать далее» и т.п.
+    const teaser = trimNewsTeaser(n.title);
     return `
     <div class="news-item" data-link="${link}" style="display: flex; align-items: stretch;">
         <button type="button" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"
@@ -274,7 +289,7 @@ newsList.innerHTML = `
                 onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${isFav ? '🚩' : '⚑'}</button>
         <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${n.title}</div>
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${teaser}</div>
                 <div style="font-size: 12px; color: #787b86;">${n.publisher}</div>
             </div>
             <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
