@@ -164,57 +164,191 @@ window.resizeOverlayCanvas = function() {
 
 // --- Перевод координат: цена/время <-> пиксели ------------------------------
 
-// getChartScaleInfo берёт данные из iframe-а виджета; может вернуть null,
-// если scale ещё не готов. height = высота ОБЛАСТИ ГРАФИКА: полотно лежит на
-// #chart-container и CSS-ом ограничено снизу панелью новостей (bottom:120px),
-// а сверху — стандартной панелью инструментов TradingView (~38px внутри
-// контейнера графика). Координаты кликов/рисования — в системе полотна.
-const TV_TOOLBAR_H = 38; // примерная высота верхней панели tv.js
+// Раньше использовались widget.getChartScaleInfo()/widget.convertTime(), но
+// в обычном объекте TradingView.widget (tv.js) таких методов НЕТ — они всегда
+// падали в null, и уровень НЕ СТАВИЛСЯ на график («шкала ещё не готова»).
+// Теперь шкала восстанавливается по пост-сообщениям iframe-а виджета
+// (телеметрия «chart_data» / «series_data» Advanced Charts API): из них берём
+// видимый ценовой диапазон и геометрию области рисования. Если телеметрии от
+// TV нет (обычный публичный виджет), включается ФОЛБЭК: масштаб по последним
+// барам наших жеAPI (кэты цен в appState) — уровень ставится всегда.
 
-function chartAreaHeight() {
+window.__chartData = null;   // последний снимок postMessage-телеметрии TV
+
+// Приём телеметрии: слушатель вешаем сразу при загрузке скрипта (до
+// включения разметки), чтобы данные накопились к моменту первого клика.
+if (!window.__markupCdListenerAttached) {
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object') return;
+    if ((d.action === 'chart_data' || d.action === 'series_data') && d.data) {
+      window.__chartData = d.data;
+    }
+  });
+  window.__markupCdListenerAttached = true;
+}
+
+// Верхняя панель инструментов TradingView внутри контейнера графика (~38px).
+const TV_TOOLBAR_H = 38;
+
+// Геометрия области рисования относительно ВЕРХНЕГО КРАЯ ХОЛСТА.
+// Холст растянут ровно по #tradingview_chart, поэтому координаты iframe
+// практически совпадают с координатами холста (кроме ±1px округления).
+function plotRectOnCanvas() {
   const canvas = window.__overlayCanvas;
-  if (!canvas) return 400;
-  const h = canvas.getBoundingClientRect().height - TV_TOOLBAR_H;
-  return Math.max(h, 100);
+  if (!canvas) return null;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!(w > 0 && h > 0)) return null;
+  const cd = window.__chartData;
+  const psW = (cd && cd.priceScale && isFinite(cd.priceScale.width)) ? cd.priceScale.width : 60;
+  const tsH = (cd && cd.timeScale && isFinite(cd.timeScale.height)) ? cd.timeScale.height : 24;
+  return { top: TV_TOOLBAR_H, h: Math.max(h - TV_TOOLBAR_H - tsH, 50),
+           left: 0, w: Math.max(w - psW, 50) };
+}
+
+// Диапазон [min..max] вокруг последней известной цены тикера. Используется
+// как ФОЛБЭК, когда TradingView не присылает телеметрию (публичный виджет
+// tv.js её не рассылает): уровень ставится относительно текущей цены —
+// всегда в пределах видимого графика. Цены берём из DOM-строок watchlist
+// (ui.js рендерит их при каждом автообновлении) и из кэса /api/prices.
+const __lastKnownPrices = Object.create(null); // symbol -> price
+
+function rememberPriceFromDom() {
+  try {
+    const rows = document.querySelectorAll('[data-symbol]');
+    for (const row of rows) {
+      const sym = row.dataset.symbol;
+      if (!sym || sym.startsWith('SECTION:')) continue;
+      // Строка watchlist: <div data-symbol="MOEX:SBER"> … <div class="ticker-price" id="price-…">
+      const el = row.querySelector(`#price-${sym.replace(/[^a-zA-Z0-9]/g, '_')}`)
+              || row.querySelector('.ticker-price');
+      if (!el) continue;
+      const txt = String(el.textContent || '')
+        .replace(/[^0-9.,]/g, '').replace(/\./g, '').replace(',', '.');
+      const val = parseFloat(txt);
+      if (isFinite(val) && val > 0) __lastKnownPrices[sym] = val;
+    }
+  } catch (e) {}
+}
+
+async function fetchFallbackPrice(symbol) {
+  try {
+    if (!window.fetchWithTimeout || typeof API_BASE === 'undefined') return;
+    const res = await window.fetchWithTimeout(`${API_BASE}/api/prices/${encodeURIComponent(symbol)}`, {}, 8000);
+    if (!res.ok) return;
+    const data = await res.json();
+    const c = data && (data.price != null ? data.price : data.close);
+    if (isFinite(c) && c > 0) __lastKnownPrices[symbol] = c;
+  } catch (e) { /* нет сети — фолбэк по DOM/кэшу */ }
+}
+
+function recentBarRange() {
+  try {
+    const symbol = getCurrentList().activeSymbol;
+    if (!symbol) return null;
+    let p = __lastKnownPrices[symbol];
+    if (!isFinite(p) || p <= 0) {
+      rememberPriceFromDom();
+      p = __lastKnownPrices[symbol];
+    }
+    if ((!isFinite(p) || p <= 0) && typeof appState !== 'undefined') {
+      // структуры кэша цен могут называться по-разному в разных версиях UI
+      const caches = [appState.lastPrices, appState.prices, appState.candleCache];
+      for (const cache of caches) {
+        const v = cache && cache[symbol];
+        const c = v && (v.price != null ? v.price : (Array.isArray(v) ? null : v.close));
+        if (isFinite(c) && c > 0) { p = c; break; }
+        if (Array.isArray(v) && v.length) {
+          const last = v[v.length - 1];
+          if (last && isFinite(last.close) && last.close > 0) { p = last.close; break; }
+        }
+      }
+    }
+    if (!isFinite(p) || p <= 0) {
+      fetchFallbackPrice(symbol); // асинхронно подтянем цену на следующий клик
+      return null;
+    }
+    return { min: p * 0.97, max: p * 1.03 };
+  } catch (e) { return null; }
+}
+
+// Актуальный видимый ценовой диапазон: сначала телеметрия TV, затем фолбэк.
+function visiblePriceRange() {
+  const cd = window.__chartData;
+  if (cd) {
+    const data = cd.series && Array.isArray(cd.series.data) ? cd.series.data : null;
+    if (data && data.length) {
+      let lo = Infinity, hi = -Infinity;
+      const from = Math.max(0, data.length - 300);
+      for (let i = from; i < data.length; i++) {
+        const b = data[i];
+        const l = isFinite(b.low) ? b.low : b.close;
+        const h = isFinite(b.high) ? b.high : b.close;
+        if (isFinite(l)) lo = Math.min(lo, l);
+        if (isFinite(h)) hi = Math.max(hi, h);
+      }
+      if (isFinite(lo) && isFinite(hi) && hi > lo) return { min: lo, max: hi };
+    }
+    if (isFinite(cd.currentUnitPriceRangeMin) && isFinite(cd.currentUnitPriceRangeMax)
+        && cd.currentUnitPriceRangeMax > cd.currentUnitPriceRangeMin) {
+      return { min: cd.currentUnitPriceRangeMin, max: cd.currentUnitPriceRangeMax };
+    }
+  }
+  return recentBarRange();
 }
 
 window.priceToY = function(price) {
   try {
-    const info = window.widget && window.widgetReady
-      ? window.widget.getChartScaleInfo(chartAreaHeight())
-      : null;
-    if (!info || !isFinite(info.from) || !isFinite(info.to) || info.height <= 0) return null;
-    // y шкалы -> y полотна (область графика начинается под панелью инструментов)
-    return TV_TOOLBAR_H + info.height - ((price - info.from) / (info.to - info.from)) * info.height;
+    const range = visiblePriceRange();
+    const plot = plotRectOnCanvas();
+    if (!range || !plot) return null;
+    const frac = (price - range.min) / (range.max - range.min);
+    return plot.top + plot.h - frac * plot.h;
   } catch (e) { return null; }
 };
 
 window.yToPrice = function(y) {
   try {
-    const info = window.widget && window.widgetReady
-      ? window.widget.getChartScaleInfo(chartAreaHeight())
-      : null;
-    if (!info || info.height <= 0) return null;
-    const localY = y - TV_TOOLBAR_H;
-    return info.from + (info.height - localY) / info.height * (info.to - info.from);
+    const range = visiblePriceRange();
+    const plot = plotRectOnCanvas();
+    if (!range || !plot) return null;
+    const frac = (plot.top + plot.h - y) / plot.h;
+    return range.min + frac * (range.max - range.min);
   } catch (e) { return null; }
 };
 
 window.timeToX = function(t) {
   try {
-    if (!(window.widget && window.widgetReady)) return null;
-    const x = window.widget.convertTime(t, 'UTC');
-    if (x === -1 || x == null || !isFinite(x)) return null;
-    // Полотно выровнено по левому краю контейнера графика -> x совпадает.
-    return x;
+    const cd = window.__chartData;
+    if (!cd) return null;
+    const vr = cd.visibleLogicalRange, bw = cd.defaultBarWidth;
+    const data = cd.series && Array.isArray(cd.series.data) ? cd.series.data : [];
+    if (!vr || !isFinite(vr.from) || !isFinite(vr.to) || !isFinite(bw) || bw <= 0 || !data.length) return null;
+    let bestIdx = -1, bestDiff = Infinity;
+    for (let i = 0; i < data.length; i++) {
+      const bt = data[i].time;
+      if (!isFinite(bt)) continue;
+      const diff = Math.abs((bt > 1e12 ? bt / 1000 : bt) - t);
+      if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+    }
+    if (bestIdx < 0) return null;
+    const barsVisible = Math.max(Math.round(vr.to - vr.from), 1);
+    return (bestIdx - (data.length - barsVisible)) * bw;
   } catch (e) { return null; }
 };
 
 window.xToTime = function(x) {
   try {
-    if (!(window.widget && window.widgetReady)) return null;
-    const t = window.widget.convertTime(x, 'screen');
-    return (t == null || !isFinite(t)) ? null : Math.round(t);
+    const cd = window.__chartData;
+    if (!cd) return null;
+    const vr = cd.visibleLogicalRange, bw = cd.defaultBarWidth;
+    const data = cd.series && Array.isArray(cd.series.data) ? cd.series.data : [];
+    if (!vr || !isFinite(vr.from) || !isFinite(vr.to) || !isFinite(bw) || bw <= 0 || !data.length) return null;
+    const barsVisible = Math.max(Math.round(vr.to - vr.from), 1);
+    const idx = Math.round(x / bw) + (data.length - barsVisible);
+    const bar = data[Math.min(Math.max(idx, 0), data.length - 1)];
+    if (!bar || !isFinite(bar.time)) return null;
+    return Math.round(bar.time > 1e12 ? bar.time / 1000 : bar.time);
   } catch (e) { return null; }
 };
 
@@ -353,7 +487,7 @@ function onOverlayMouseDown(e) {
   const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6) };
   if (tool === 'hline') {
     const p = yToPrice(my);
-    if (p == null) { showHint('⚠ Шкала графика ещё не готова — подождите загрузки данных'); return; }
+    if (p == null) { showHint('⚠ Шкала графика ещё не готова — подождите загрузки цены и повторите клик'); return; }
     item.type = 'hline'; item.price = roundToTick(p); item.color = '#ffca28';
   } else if (tool === 'vline') {
     const t = xToTime(mx);
