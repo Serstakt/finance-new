@@ -11,6 +11,7 @@ from .services import moex_service, crypto_service, telegram_news_service
 from .services import portfolio_service
 from .services import watchlist_service
 from .services import alert_service
+from .services import candles_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -376,6 +377,30 @@ async def migrate_alerts_endpoint(payload: schemas.AlertMigrate):
         return alert_service.migrate_from_client(payload.alerts)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ИСТОРИЯ СВЕЧЕЙ (вкладка «Тест график», KLineChart)
+# Интервалы: hour | day | week | month. Глубина — максимальная, которую
+# отдаёт источник (MOEX ISS history с 1995 г., CoinGecko days=max).
+# =============================================================================
+
+@app.get("/api/candles/{symbol}")
+async def get_candles(symbol: str, interval: str = Query(default="day")):
+    interval = (interval or "day").lower()
+    if interval not in ("hour", "day", "week", "month"):
+        raise HTTPException(status_code=400,
+                            detail="interval must be one of: hour, day, week, month")
+    result = await candles_service.fetch_candles(symbol, interval)
+    return result
+
+
+@app.post("/api/candles/{symbol}/invalidate")
+async def invalidate_candles(symbol: str, interval: str = Query(default="")):
+    """Сброс серверного кэша свечей (кнопка «Обновить» на вкладке «Тест график»)."""
+    removed = candles_service.invalidate_cache(
+        symbol, interval.lower() if interval else None)
+    return {"symbol": symbol, "removed": removed}
 
 
 # =============================================================================

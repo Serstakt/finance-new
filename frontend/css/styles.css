@@ -874,3 +874,18 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
     gap: 16px;
   }
 }
+
+
+/* ==================== ТЕСТ ГРАФИК (KLineChart) ==================== */
+            #tc-wrap { display: flex; flex-direction: column; width: 100%; height: 100%; padding: 12px; box-sizing: border-box; }
+            #tc-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+            #tc-symbol { background: #1e222d; color: #d1d4dc; border: 1px solid #363c4e;
+                         border-radius: 6px; padding: 8px 12px; width: 220px; font-size: 14px; }
+            .tc-interval-btn { background: #2a2e39; color: #d1d4dc; border: 1px solid #363c4e;
+                               border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+            .tc-interval-btn.active { background: #2962ff; border-color: #2962ff; color: #fff; }
+            .tc-action-btn { background: #363c4e; color: #d1d4dc; border: 1px solid #4a5168;
+                             border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+            #tc-status { font-size: 13px; color: #787b86; margin-left: auto; }
+            #tc-chart { flex: 1; width: 100%; min-height: 420px;
+                        background: #131722; border-radius: 8px; }

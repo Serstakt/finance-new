@@ -17,6 +17,7 @@
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
+    <button class="nav-btn" data-page="testchart" onclick="navigateTo('testchart')">Тест график</button>
 </nav>
 
 <div id="main-content">
@@ -269,11 +270,26 @@
                     </tbody>
                 </table>
             </div>
+    </div><!-- /portfolio-page -->
+
+    <!-- ==================== ТЕСТ ГРАФИК (KLineChart) ==================== -->
+    <div id="testchart-page" class="page">
+        <div id="tc-wrap">
+            <div id="tc-toolbar">
+                <input id="tc-symbol" type="text" placeholder="Тикер: MOEX:SBER, BTCUSDT…" value="MOEX:SBER" />
+                <button class="tc-interval-btn active" data-interval="hour" onclick="testChartSetInterval('hour', this)">Час</button>
+                <button class="tc-interval-btn" data-interval="day" onclick="testChartSetInterval('day', this)">День</button>
+                <button class="tc-interval-btn" data-interval="week" onclick="testChartSetInterval('week', this)">Неделя</button>
+                <button class="tc-interval-btn" data-interval="month" onclick="testChartSetInterval('month', this)">Месяц</button>
+                <button class="tc-action-btn" onclick="testChartReload(true)">⟳ Обновить</button>
+                <span id="tc-status"></span>
+            </div>
+            <div id="tc-chart"></div>
         </div>
+    </div><!-- /testchart-page -->
 
         <!-- Модальное окно добавления позиции -->
-        <div class="modal-overlay" id="add-position-modal">
-            <div class="modal-box">
+        <div class="modal-overlay" id="add-position-modal">            <div class="modal-box">
                 <div class="modal-title">Добавить позицию</div>
                 <input type="text" class="modal-input" id="position-symbol" placeholder="Тикер (например, MOEX:SBER)" />
                 <input type="number" class="modal-input" id="position-quantity" placeholder="Количество" step="0.01" />
@@ -338,6 +354,9 @@
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
+<!-- Тест график: KLineChart — локальный UMD-бандл (CDN может быть недоступен) -->
+<script defer src="js/vendor/klinecharts.min.js"></script>
+<script defer src="js/testchart.js"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
      показываем предупреждение вместо «вечной загрузки» -->
