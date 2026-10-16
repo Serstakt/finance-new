@@ -50,6 +50,28 @@ window.saveMarkupToStorage = function(symbol, items) {
   } catch (e) {}
 };
 
+// Ключ localStorage для «сиротской» разметки: объекты, поставленные в
+// списках, которые ещё не зарегистрированы в БД (fav_* и списки, созданные
+// офлайн). Без этого шага разметка терялась бы при первом сохранении:
+// setMarkupInDb/loadActiveMarkupFromDb пропускают такие списки, а
+// persistActiveMarkup перезаписывает обычный кэш пустым массивом.
+window.MARKUP_ORPHAN_LS_KEY = 'chart_markup_orphan';
+
+function loadOrphanMarkup(symbol) {
+  try {
+    const all = JSON.parse(localStorage.getItem(window.MARKUP_ORPHAN_LS_KEY) || '{}');
+    return Array.isArray(all[symbol]) ? all[symbol] : null;
+  } catch (e) { return null; }
+}
+
+function saveOrphanMarkup(symbol, items) {
+  try {
+    const all = JSON.parse(localStorage.getItem(window.MARKUP_ORPHAN_LS_KEY) || '{}');
+    if (items && items.length) all[symbol] = items; else delete all[symbol];
+    localStorage.setItem(window.MARKUP_ORPHAN_LS_KEY, JSON.stringify(all));
+  } catch (e) {}
+}
+
 // Сохранение в БД (watchlist_items.markup). Отвечает true/false — чтобы
 // вызывающий код мог показать статус. fav_-списки не хранятся в БД (как заметки).
 window.setMarkupInDb = async function(listId, symbol, json) {
@@ -74,7 +96,17 @@ window.setMarkupInDb = async function(listId, symbol, json) {
 window.loadActiveMarkupFromDb = async function() {
   const listId = appState.activeListId;
   const symbol = getCurrentList().activeSymbol;
-  if (!listId || listId.startsWith('fav_') || !symbol) return;
+  if (!symbol) return;
+  // Списки вне БД (fav_*, созданные офлайн): отдаём «сиротскую» разметку из
+  // отдельного localStorage-ключа — обычный кэш persistActiveMarkup затирает.
+  if (!listId || listId.startsWith('fav_')) {
+    const orphan = loadOrphanMarkup(symbol);
+    if (orphan && orphan.length) {
+      window.__markupItems = orphan;
+      drawMarkup();
+    }
+    return;
+  }
   try {
     const res = await window.fetchWithTimeout(
       `${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, {}, 15000);
@@ -96,7 +128,15 @@ window.persistActiveMarkup = function() {
   const symbol = getCurrentList().activeSymbol;
   if (!symbol) return;
   saveMarkupToStorage(symbol, window.__markupItems);
-  setMarkupInDb(appState.activeListId, symbol, JSON.stringify(window.__markupItems));
+  // fav_*-списки (и списки, ещё не зарегистрированные в БД) не хранят
+  // разметку на сервере — держим её в отдельном localStorage-ключе,
+  // иначе следующий loadMarkupFromStorage/refresh вернул бы пустоту.
+  const listId = appState.activeListId;
+  if (!listId || listId.startsWith('fav_')) {
+    saveOrphanMarkup(symbol, window.__markupItems);
+    return;
+  }
+  setMarkupInDb(listId, symbol, JSON.stringify(window.__markupItems));
 };
 
 // --- Создание/синхронизация canvas -----------------------------------------
@@ -166,11 +206,17 @@ window.resizeOverlayCanvas = function() {
 
 // getChartScaleInfo берёт данные из iframe-а виджета; может вернуть null,
 // если scale ещё не готов. height = высота ОБЛАСТИ ГРАФИКА: полотно лежит на
-// #chart-container и CSS-ом ограничено снизу панелью новостей (bottom:120px),
-// а сверху — стандартной панелью инструментов TradingView (~38px внутри
-// контейнера графика). Координаты кликов/рисования — в системе полотна.
+// #chart-container и покрывает ровно контейнер графика #tradingview_chart
+// (панель «Новости / Заметки» — отдельный flex-элемент ниже), а сверху —
+// стандартная панель инструментов TradingView (~38px внутри контейнера
+// графика). Координаты кликов/рисования — в системе полотна.
 const TV_TOOLBAR_H = 38; // примерная высота верхней панели tv.js
 
+// Высота области графика для виджетного API. Берём РЕАЛЬНУЮ высоту холста,
+// а не захардкоженную: раньше здесь фигурировала «bottom:120px», которая
+// разъезжалась с фактической вёрсткой — линии рисовались не на своей цене,
+// а при низком окне «уровень» вообще уходил за край (клип canvas-ом), и
+// казалось, что разметка не ставится.
 function chartAreaHeight() {
   const canvas = window.__overlayCanvas;
   if (!canvas) return 400;
@@ -216,6 +262,30 @@ window.xToTime = function(x) {
     const t = window.widget.convertTime(x, 'screen');
     return (t == null || !isFinite(t)) ? null : Math.round(t);
   } catch (e) { return null; }
+};
+
+// Ждём, пока шкала виджета станет доступной (widgetReady + getChartScaleInfo).
+// Без этой страховки клик сразу после включения разметки молча падал:
+// yToPrice возвращал null («Шкала ещё не готова»), объект не создавался,
+// и уровень на график не ставился. resolve(true) — шкала готова;
+// resolve(false) — таймаут (вызывающий покажет подсказку).
+window.waitForChartScale = function(timeoutMs) {
+  timeoutMs = timeoutMs || 5000;
+  return new Promise((resolve) => {
+    const scaleOk = () => {
+      try {
+        if (!(window.widget && window.widgetReady)) return false;
+        const info = window.widget.getChartScaleInfo(chartAreaHeight());
+        return !!(info && isFinite(info.from) && isFinite(info.to) && info.height > 0);
+      } catch (e) { return false; }
+    };
+    if (scaleOk()) { resolve(true); return; }
+    const started = Date.now();
+    const iv = setInterval(() => {
+      if (scaleOk()) { clearInterval(iv); resolve(true); }
+      else if (Date.now() - started > timeoutMs) { clearInterval(iv); resolve(false); }
+    }, 150);
+  });
 };
 
 // --- Отрисовка ---------------------------------------------------------------
@@ -323,37 +393,33 @@ function onOverlayMouseDown(e) {
   if (hit) {
     __dragItem = { item: hit, startX: mx, startY: my, moved: false };
     e.preventDefault();
-    const onMove = (ev) => {
-      const r = window.__overlayCanvas.getBoundingClientRect();
-      const cx = ev.clientX - r.left, cy = ev.clientY - r.top;
-      if (!__dragItem) return;
-      if (Math.abs(cy - __dragItem.startY) > 2 || Math.abs(cx - __dragItem.startX) > 2) __dragItem.moved = true;
-      if (__dragItem.item.type === 'hline') {
-        const p = yToPrice(cy);
-        if (p != null) { __dragItem.item.price = roundToTick(p); drawMarkup(); }
-      } else if (__dragItem.item.type === 'vline') {
-        const t = xToTime(cx);
-        if (t != null) { __dragItem.item.time = t; drawMarkup(); }
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      if (__dragItem && __dragItem.moved) persistActiveMarkup();
-      __dragItem = null;
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mousemove', onOverlayMouseMove);
+    window.addEventListener('mouseup', onOverlayMouseUp);
     return;
   }
 
   // 2) Активный инструмент — добавление нового объекта в точку клика.
   const tool = window.__markupTool;
   if (!tool) return;
+  // Запоминаем точку клика: если шкала ещё не готова, ждём её и ставим
+  // объект в ту же точку (раньше клик просто молча пропадал).
+  addMarkupAtPoint(tool, mx, my);
+}
+
+// Добавление объекта разметки по координатам клика на холсте. Асинхронная:
+// сначала дожидаемся готовности ценовой/временной шкалы виджета — иначе
+// yToPrice/xToTime вернут null и «уровень не ставится на график».
+window.addMarkupAtPoint = async function(tool, mx, my) {
+  if (!tool) return;
+  const ready = await waitForChartScale(5000);
+  if (!ready) {
+    showHint('⚠ Шкала графика недоступна — обновите страницу или выберите тикер');
+    return;
+  }
   const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6) };
   if (tool === 'hline') {
     const p = yToPrice(my);
-    if (p == null) { showHint('⚠ Шкала графика ещё не готова — подождите загрузки данных'); return; }
+    if (p == null) { showHint('⚠ Не удалось определить цену по позиции курсора'); return; }
     item.type = 'hline'; item.price = roundToTick(p); item.color = '#ffca28';
   } else if (tool === 'vline') {
     const t = xToTime(mx);
@@ -368,7 +434,7 @@ function onOverlayMouseDown(e) {
   drawMarkup();
   persistActiveMarkup();
   setMarkupTool(null); // один объект за одно включение — безопаснее случайных кликов
-}
+};
 
 function roundToTick(p) {
   const abs = Math.abs(p);
@@ -401,6 +467,15 @@ window.undoLastMarkup = function() {
 window.toggleMarkupToolbar = function() {
   const tb = document.getElementById('markup-toolbar');
   if (!tb) return;
+  // Кнопка «🖊 Разметка» живёт в нижней панели, которая скрыта, пока не
+  // выбран тикер (и показывает заглушку вместо графика). Без активного
+  // символа рисовать не на чем — включение молча «не работало».
+  const sym = getCurrentList().activeSymbol;
+  if (!sym || sym.startsWith('SECTION:')) {
+    tb.style.display = 'none';
+    showHint('⚠ Сначала выберите тикер в списке');
+    return;
+  }
   const show = tb.style.display === 'none' || !tb.style.display;
   tb.style.display = show ? 'flex' : 'none';
   if (show) {
@@ -410,6 +485,11 @@ window.toggleMarkupToolbar = function() {
     ensureOverlayCanvas();
     drawMarkup();
     subscribeMarkupSync();
+    loadActiveMarkupFromDb(); // объекты могли появиться в другом списке/сессии
+    // Страховка: если виджет ещё не готов (только что открыли watchlist),
+    // дождитесь шкалы и перерисуйте — иначе включение разметки выглядит
+    // как «уровень не ставится на график».
+    waitForChartScale(6000).then(() => drawMarkup());
   } else {
     setMarkupTool(null); // скрываем тулбар — выходим из режима рисования
   }
@@ -424,11 +504,41 @@ window.setMarkupTool = function(tool) {
   if (canvas) {
     // В режиме рисования холст ловит мышь; иначе насквозь — график живёт своей жизнью.
     canvas.classList.toggle('drawing', !!window.__markupTool);
+    // Перевешиваем слушатель на document: если после mousedown пользователь
+    // чуть сдвинул курсор, mouseup на canvas не срабатывал — «залипал» drag,
+    // инструмент оставался активным, а каждый следующий клик двигал старую
+    // линию вместо создания новой (выглядело как «уровень не ставится»).
+    if (window.__markupTool) {
+      if (!setMarkupTool._downAttached) {
+        document.addEventListener('mousedown', onDocumentMouseDownCatch);
+        setMarkupTool._downAttached = true;
+      }
+    } else {
+      detachDragListeners();
+    }
   }
   showHint(window.__markupTool
     ? '🖊 Кликните по графику, чтобы поставить объект (повторное нажатие кнопки — выключить)'
     : '');
 };
+
+// Страховка от «залипшего» перетаскивания: любой новый mousedown вне холста
+// или mouseup в любом месте завершает активный drag.
+function onDocumentMouseDownCatch(e) {
+  if (__dragItem && e.target !== window.__overlayCanvas) finishDrag();
+}
+function finishDrag() {
+  if (!__dragItem) return;
+  if (__dragItem.moved) persistActiveMarkup();
+  __dragItem = null;
+  detachDragListeners();
+}
+function detachDragListeners() {
+  window.removeEventListener('mousemove', onOverlayMouseMove);
+  window.removeEventListener('mouseup', onOverlayMouseUp);
+  document.removeEventListener('mousedown', onDocumentMouseDownCatch);
+  setMarkupTool._downAttached = false;
+}
 
 function showHint(text) {
   const hint = window.__overlayHint;
