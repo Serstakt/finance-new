@@ -228,10 +228,11 @@
                         <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')">↩️</button>
                         <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')">↪️</button>
                         <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')">✂️</button>
+                        <!-- Статус автосохранения: правый угол панели инструментов -->
+                        <div id="notes-editor-status"></div>
                     </div>
                     <div id="notes-editor" contenteditable="true" spellcheck="true"
                          data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
-                    <div id="notes-editor-status"></div>
                 </div>
             </div>
         </div>

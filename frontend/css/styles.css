@@ -342,8 +342,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #notes-editor div, #notes-editor p { margin: 0 0 4px; }
 #notes-editor.disabled { opacity: 0.6; cursor: not-allowed; background: #ececec; }
 #notes-editor-status {
-  flex-shrink: 0; padding: 4px 20px 8px; font-size: 12px; color: #787b86;
-  text-align: right; min-height: 22px;
+  flex-shrink: 0; margin-left: auto; padding: 0 4px; font-size: 12px; color: #787b86;
+  text-align: right; white-space: nowrap; min-height: 22px; line-height: 22px;
 }
 #notes-editor-status.saved { color: #26a69a; }
 #notes-editor-status.error { color: #ef5350; }
