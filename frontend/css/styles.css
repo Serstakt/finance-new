@@ -300,18 +300,47 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 /* --- Заметки к тикерам (watchlist_items.note) ---
    Иконки заметок из строк watchlist убраны: редактирование доступно только
-   во вкладке «Заметки» под графиком — единым текстовым полотном без кнопок. */
+   во вкладке «Заметки» под графиком — WYSIWYG-редактором (подобие Word). */
 
-/* Полотно заметок (вкладка «Заметки»): textarea растягивается на всю панель */
+/* Вкладка «Заметки»: панель форматирования + растягиваемое полотно */
 #notes-list { display: flex; flex-direction: column; }
-#notes-editor {
-  flex: 1; min-height: 0; width: 100%; resize: none;
-  background: #1e222d; color: #d1d4dc; border: none; outline: none;
-  padding: 16px 20px; font-family: inherit; font-size: 14px; line-height: 1.6;
+
+/* Панель инструментов в стиле Word: группы кнопок, разделители, подсветка активных */
+#notes-toolbar {
+  flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 6px 12px; background: #22262f; border-bottom: 1px solid #363a45;
 }
-#notes-editor::placeholder { color: #787b86; }
-#notes-editor:focus { background: #22262f; }
-#notes-editor:disabled { opacity: 0.55; cursor: not-allowed; }
+#notes-toolbar select {
+  background: #1e222d; color: #d1d4dc; border: 1px solid #363a45; border-radius: 4px;
+  font-size: 12px; padding: 3px 4px; cursor: pointer; max-width: 120px;
+}
+#notes-toolbar button {
+  min-width: 28px; height: 26px; padding: 0 6px;
+  background: transparent; color: #d1d4dc; border: 1px solid transparent;
+  border-radius: 4px; font-size: 13px; cursor: pointer; line-height: 1;
+}
+#notes-toolbar button:hover { background: #363a45; border-color: #4a4f5c; }
+#notes-toolbar button.active { background: #2962ff33; border-color: #2962ff; color: #fff; }
+#notes-toolbar input[type="color"] {
+  width: 28px; height: 26px; padding: 2px; cursor: pointer;
+  background: transparent; border: 1px solid #363a45; border-radius: 4px;
+}
+.notes-sep { width: 1px; height: 20px; background: #363a45; margin: 0 6px; flex-shrink: 0; }
+
+/* Полотно заметки: «бумажный лист» как в Word — светлый фон, тёмный текст */
+#notes-editor {
+  flex: 1; min-height: 0; width: 100%; overflow-y: auto; outline: none;
+  background: #fafafa; color: #2b2b2b; padding: 16px 24px;
+  font-family: 'Times New Roman', Georgia, serif; font-size: 15px; line-height: 1.6;
+  box-shadow: inset 0 0 0 1px #363a45;
+}
+#notes-editor:empty::before,
+#notes-editor[data-empty="true"]::before {
+  content: attr(data-placeholder); color: #9aa0ab; pointer-events: none;
+}
+#notes-editor ul, #notes-editor ol { margin: 4px 0; padding-left: 28px; }
+#notes-editor div, #notes-editor p { margin: 0 0 4px; }
+#notes-editor.disabled { opacity: 0.6; cursor: not-allowed; background: #ececec; }
 #notes-editor-status {
   flex-shrink: 0; padding: 4px 20px 8px; font-size: 12px; color: #787b86;
   text-align: right; min-height: 22px;

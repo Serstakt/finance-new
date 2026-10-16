@@ -183,10 +183,54 @@
                         Избранных новостей пока нет
                     </div>
                 </div>
-                <!-- Вкладка «Заметки»: единое текстовое полотно (без карточек
-                     и кнопки «Редактировать»). Сохраняется автоматически. -->
+                <!-- Вкладка «Заметки»: WYSIWYG-редактор (подобие Word):
+                     панель форматирования + contenteditable-полотно.
+                     Текст сохраняется в watchlist_items.note как HTML
+                     (бэкенд очищает теги для поиска/лимитов). Автосохранение. -->
                 <div id="notes-list" class="tab-pane" style="display: none;">
-                    <textarea id="notes-editor" placeholder="Здесь можно вести заметки по выбранному тикеру…" spellcheck="false"></textarea>
+                    <div id="notes-toolbar">
+                        <select id="notes-font-select" title="Шрифт" onchange="notesFormat('fontName', this.value)">
+                            <option value="">Шрифт</option>
+                            <option value="Arial, Helvetica, sans-serif">Arial</option>
+                            <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                            <option value="'Courier New', Courier, monospace">Courier New</option>
+                            <option value="Georgia, serif">Georgia</option>
+                            <option value="Verdana, Geneva, sans-serif">Verdana</option>
+                            <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                        </select>
+                        <select id="notes-size-select" title="Размер шрифта" onchange="notesFormat('fontSize', this.value)">
+                            <option value="">Размер</option>
+                            <option value="1">Очень мелкий</option>
+                            <option value="2">Мелкий</option>
+                            <option value="3">Обычный</option>
+                            <option value="4">Средний</option>
+                            <option value="5">Крупный</option>
+                            <option value="6">Очень крупный</option>
+                            <option value="7">Максимальный</option>
+                        </select>
+                        <span class="notes-sep"></span>
+                        <button type="button" data-cmd="bold" title="Жирный (Ctrl+B)" onclick="notesExec('bold')"><b>Ж</b></button>
+                        <button type="button" data-cmd="italic" title="Курсив (Ctrl+I)" onclick="notesExec('italic')"><i>К</i></button>
+                        <button type="button" data-cmd="underline" title="Подчеркнутый (Ctrl+U)" onclick="notesExec('underline')"><u>Ч</u></button>
+                        <button type="button" data-cmd="strikeThrough" title="Зачеркнутый" onclick="notesExec('strikeThrough')"><s>З</s></button>
+                        <input type="color" id="notes-color" title="Цвет текста" value="#d1d4dc"
+                               onmousedown="notesSaveSel()" onchange="notesFormat('foreColor', this.value)">
+                        <span class="notes-sep"></span>
+                        <button type="button" data-cmd="insertUnorderedList" title="Маркированный список" onclick="notesExec('insertUnorderedList')">•≡</button>
+                        <button type="button" data-cmd="insertOrderedList" title="Нумерованный список" onclick="notesExec('insertOrderedList')">1≡</button>
+                        <button type="button" title="Увеличить отступ" onclick="notesExec('indent')" >⇥</button>
+                        <button type="button" title="Уменьшить отступ" onclick="notesExec('outdent')">⇤</button>
+                        <span class="notes-sep"></span>
+                        <button type="button" data-cmd="justifyLeft" title="По левому краю" onclick="notesExec('justifyLeft')">⬅</button>
+                        <button type="button" data-cmd="justifyCenter" title="По центру" onclick="notesExec('justifyCenter')">↔</button>
+                        <button type="button" data-cmd="justifyRight" title="По правому краю" onclick="notesExec('justifyRight')">➡</button>
+                        <span class="notes-sep"></span>
+                        <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')">↩️</button>
+                        <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')">↪️</button>
+                        <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')">✂️</button>
+                    </div>
+                    <div id="notes-editor" contenteditable="true" spellcheck="true"
+                         data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
                     <div id="notes-editor-status"></div>
                 </div>
             </div>
