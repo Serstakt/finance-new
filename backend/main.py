@@ -401,19 +401,25 @@ async def get_telegram_news(ticker: str, force_refresh: bool = Query(default=Fal
 # поэтому избранное не теряется при смене браузера/устройства.
 
 @app.get("/api/news/favorites")
-async def get_news_favorites():
-    """Все избранные новости: {link: {"ticker": ..., "title": ...}}."""
-    return {"favorites": news_favorites_service.get_all()}
+async def get_news_favorites(ticker: str | None = Query(default=None)):
+    """Избранные новости: {link: {"ticker": ..., "title": ...}}.
+
+    С параметром ticker — только флажки выбранного тикера (лента новостей
+    и вкладка «Избранные» работают индивидуально по каждому тикеру);
+    без него — все избранные новости (для видимости вкладки «Избранные»).
+    """
+    return {"favorites": news_favorites_service.get_all(ticker)}
 
 
 @app.get("/api/news/favorites/list")
-async def get_news_favorites_list():
+async def get_news_favorites_list(ticker: str | None = Query(default=None)):
     """Избранные новости списком для вкладки «Избранные Новости».
 
+    ticker — выбранный тикер: возвращаются только его избранные новости.
     Записи уже отсортированы (свежие сверху) и по возможности обогащены
     заголовком/временем поста из news_cache.
     """
-    return {"news": news_favorites_service.list_favorites()}
+    return {"news": news_favorites_service.list_favorites(ticker)}
 
 
 @app.post("/api/news/favorite")

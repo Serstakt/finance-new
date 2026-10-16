@@ -204,8 +204,19 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
 
   console.log("✅ [DEBUG] Показываем панель и скелетон...");
   newsPanel.style.display = 'flex';
-  // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости)
-  if (typeof switchBottomTab === 'function') switchBottomTab(sessionStorage.getItem('bottomTab') || 'news');
+  // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости).
+  // Раздел «🚩 Избранные новости» отображается только когда в нём есть добавленные
+  // новости: если сохранён выбор «news-fav», а избранного у этого тикета нет
+  // (например, лента открылась по другому символу, пока снимок флажков ещё не
+  // догружен), switchBottomTab сам вернёт пользователя на «Новости».
+  const savedTab = sessionStorage.getItem('bottomTab') || 'news';
+  if (typeof switchBottomTab === 'function') switchBottomTab(savedTab);
+
+  // Раздел «🚩 Избранные новости» показываем только когда в нём реально есть
+  // добавленные новости: сразу прячем вкладку для тикета, чей снимок флажков
+  // ещё не загружен (актуальное состояние выставит loadNewsFavorites ниже —
+  // после него лента рисуется только при наличии избранного у этого тикета).
+  if (typeof updateNewsFavTabVisibility === 'function') updateNewsFavTabVisibility();
 
   // Показываем скелетон только если это принудительное обновление или первый запуск
   if (forceRefresh || newsList.children.length === 0) {
@@ -237,11 +248,14 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       }
     }
 
-    // Избранное новостей подтягиваем параллельно с лентой (см. newsFavorites).
-    // Флажок 🚩 рисуется слева от карточки новости; клик по нему отмечает
-    // новость избранной / снимает отметку (хранится в БД, таблица news_favorites).
+    // Избранное новостей подтягиваем параллельно с лентой (см. newsFavorites):
+    // только флажки ЭТОГО тикера — у каждого тикета своё избранное.
     if (!window.newsFavorites) window.newsFavorites = {};
-    const favsReady = window.loadNewsFavorites().catch(() => {});
+    const tickerNorm = String(symbol || '').replace('MOEX:', '').trim().toUpperCase();
+    const favsReady = Promise.all([
+      window.loadNewsFavorites(tickerNorm).catch(() => {}),
+      window.loadNewsAllFavorites().catch(() => {}),
+    ]);
 
     // Ждём избранное до отрисовки ленты: иначе уже избранные новости
     // мелькнули бы серыми флажками (догоняющая перерисовка выглядит дёрганьем).
@@ -320,38 +334,110 @@ window.refreshNews = function() {
 
 // === ИЗБРАННЫЕ НОВОСТИ (вкладка «Новости» раздела WATCHLIST) ===
 // newsFavorites — актуальное избранное {link: {ticker, title}} из БД.
+// ВАЖНО (логика «избранное по тикерам»): когда выбран тикет, по нему
+// выгружается лента новостей; флажок 🚩 ставится в контексте этого тикера
+// (в POST сохраняется ticker), и вкладка «🚩 Избранные» показывает только
+// избранные новости выбранного тикера. Для другого тикета — своё избранное.
 // Флажок-кнопка слева от новости: ⚑ (серый контурный) = не избранная,
 // 🚩 (красный) = избранная. Отметка ставится/снимается на сервере
 // (POST /api/news/favorite), поэтому переживает смену браузера/устройства.
-// Пока есть хотя бы одна избранная новость, между «Новостями» и «Заметками»
-// появляется вкладка «🚩 Избранные» со всеми избранными постами (см.
-// renderNewsFavoritesTab в ui.js).
+// Вкладка «🚩 Избранные» (между «Новостями» и «Заметками») отображается
+// только когда в ней есть добавленные новости — т.е. у выбранного тикета
+// есть хотя бы одна избранная новость (см. currentTickerHasFavorites и
+// renderNewsFavoritesTab ниже).
 window.newsFavorites = window.newsFavorites || {};
 
-// Кэш списка избранного для вкладки «Избранные Новости»
-// (GET /api/news/favorites/list): [{link, ticker, title, time}, ...].
-window.newsFavoritesList = window.newsFavoritesList || [];
+// Все избранные новости по всем тикерам {link: {ticker, title}} — нужно
+// только для видимости вкладки «Избранные». Вкладка показывается ТОЛЬКО
+// когда в ней есть добавленные новости: т.е. выбран тикет и у этого тикета
+// есть хотя бы одна избранная новость. При выборе другого тикета без его
+// собственного избранного вкладка скрывается. Заполняется
+// loadNewsAllFavorites() (используется как словарь меты тикер→название).
+window.newsFavoritesAll = window.newsFavoritesAll || {};
 
-// Показывает/скрывает вкладку «🚩 Избранные»: она существует только пока
-// есть хотя бы одна избранная новость. Если вкладка была активной и
-// избранное закончилось — автоматически возвращаемся на «Новости».
+// Тикер, чьё избранное сейчас лежит в window.newsFavorites (синхронизация
+// при переключении тикеров без перезагрузки страницы).
+window.newsFavoritesTicker = window.newsFavoritesTicker || null;
+
+// Кэш списка избранного для вкладки «Избранные Новости» выбранного тикера
+// (GET /api/news/favorites/list?ticker=...): [{link, ticker, title, time}, ...].
+window.newsFavoritesList = window.newsFavoritesList || [];
+window.newsFavoritesListTicker = window.newsFavoritesListTicker || null;
+
+// Есть ли у ВЫБРАННОГО тикета избранные новости. Источник истины —
+// window.newsFavorites: снимок избранного именно текущего тикера
+// (GET /api/news/favorites?ticker=...), который перезапрашивается при каждом
+// выборе тикета вместе с лентой новостей. newsFavoritesTicker — защита от
+// «опоздавших» ответов: если снимок относится к другому тикеру, считаем
+// избранного нет до его обновления.
+function currentTickerHasFavorites() {
+  const ticker = currentNewsTicker();
+  if (!ticker) return false;
+  if (window.newsFavoritesTicker !== ticker) return false;
+  return Object.keys(window.newsFavorites || {}).length > 0;
+}
+
+// Показывает/скрывает раздел «🚩 Избранные новости» (вкладка между «Новостями»
+// и «Заметками»). Раздел отображается ТОЛЬКО когда в нём есть добавленные
+// новости: т.е. у выбранного тикета есть хотя бы одна избранная новость
+// (флажок 🚩). Кнопка вкладки изначально скрыта (style="display:none" в
+// index.html); при выборе другого тикета без его собственного избранного
+// вкладка скрывается, а если активная вкладка была «Избранные» — возвращаемся
+// на «Новости».
 window.updateNewsFavTabVisibility = function() {
   const btn = document.getElementById('news-fav-tab-btn');
   if (!btn) return;
-  const hasAny = Object.keys(window.newsFavorites || {}).length > 0;
+  const hasAny = currentTickerHasFavorites();
   btn.style.display = hasAny ? '' : 'none';
+  // Панель-контейнер раздела — тоже видима только при наличии избранного
+  // (иначе под вкладками оставалась бы пустая полоса прокрутки).
+  const pane = document.getElementById('news-fav-list');
+  if (pane && !hasAny && sessionStorage.getItem('bottomTab') !== 'news-fav') {
+    pane.style.display = 'none';
+  }
   if (!hasAny && sessionStorage.getItem('bottomTab') === 'news-fav'
       && typeof switchBottomTab === 'function') {
     switchBottomTab('news');
   }
 };
 
-window.loadNewsFavorites = async function() {
+// Актуальное избранное по всем тикерам — словарь метаинформации
+// {link: {ticker, title}} (используется как fallback при отрисовке вкладки;
+// видимость вкладки определяется избранным выбранного тикета).
+window.loadNewsAllFavorites = async function() {
   try {
     const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorites`, {}, 15000);
     if (!res.ok) return;
     const data = await res.json();
+    window.newsFavoritesAll = data.favorites || {};
+    updateNewsFavTabVisibility();
+  } catch (e) {
+    console.error('Ошибка загрузки всего избранного новостей:', e);
+  }
+};
+
+// Флажки выбранного тикера: GET /api/news/favorites?ticker=SBER.
+// При смене тикета лента новостей перезапрашивается вместе с этим списком,
+// поэтому красные флажки (и содержимое вкладки «Избранные») всегда
+// соответствуют именно текущему тикету.
+window.loadNewsFavorites = async function(ticker) {
+  const norm = String(ticker || '').replace('MOEX:', '').trim().toUpperCase();
+  // Раздел «🚩 Избранные новости» отображается только когда в нём реально есть
+  // добавленные новости. При смене тикета сразу помечаем снимок флажков
+  // устаревшим (пустым) и прячем вкладку: иначе до ответа сервера на экране
+  // висело бы избранное предыдущего тикета. Актуальное состояние выставит
+  // updateNewsFavTabVisibility() после загрузки ответа ниже.
+  window.newsFavoritesTicker = norm || null;
+  window.newsFavorites = {};
+  updateNewsFavTabVisibility();
+  try {
+    const url = `${API_BASE}/api/news/favorites` +
+      (norm ? `?ticker=${encodeURIComponent(norm)}` : '');
+    const res = await window.fetchWithTimeout(url, {}, 15000);
+    if (!res.ok) return;
+    const data = await res.json();
     window.newsFavorites = data.favorites || {};
+    window.newsFavoritesTicker = norm || null;
     // Если лента уже отрисована — обновляем флажки без полной перерисовки
     document.querySelectorAll('#news-list .news-item').forEach(updateNewsItemFlag);
     updateNewsFavTabVisibility();
@@ -360,9 +446,12 @@ window.loadNewsFavorites = async function() {
   }
 };
 
-// Перекрашивает одну карточку новости под текущее состояние избранного
-// (ищет карточку по data-link во всех списках: и в ленте «Новости»,
-// и во вкладке «Избранные Новости»).
+// Перекрашивает одну карточку новости под текущее состояние избранного.
+// Ищет карточку по data-link во всех списках: и в ленте «Новости»,
+// и во вкладке «Избранные Новости». Вкладка теперь индивидуальна по
+// тикерам, поэтому там флажок всегда красный — не зависит от снимка
+// window.newsFavorites выбранного тикета (иначе карточка из «Избранного»
+// при синхронизации состояния стала бы серой).
 window.updateNewsItemFlag = function(itemOrLink) {
   const items = (typeof itemOrLink === 'string')
     ? document.querySelectorAll(`.news-item[data-link="${CSS.escape(itemOrLink)}"]`)
@@ -370,7 +459,8 @@ window.updateNewsItemFlag = function(itemOrLink) {
   for (const item of items) {
   if (!item) continue;
   const link = item.dataset.link || '';
-  const isFav = !!window.newsFavorites[link];
+  const inFavPane = !!(item.closest && item.closest('#news-fav-list'));
+  const isFav = inFavPane || !!window.newsFavorites[link];
   const btn = item.querySelector('button');
   const card = item.querySelector('a');
   if (btn) {
@@ -401,17 +491,24 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   const item = btnEl ? btnEl.closest('.news-item') : null;
   const wasFav = !!window.newsFavorites[link];
 
-  // Мгновенный отклик: меняем вид флажка до ответа сервера
-  if (wasFav) delete window.newsFavorites[link];
-  else window.newsFavorites[link] = { ticker: null, title: null };
-  updateNewsItemFlag(link);
-  updateNewsFavTabVisibility();
-  syncNewsFavoritesList(link, !wasFav, item);
-
-  const titleEl = item ? item.querySelector('a div div') : null;
   // Тикер, по которому открыта лента — сохраняем в контекст избранной новости
   const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
   const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
+  const titleEl = item ? item.querySelector('a div div') : null;
+
+  // Мгновенный отклик: меняем вид флажка до ответа сервера
+  if (wasFav) delete window.newsFavorites[link];
+  else window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
+  updateNewsItemFlag(link);
+  // Синхронизируем «глобальный» снимок избранного (словарь метаинформации).
+  // Видимость вкладки «🚩 Избранные» зависит от избранного выбранного тикета:
+  // первый флажок — вкладка появляется, снятие последнего у этого тикета —
+  // скрывается (избранное других тикетов на это не влияет).
+  if (wasFav) delete window.newsFavoritesAll[link];
+  else window.newsFavoritesAll[link] = window.newsFavorites[link];
+  updateNewsFavTabVisibility();
+  syncNewsFavoritesList(link, !wasFav, item);
+
   try {
     const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorite`, {
       method: 'POST',
@@ -427,8 +524,10 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   } catch (e) {
     console.error('Ошибка сохранения избранной новости:', e);
     // откат оптимистичного изменения при ошибке сети/сервера
-    if (wasFav) window.newsFavorites[link] = { ticker: null, title: null };
+    if (wasFav) window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
     else delete window.newsFavorites[link];
+    if (wasFav) window.newsFavoritesAll[link] = window.newsFavorites[link];
+    else delete window.newsFavoritesAll[link];
     updateNewsItemFlag(link);
     updateNewsFavTabVisibility();
     syncNewsFavoritesList(link, wasFav, item);
@@ -437,8 +536,10 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
 
 // Обновляет кэш newsFavoritesList после локального переключения флажка,
 // чтобы вкладка «Избранные Новости» оставалась синхронной без лишнего
-// запроса к серверу. При добавлении вне кэша — полный перезапрос списка
-// (нужны заголовок/время поста, которых у нас локально может не быть).
+// запроса к серверу. Список относится только к выбранному тикеру: при
+// снятии флажка карточка убирается из вкладки, при добавлении — полный
+// перезапрос списка (нужны заголовок/время поста, которых у нас локально
+// может не быть).
 window.syncNewsFavoritesList = function(link, added, item) {
   if (!Array.isArray(window.newsFavoritesList)) window.newsFavoritesList = [];
   const idx = window.newsFavoritesList.findIndex(n => n.link === link);
@@ -448,7 +549,8 @@ window.syncNewsFavoritesList = function(link, added, item) {
     const favPane = document.getElementById('news-fav-list');
     const favItem = favPane ? favPane.querySelector(`.news-item[data-link="${CSS.escape(link)}"]`) : null;
     if (favItem) favItem.remove();
-    if (favPane && window.newsFavoritesList.length === 0) renderNewsFavoritesTab();
+    if (favPane && sessionStorage.getItem('bottomTab') === 'news-fav'
+        && window.newsFavoritesList.length === 0) renderNewsFavoritesTab();
     return;
   }
   if (idx !== -1) return; // уже в списке
@@ -456,30 +558,61 @@ window.syncNewsFavoritesList = function(link, added, item) {
   if (typeof renderNewsFavoritesTab === 'function') renderNewsFavoritesTab(true);
 };
 
+// Тикер, чьё избранное показывается во вкладке «Избранные Новости»:
+// активный символ текущего списка watchlist (у каждого тикета своё
+// избранное). Пустая строка, если тикет ещё не выбран.
+function currentNewsTicker() {
+  const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
+  return cur && cur.activeSymbol
+    ? cur.activeSymbol.replace('MOEX:', '').trim().toUpperCase()
+    : '';
+}
+
 // === ВКЛАДКА «ИЗБРАННЫЕ НОВОСТИ» (между «Новостями» и «Заметками») ===
-// Показывается только когда есть хотя бы одна избранная новость. Внутри —
-// все избранные посты (со всех тикеров, свежие сверху), каждый с красным
-// флажком 🚩 слева; клик по флажку снимает избранное и убирает карточку.
+// Раздел отображается только когда в нём есть добавленные новости: т.е.
+// у ВЫБРАННОГО тикета есть хотя бы одна избранная новость (флажок 🚩).
+// Внутри — избранные посты именно выбранного тикера (свежие сверху),
+// каждый с красным флажком 🚩 слева; клик по флажку снимает избранное и
+// убирает карточку. При выборе другого тикета перерисовывается его
+// собственное избранное (а своего нет — вкладка скрывается).
 window.renderNewsFavoritesTab = async function(force = false) {
   const pane = document.getElementById('news-fav-list');
   if (!pane) return;
-  const hasAny = Object.keys(window.newsFavorites || {}).length > 0;
-  if (!hasAny) {
+  const ticker = currentNewsTicker();
+  // Избранное привязано к тикету: без выбранного тикета или без избранного
+  // у него раздел пуст — прячем вкладку (updateNewsFavTabVisibility сама
+  // вернёт пользователя на «Новости», если он сидел на «Избранных»).
+  if (!ticker || !currentTickerHasFavorites()) {
     window.newsFavoritesList = [];
+    window.newsFavoritesListTicker = null;
     pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">
         Избранных новостей пока нет — отметьте новость флажком 🚩 во вкладке «Новости»
     </div>`;
+    updateNewsFavTabVisibility();
     return;
   }
-  // Черновая отрисовка из имеющегося кэша, затем догоняющий запрос к серверу
-  // (полные заголовки/время posts + актуальный набор избранного).
-  drawNewsFavorites(pane, window.newsFavoritesList.filter(n => window.newsFavorites[n.link]));
+  updateNewsFavTabVisibility();
+  // Черновая отрисовка из имеющегося кэша — но только если кэш относится
+  // к тому же тикеру (иначе под ним избранное другого тикета — мигаем
+  // пустой вкладкой до ответа сервера, это честнее чужого списка).
+  if (window.newsFavoritesListTicker === (ticker || null)) {
+    drawNewsFavorites(pane, window.newsFavoritesList.filter(n => window.newsFavorites[n.link]), ticker);
+  } else {
+    pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">Загрузка избранного...</div>`;
+  }
   try {
-    const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorites/list`, {}, 15000);
+    const url = `${API_BASE}/api/news/favorites/list` +
+      (ticker ? `?ticker=${encodeURIComponent(ticker)}` : '');
+    const res = await window.fetchWithTimeout(url, {}, 15000);
     if (!res.ok) return;
     const data = await res.json();
     window.newsFavoritesList = data.news || [];
-    drawNewsFavorites(pane, window.newsFavoritesList);
+    window.newsFavoritesListTicker = ticker || null;
+    // Сервер мог ответить уже для другого тикета (пользователь переключился) —
+    // рисуем только актуальный ответ.
+    if (currentNewsTicker() === ticker) {
+      drawNewsFavorites(pane, window.newsFavoritesList, ticker);
+    }
   } catch (e) {
     console.error('Ошибка загрузки списка избранных новостей:', e);
   }
@@ -491,24 +624,29 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function drawNewsFavorites(pane, items) {
+function drawNewsFavorites(pane, items, ticker) {
   if (!items || items.length === 0) {
+    const who = ticker ? ` по тикеру ${escapeHtml(ticker)}` : '';
     pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">
-        Избранных новостей пока нет — отметьте новость флажком 🚩 во вкладке «Новости»
+        Избранных новостей${who} пока нет — отметьте новость флажком 🚩 во вкладке «Новости»
     </div>`;
     return;
   }
+  const shownTicker = (items[0] && items[0].ticker) || ticker || '';
   pane.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
     <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        🚩 Избранные новости: <strong style="color: #ef5350;">${items.length}</strong>
+        🚩 Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong style="color: #ef5350;">${items.length}</strong>
     </div>
 </div>
 <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
     ${items.map(n => {
     const link = n.link || '';
-    const tickerBadge = n.ticker
-      ? `<span style="display:inline-block; margin-right:8px; padding:2px 8px; background:#363a45; border-radius:4px; font-size:11px; color:#2962ff; font-weight:600;">${escapeHtml(n.ticker)}</span>`
+    // Бейдж тикера показываем только если он отличается от выбранного
+    // (вкладка теперь индивидуальна по тикерам — свой бейдж не нужен).
+    const itemTicker = String(n.ticker || '').replace('MOEX:', '').trim().toUpperCase();
+    const tickerBadge = (itemTicker && itemTicker !== String(ticker || '').toUpperCase())
+      ? `<span style="display:inline-block; margin-right:8px; padding:2px 8px; background:#363a45; border-radius:4px; font-size:11px; color:#2962ff; font-weight:600;">${escapeHtml(itemTicker)}</span>`
       : '';
     // Как и на вкладке «Новости»: на UI показываем только «тизер» — текст до
     // слов «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.

@@ -21,11 +21,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadNotesFromDb();
   syncListWithDb(appState.activeListId);
 
-  // Избранные новости: подтягиваем флажки из БД (news_favorites), чтобы
-  // вкладка «🚩 Избранные» между «Новостями» и «Заметками» появилась сразу,
-  // если избранное уже есть (и не появилась, если его нет).
-  if (typeof window.loadNewsFavorites === 'function') {
-    window.loadNewsFavorites().catch(() => {});
+  // Избранные новости: подтягиваем флажки из БД (news_favorites) — и общий
+  // снимок (видимость вкладки «🚩 Избранные»), и по выбранному тикеру
+  // (избранное индивидуально: у каждого тикета свой список).
+  if (typeof window.loadNewsAllFavorites === 'function') {
+    window.loadNewsAllFavorites().catch(() => {});
+  }
+  const _initSym = getCurrentList() && getCurrentList().activeSymbol;
+  if (typeof window.loadNewsFavorites === 'function' && _initSym) {
+    window.loadNewsFavorites(_initSym).catch(() => {});
   }
 
   const savedPage = sessionStorage.getItem('activePage') || 'home';

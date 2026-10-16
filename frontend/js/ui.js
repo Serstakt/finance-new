@@ -190,7 +190,10 @@ window.switchBottomTab = function(tab) {
     renderNotesTab(cur ? cur.activeSymbol : '');
   }
   if (tab === 'news-fav' && typeof renderNewsFavoritesTab === 'function') {
-    renderNewsFavoritesTab();
+    // Избранное индивидуально по тикерам: при открытии вкладки перерисовываем
+    // её под текущий выбранный тикет (в т.ч. после смены символа, когда
+    // вкладка была скрыта). Кэш внутри функции сам определит устаревание.
+    renderNewsFavoritesTab(true);
   }
 };
 
