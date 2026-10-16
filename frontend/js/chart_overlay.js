@@ -382,6 +382,34 @@ function hitTestItem(mx, my) {
 
 let __dragItem = null;
 
+// Перетаскивание уровня/отметки (вешаются на window при попадании по линии,
+// снимаются в finishDrag/detachDragListeners). Раньше тел у этих функций не
+// было — ссылка на undefined бросала ReferenceError и «залипал» drag.
+function onOverlayMouseMove(e) {
+  if (!__dragItem) return;
+  const canvas = window.__overlayCanvas;
+  if (!canvas) { finishDrag(); return; }
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (Math.abs(mx - __dragItem.startX) > 2 || Math.abs(my - __dragItem.startY) > 2) {
+    __dragItem.moved = true;
+  }
+  if (!__dragItem.moved) return; // лёгкое дрожание руки не двигает линию
+  const it = __dragItem.item;
+  if (it.type === 'hline') {
+    const p = yToPrice(my);
+    if (p != null) it.price = roundToTick(p);
+  } else if (it.type === 'vline') {
+    const t = xToTime(mx);
+    if (t != null) it.time = t;
+  }
+  drawMarkup();
+}
+
+function onOverlayMouseUp() {
+  finishDrag();
+}
+
 function onOverlayMouseDown(e) {
   if (e.button !== 0) return;
   const rect = e.currentTarget.getBoundingClientRect();
@@ -483,6 +511,7 @@ window.toggleMarkupToolbar = function() {
     // создавался на DOMContentLoaded, вёрстка TradingView могла бы его
     // уничтожить/перекрыть, и клики по графику «не работали» бы.
     ensureOverlayCanvas();
+    restoreMarkupTool(); // режим рисования не должен теряться при перерисовках
     drawMarkup();
     subscribeMarkupSync();
     loadActiveMarkupFromDb(); // объекты могли появиться в другом списке/сессии
@@ -495,8 +524,20 @@ window.toggleMarkupToolbar = function() {
   }
 };
 
+// Ключ sessionStorage для активного инструмента рисования. Нужен, потому что
+// клик по кнопке «➖ Уровень» в тулбаре — это mousedown ВНЕ холста; если при
+// этом шёл drag, обработчик-страховка завершает его и через detachDragListeners
+// снимает слушатели. Запомнив инструмент, мы гарантируем, что режим рисования
+// переживёт перерисовки/случайные потери состояния — иначе каждый следующий
+// клик по графику молча ничего не ставил («уровень не ставится на график»).
+window.MARKUP_TOOL_SS_KEY = 'chart_markup_active_tool';
+
 window.setMarkupTool = function(tool) {
   window.__markupTool = (window.__markupTool === tool && tool) ? null : tool;
+  try {
+    if (window.__markupTool) sessionStorage.setItem(window.MARKUP_TOOL_SS_KEY, window.__markupTool);
+    else sessionStorage.removeItem(window.MARKUP_TOOL_SS_KEY);
+  } catch (e) {}
   document.querySelectorAll('#markup-toolbar [data-tool]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tool === window.__markupTool);
   });
@@ -522,8 +563,31 @@ window.setMarkupTool = function(tool) {
     : '');
 };
 
+// Восстановление режима рисования по сохранённому инструменту (см. выше).
+window.restoreMarkupTool = function() {
+  let saved = null;
+  try { saved = sessionStorage.getItem(window.MARKUP_TOOL_SS_KEY); } catch (e) {}
+  if (saved !== 'hline' && saved !== 'vline' && saved !== 'text') return;
+  if (window.__markupTool === saved) return;
+  window.__markupTool = saved;
+  const canvas = ensureOverlayCanvas();
+  if (canvas) canvas.classList.add('drawing');
+  document.querySelectorAll('#markup-toolbar [data-tool]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tool === saved);
+  });
+  if (!setMarkupTool._downAttached) {
+    document.addEventListener('mousedown', onDocumentMouseDownCatch);
+    setMarkupTool._downAttached = true;
+  }
+};
+
 // Страховка от «залипшего» перетаскивания: любой новый mousedown вне холста
 // или mouseup в любом месте завершает активный drag.
+// ВАЖНО: завершаем drag ТОЛЬКО если он реально идёт (__dragItem). Раньше здесь
+// при каждом mousedown вызывался detachDragListeners(), который снимал и
+// mousedown-слушатель с canvas: после клика по кнопке тулбара (это mousedown
+// ВНЕ холста) следующий клик по графику не доходил до onOverlayMouseDown — и
+// «уровень не ставился на график».
 function onDocumentMouseDownCatch(e) {
   if (__dragItem && e.target !== window.__overlayCanvas) finishDrag();
 }
@@ -584,6 +648,11 @@ window.subscribeMarkupSync = function() {
 // Вызывается из createChart (ui.js) после смены символа: подгружаем разметку.
 window.refreshMarkupForSymbol = function(symbol) {
   window.__markupItems = symbol ? loadMarkupFromStorage(symbol) : [];
+  if (!window.__markupItems.length && symbol) {
+    // Фолбэк для fav_-списков и списков, ещё не зарегистрированных в БД.
+    const orphan = loadOrphanMarkup(symbol);
+    if (orphan && orphan.length) window.__markupItems = orphan;
+  }
   drawMarkup();
   loadActiveMarkupFromDb(); // асинхронно перезапишет, если в БД есть данные
 };
@@ -591,6 +660,12 @@ window.refreshMarkupForSymbol = function(symbol) {
 // Инициализация: canvas создаётся лениво (при первом включении разметки,
 // см. toggleMarkupToolbar) — здесь только вешаем слушателей перерисовки.
 window.initMarkupOverlay = function() {
+  // Глобальный mouseup — надёжный «предохранитель» от залипшего drag:
+  // срабатывает даже если курсор ушёл за окно/в iframe между mousedown и
+  // mouseup (в этих случаях window-mouseup мог не прийти, следующий клик по
+  // графику попадал в hitTestItem и двигал старую линию вместо создания
+  // новой — пользователь видел «уровень не ставится на график»).
+  document.addEventListener('mouseup', () => finishDrag());
   window.addEventListener('resize', () => drawMarkup());
   // Разделитель/скрытие watchlist и любые изменения размера — ResizeObserver
   // надёжнее перехвата style/mousemove. Следим за контейнером холста
