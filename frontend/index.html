@@ -188,8 +188,6 @@
                      Текст сохраняется в watchlist_items.note как HTML
                      (бэкенд очищает теги для поиска/лимитов). Автосохранение. -->
                 <div id="notes-list" class="tab-pane" style="display: none;">
-                    <!-- Статус автосохранения: правый верхний угол области заметок -->
-                    <div id="notes-editor-status"></div>
                     <div id="notes-toolbar">
                         <select id="notes-font-select" title="Шрифт" onchange="notesFormat('fontName', this.value)">
                             <option value="">Шрифт</option>
@@ -230,6 +228,8 @@
                         <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')">↩️</button>
                         <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')">↪️</button>
                         <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')">✂️</button>
+                        <!-- Статус автосохранения: правый угол панели инструментов -->
+                        <div id="notes-editor-status"></div>
                     </div>
                     <div id="notes-editor" contenteditable="true" spellcheck="true"
                          data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
