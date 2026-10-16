@@ -204,8 +204,19 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
 
   console.log("✅ [DEBUG] Показываем панель и скелетон...");
   newsPanel.style.display = 'flex';
-  // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости)
-  if (typeof switchBottomTab === 'function') switchBottomTab(sessionStorage.getItem('bottomTab') || 'news');
+  // Синхронизируем видимость вкладок с сохранённым выбором (по умолчанию — Новости).
+  // Раздел «🚩 Избранные новости» отображается только когда в нём есть добавленные
+  // новости: если сохранён выбор «news-fav», а избранного у этого тикета нет
+  // (например, лента открылась по другому символу, пока снимок флажков ещё не
+  // догружен), switchBottomTab сам вернёт пользователя на «Новости».
+  const savedTab = sessionStorage.getItem('bottomTab') || 'news';
+  if (typeof switchBottomTab === 'function') switchBottomTab(savedTab);
+
+  // Раздел «🚩 Избранные новости» показываем только когда в нём реально есть
+  // добавленные новости: сразу прячем вкладку для тикета, чей снимок флажков
+  // ещё не загружен (актуальное состояние выставит loadNewsFavorites ниже —
+  // после него лента рисуется только при наличии избранного у этого тикета).
+  if (typeof updateNewsFavTabVisibility === 'function') updateNewsFavTabVisibility();
 
   // Показываем скелетон только если это принудительное обновление или первый запуск
   if (forceRefresh || newsList.children.length === 0) {
@@ -366,16 +377,24 @@ function currentTickerHasFavorites() {
   return Object.keys(window.newsFavorites || {}).length > 0;
 }
 
-// Показывает/скрывает вкладку «🚩 Избранные»: раздел отображается только
-// когда в нём есть добавленные новости, т.е. у выбранного тикета есть
-// хотя бы одна избранная новость. При выборе другого тикета без его
-// собственного избранного вкладка скрывается; если активная вкладка была
-// «Избранные» — возвращаемся на «Новости».
+// Показывает/скрывает раздел «🚩 Избранные новости» (вкладка между «Новостями»
+// и «Заметками»). Раздел отображается ТОЛЬКО когда в нём есть добавленные
+// новости: т.е. у выбранного тикета есть хотя бы одна избранная новость
+// (флажок 🚩). Кнопка вкладки изначально скрыта (style="display:none" в
+// index.html); при выборе другого тикета без его собственного избранного
+// вкладка скрывается, а если активная вкладка была «Избранные» — возвращаемся
+// на «Новости».
 window.updateNewsFavTabVisibility = function() {
   const btn = document.getElementById('news-fav-tab-btn');
   if (!btn) return;
   const hasAny = currentTickerHasFavorites();
   btn.style.display = hasAny ? '' : 'none';
+  // Панель-контейнер раздела — тоже видима только при наличии избранного
+  // (иначе под вкладками оставалась бы пустая полоса прокрутки).
+  const pane = document.getElementById('news-fav-list');
+  if (pane && !hasAny && sessionStorage.getItem('bottomTab') !== 'news-fav') {
+    pane.style.display = 'none';
+  }
   if (!hasAny && sessionStorage.getItem('bottomTab') === 'news-fav'
       && typeof switchBottomTab === 'function') {
     switchBottomTab('news');
@@ -403,6 +422,14 @@ window.loadNewsAllFavorites = async function() {
 // соответствуют именно текущему тикету.
 window.loadNewsFavorites = async function(ticker) {
   const norm = String(ticker || '').replace('MOEX:', '').trim().toUpperCase();
+  // Раздел «🚩 Избранные новости» отображается только когда в нём реально есть
+  // добавленные новости. При смене тикета сразу помечаем снимок флажков
+  // устаревшим (пустым) и прячем вкладку: иначе до ответа сервера на экране
+  // висело бы избранное предыдущего тикета. Актуальное состояние выставит
+  // updateNewsFavTabVisibility() после загрузки ответа ниже.
+  window.newsFavoritesTicker = norm || null;
+  window.newsFavorites = {};
+  updateNewsFavTabVisibility();
   try {
     const url = `${API_BASE}/api/news/favorites` +
       (norm ? `?ticker=${encodeURIComponent(norm)}` : '');
