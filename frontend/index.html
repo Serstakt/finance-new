@@ -149,13 +149,16 @@
             </div>
             <!-- Сам график TradingView -->
             <div id="tradingview_chart"></div>
-            <!-- Панель «Новости / Заметки» под графиком: две вкладки.
+            <!-- Панель «Новости / Избранные Новости / Заметки» под графиком.
                  По умолчанию активна вкладка «Новости», заметки (функционал
-                 watchlist_items.note) перенесены сюда во вторую вкладку. -->
+                 watchlist_items.note) — во второй вкладке. Вкладка
+                 «🚩 Избранные» показывается только если есть хотя бы одна
+                 избранная новость (см. updateNewsFavTabVisibility в ui.js). -->
             <div id="news-panel">
                 <div id="bottom-tabs">
                     <div class="tabs-group">
                         <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
+                        <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')">🚩 Избранные</button>
                         <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
                     </div>
                     <div class="tab-actions">
@@ -167,6 +170,14 @@
                 <div id="news-list" class="tab-pane">
                     <div style="padding: 20px; text-align: center; color: #787b86;">
                         Выберите тикер для загрузки новостей
+                    </div>
+                </div>
+                <!-- Вкладка «Избранные Новости»: все новости с красным флажком
+                     (со всех тикеров, отсортированы по времени). Флажок можно
+                     снять прямо здесь — карточка исчезнет из этой вкладки. -->
+                <div id="news-fav-list" class="tab-pane" style="display: none;">
+                    <div style="padding: 20px; text-align: center; color: #787b86;">
+                        Избранных новостей пока нет
                     </div>
                 </div>
                 <!-- Вкладка «Заметки»: единое текстовое полотно (без карточек

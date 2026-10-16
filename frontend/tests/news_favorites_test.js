@@ -36,7 +36,7 @@ class Node {
     this._html = html;
     this._kids = [];
     // вытаскиваем блоки news-item с их data-link — этого достаточно тесту
-    const re = /<div class="news-item" data-link="([^"]*)"/g;
+    const re = /<div class="news-item" data-link="([^"]*)"[\s\S]*?<button[^>]*>([\s\S]*?)<\/button>/g;
     let m;
     while ((m = re.exec(html))) {
       const item = new Node('div');
@@ -44,6 +44,7 @@ class Node {
       item.dataset.link = m[1];
       const btn = new Node('button');
       btn._isFlagBtn = true;
+      btn.textContent = m[2].trim(); // ⚑ или 🚩 — как отрисовал api.js
       item.appendChild(btn);
       const a = new Node('a');
       item.appendChild(a);
@@ -62,7 +63,13 @@ class Node {
       }
     };
     walk(this);
+    // селектор вида .news-item[data-link="..."] — поддержка CSS.escape не нужна
+    const mAttr = /^\.news-item\[data-link="(.*)"\]$/.exec(sel);
+    if (mAttr) return out.filter(n => n.dataset.link === mAttr[1]);
     return out;
+  }
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
   }
   closest(cls) {
     let n = this;

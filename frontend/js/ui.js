@@ -158,17 +158,23 @@ window.initNotesEditor = function() {
   });
 };
 
-// Переключение вкладок «Новости» / «Заметки».
+// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки».
 window.switchBottomTab = function(tab) {
-  tab = (tab === 'notes') ? 'notes' : 'news';
+  tab = (tab === 'notes' || tab === 'news-fav') ? tab : 'news';
+  // Вкладка «Избранные» существует только пока есть избранное — если с неё
+  // сняли последний флажок, возвращаемся на «Новости».
+  const favBtn = document.getElementById('news-fav-tab-btn');
+  if (tab === 'news-fav' && favBtn && favBtn.style.display === 'none') tab = 'news';
   sessionStorage.setItem('bottomTab', tab);
   const newsPanel = document.getElementById('news-panel');
   const newsList = document.getElementById('news-list');
   const notesList = document.getElementById('notes-list');
+  const newsFavList = document.getElementById('news-fav-list');
   if (!newsPanel || !newsList || !notesList) return;
 
   newsPanel.style.display = 'flex';
   newsList.style.display = tab === 'news' ? 'block' : 'none';
+  if (newsFavList) newsFavList.style.display = tab === 'news-fav' ? 'block' : 'none';
   // для #notes-list базовый display задаёт CSS (flex — полотно растягивается)
   notesList.style.display = tab === 'notes' ? '' : 'none';
 
@@ -182,6 +188,9 @@ window.switchBottomTab = function(tab) {
     initNotesEditor(); // вешаем автосохранение при первом открытии вкладки
     const cur = getCurrentList();
     renderNotesTab(cur ? cur.activeSymbol : '');
+  }
+  if (tab === 'news-fav' && typeof renderNewsFavoritesTab === 'function') {
+    renderNewsFavoritesTab();
   }
 };
 

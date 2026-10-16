@@ -11,8 +11,10 @@ https://t.me/newssmartlab/<id>) — она не меняется между об
 Флажки хранятся в таблице news_favorites, поэтому избранное переживает
 очистку localStorage и доступно с любого браузера/устройства.
 """
+import json
+
 from backend.database.database import get_session, safe_create_all
-from backend.database.models import NewsFavorite
+from backend.database.models import NewsCache, NewsFavorite
 
 safe_create_all()
 
@@ -44,6 +46,80 @@ def get_all() -> dict[str, dict]:
             for r in rows
             if r.link
         }
+
+
+def _post_id(link: str) -> int | None:
+    """Достаёт числовой id поста Telegram из ссылки вида t.me/<channel>/<id>."""
+    tail = (link or "").rstrip("/").rsplit("/", 1)[-1]
+    # у закреп/форвардов бывают хвосты вида /123?single — отрезаем не-цифры
+    digits = ""
+    for ch in reversed(tail):
+        if ch.isdigit():
+            digits = ch + digits
+        else:
+            break
+    return int(digits) if digits else None
+
+
+def list_favorites() -> list[dict]:
+    """Избранные новости списком для вкладки «Избранные Новости».
+
+    Каждая запись: {link, ticker, title, time}. Заголовок и время по
+    возможности подтягиваются из news_cache (парсер сохраняет там full_text
+    и точный таймстемп поста); если новость ещё не лежит ни в одном кэше —
+    возвращаем title из таблицы favorites (он пишется при постановке
+    флажка), time остаётся пустым. Отсортировано по времени (свежие выше),
+    безвременные — в конце.
+    """
+    favs = get_all()
+    if not favs:
+        return []
+
+    # Индекс постов по id Telegram-поста из всего кэшированного потока новостей.
+    post_index: dict[int, dict] = {}
+    try:
+        with get_session() as db:
+            for row in db.query(NewsCache).all():
+                try:
+                    posts = json.loads(row.news_data or "[]")
+                except (ValueError, TypeError):
+                    continue
+                for p in posts if isinstance(posts, list) else []:
+                    if not isinstance(p, dict):
+                        continue
+                    pid = _post_id(p.get("link", ""))
+                    if pid is not None and pid not in post_index:
+                        post_index[pid] = p
+    except Exception as e:  # кэш мог быть битым/недоступным — не критично
+        print(f"⚠ Не удалось обогатить избранное из news_cache: {e}")
+
+    items = []
+    for link, meta in favs.items():
+        pid = _post_id(link)
+        post = post_index.get(pid) if pid is not None else None
+        title = (post or {}).get("full_text") or (post or {}).get("title") \
+            or meta.get("title") or link
+        items.append({
+            "link": link,
+            "ticker": meta.get("ticker"),
+            "title": str(title)[:TITLE_MAX_LEN],
+            "time": (post or {}).get("time") or "",
+        })
+
+    # Сортировка по времени поста (%d.%m.%Y %H:%M или %d.%m.%Y) — свежие сверху;
+    # записи без времени — в конец, между собой по ссылке (стабильный порядок).
+    def sort_key(it: dict):
+        t = it["time"]
+        try:
+            from datetime import datetime as dt
+            fmt = "%d.%m.%Y %H:%M" if len(t) > 10 else "%d.%m.%Y"
+            ts = dt.strptime(t, fmt).timestamp()
+        except (ValueError, TypeError):
+            ts = -1.0
+        return (-ts, it["link"])
+
+    items.sort(key=sort_key)
+    return items
 
 
 def set_favorite(link: str, ticker: str | None = None, title: str | None = None) -> dict:

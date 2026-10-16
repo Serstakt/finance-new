@@ -406,6 +406,16 @@ async def get_news_favorites():
     return {"favorites": news_favorites_service.get_all()}
 
 
+@app.get("/api/news/favorites/list")
+async def get_news_favorites_list():
+    """Избранные новости списком для вкладки «Избранные Новости».
+
+    Записи уже отсортированы (свежие сверху) и по возможности обогащены
+    заголовком/временем поста из news_cache.
+    """
+    return {"news": news_favorites_service.list_favorites()}
+
+
 @app.post("/api/news/favorite")
 async def toggle_news_favorite(payload: schemas.NewsFavoriteToggle):
     """Ставит/снимает красный флажок «избранное» у новости."""
