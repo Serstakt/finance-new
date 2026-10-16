@@ -330,14 +330,18 @@ window.refreshNews = function() {
 // Флажок-кнопка слева от новости: ⚑ (серый контурный) = не избранная,
 // 🚩 (красный) = избранная. Отметка ставится/снимается на сервере
 // (POST /api/news/favorite), поэтому переживает смену браузера/устройства.
-// Пока есть хотя бы одна избранная новость (по любому тикеру), между
-// «Новостями» и «Заметками» появляется вкладка «🚩 Избранные» (см.
-// renderNewsFavoritesTab в ui.js).
+// Вкладка «🚩 Избранные» (между «Новостями» и «Заметками») отображается
+// только когда в ней есть добавленные новости — т.е. у выбранного тикета
+// есть хотя бы одна избранная новость (см. currentTickerHasFavorites и
+// renderNewsFavoritesTab ниже).
 window.newsFavorites = window.newsFavorites || {};
 
 // Все избранные новости по всем тикерам {link: {ticker, title}} — нужно
-// только для видимости вкладки «Избранные» (она существует, пока избранное
-// есть хоть где-то). Заполняется loadNewsAllFavorites().
+// только для видимости вкладки «Избранные». Вкладка показывается ТОЛЬКО
+// когда в ней есть добавленные новости: т.е. выбран тикет и у этого тикета
+// есть хотя бы одна избранная новость. При выборе другого тикета без его
+// собственного избранного вкладка скрывается. Заполняется
+// loadNewsAllFavorites() (используется как словарь меты тикер→название).
 window.newsFavoritesAll = window.newsFavoritesAll || {};
 
 // Тикер, чьё избранное сейчас лежит в window.newsFavorites (синхронизация
@@ -349,14 +353,28 @@ window.newsFavoritesTicker = window.newsFavoritesTicker || null;
 window.newsFavoritesList = window.newsFavoritesList || [];
 window.newsFavoritesListTicker = window.newsFavoritesListTicker || null;
 
-// Показывает/скрывает вкладку «🚩 Избранные»: она существует только пока
-// есть хотя бы одна избранная новость (по любому тикеру — при выборе другого
-// тикета внутри будут показаны именно его избранные новости). Если вкладка
-// была активной и избранное закончилось совсем — возвращаемся на «Новости».
+// Есть ли у ВЫБРАННОГО тикета избранные новости. Источник истины —
+// window.newsFavorites: снимок избранного именно текущего тикера
+// (GET /api/news/favorites?ticker=...), который перезапрашивается при каждом
+// выборе тикета вместе с лентой новостей. newsFavoritesTicker — защита от
+// «опоздавших» ответов: если снимок относится к другому тикеру, считаем
+// избранного нет до его обновления.
+function currentTickerHasFavorites() {
+  const ticker = currentNewsTicker();
+  if (!ticker) return false;
+  if (window.newsFavoritesTicker !== ticker) return false;
+  return Object.keys(window.newsFavorites || {}).length > 0;
+}
+
+// Показывает/скрывает вкладку «🚩 Избранные»: раздел отображается только
+// когда в нём есть добавленные новости, т.е. у выбранного тикета есть
+// хотя бы одна избранная новость. При выборе другого тикета без его
+// собственного избранного вкладка скрывается; если активная вкладка была
+// «Избранные» — возвращаемся на «Новости».
 window.updateNewsFavTabVisibility = function() {
   const btn = document.getElementById('news-fav-tab-btn');
   if (!btn) return;
-  const hasAny = Object.keys(window.newsFavoritesAll || {}).length > 0;
+  const hasAny = currentTickerHasFavorites();
   btn.style.display = hasAny ? '' : 'none';
   if (!hasAny && sessionStorage.getItem('bottomTab') === 'news-fav'
       && typeof switchBottomTab === 'function') {
@@ -364,7 +382,9 @@ window.updateNewsFavTabVisibility = function() {
   }
 };
 
-// Актуальное избранное по всем тикерам — нужно лишь для видимости вкладки.
+// Актуальное избранное по всем тикерам — словарь метаинформации
+// {link: {ticker, title}} (используется как fallback при отрисовке вкладки;
+// видимость вкладки определяется избранным выбранного тикета).
 window.loadNewsAllFavorites = async function() {
   try {
     const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorites`, {}, 15000);
@@ -444,22 +464,24 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   const item = btnEl ? btnEl.closest('.news-item') : null;
   const wasFav = !!window.newsFavorites[link];
 
+  // Тикер, по которому открыта лента — сохраняем в контекст избранной новости
+  const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
+  const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
+  const titleEl = item ? item.querySelector('a div div') : null;
+
   // Мгновенный отклик: меняем вид флажка до ответа сервера
   if (wasFav) delete window.newsFavorites[link];
-  else window.newsFavorites[link] = { ticker: null, title: null };
+  else window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
   updateNewsItemFlag(link);
-  // Синхронизируем «глобальный» снимок избранного — от него зависит
-  // видимость вкладки «🚩 Избранные» (снимается последний флажок у этого
-  // тикера, но у других тикетов избранное осталось — вкладка живёт).
+  // Синхронизируем «глобальный» снимок избранного (словарь метаинформации).
+  // Видимость вкладки «🚩 Избранные» зависит от избранного выбранного тикета:
+  // первый флажок — вкладка появляется, снятие последнего у этого тикета —
+  // скрывается (избранное других тикетов на это не влияет).
   if (wasFav) delete window.newsFavoritesAll[link];
   else window.newsFavoritesAll[link] = window.newsFavorites[link];
   updateNewsFavTabVisibility();
   syncNewsFavoritesList(link, !wasFav, item);
 
-  const titleEl = item ? item.querySelector('a div div') : null;
-  // Тикер, по которому открыта лента — сохраняем в контекст избранной новости
-  const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
-  const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
   try {
     const res = await window.fetchWithTimeout(`${API_BASE}/api/news/favorite`, {
       method: 'POST',
@@ -475,7 +497,7 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   } catch (e) {
     console.error('Ошибка сохранения избранной новости:', e);
     // откат оптимистичного изменения при ошибке сети/сервера
-    if (wasFav) window.newsFavorites[link] = { ticker: null, title: null };
+    if (wasFav) window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
     else delete window.newsFavorites[link];
     if (wasFav) window.newsFavoritesAll[link] = window.newsFavorites[link];
     else delete window.newsFavoritesAll[link];
@@ -520,24 +542,29 @@ function currentNewsTicker() {
 }
 
 // === ВКЛАДКА «ИЗБРАННЫЕ НОВОСТИ» (между «Новостями» и «Заметками») ===
-// Показывается только когда есть хотя бы одна избранная новость (по любому
-// тикеру). Внутри — избранные посты ВЫБРАННОГО тикера (свежие сверху),
+// Раздел отображается только когда в нём есть добавленные новости: т.е.
+// у ВЫБРАННОГО тикета есть хотя бы одна избранная новость (флажок 🚩).
+// Внутри — избранные посты именно выбранного тикера (свежие сверху),
 // каждый с красным флажком 🚩 слева; клик по флажку снимает избранное и
 // убирает карточку. При выборе другого тикета перерисовывается его
-// собственное избранное.
+// собственное избранное (а своего нет — вкладка скрывается).
 window.renderNewsFavoritesTab = async function(force = false) {
   const pane = document.getElementById('news-fav-list');
   if (!pane) return;
   const ticker = currentNewsTicker();
-  const hasAny = Object.keys(window.newsFavoritesAll || {}).length > 0;
-  if (!hasAny) {
+  // Избранное привязано к тикету: без выбранного тикета или без избранного
+  // у него раздел пуст — прячем вкладку (updateNewsFavTabVisibility сама
+  // вернёт пользователя на «Новости», если он сидел на «Избранных»).
+  if (!ticker || !currentTickerHasFavorites()) {
     window.newsFavoritesList = [];
     window.newsFavoritesListTicker = null;
     pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">
         Избранных новостей пока нет — отметьте новость флажком 🚩 во вкладке «Новости»
     </div>`;
+    updateNewsFavTabVisibility();
     return;
   }
+  updateNewsFavTabVisibility();
   // Черновая отрисовка из имеющегося кэша — но только если кэш относится
   // к тому же тикеру (иначе под ним избранное другого тикета — мигаем
   // пустой вкладкой до ответа сервера, это честнее чужого списка).
