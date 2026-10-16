@@ -37,10 +37,26 @@ def _normalize_link(link: str) -> str:
     return s.rstrip("/")
 
 
-def get_all() -> dict[str, dict]:
-    """Все избранные новости: {link: {"ticker": ..., "title": ...}}."""
+def _normalize_ticker(ticker: str | None) -> str | None:
+    """Приводит тикер к каноничному виду «SBER» (без префикса биржи и регистра)."""
+    t = (ticker or "").replace("MOEX:", "").strip().upper()
+    return t or None
+
+
+def get_all(ticker: str | None = None) -> dict[str, dict]:
+    """Избранные новости: {link: {"ticker": ..., "title": ...}}.
+
+    ticker=None — все избранные новости (нужно для видимости вкладки
+    «Избранные»: она существует, пока избранное есть хотя бы по одному тикеру).
+    С указанным тикером — только флажки, поставленные в ленте этого тикера:
+    вкладка «Избранные Новости» показывает строго избранное выбранного тикера.
+    """
+    norm = _normalize_ticker(ticker)
     with get_session() as db:
-        rows = db.query(NewsFavorite).all()
+        query = db.query(NewsFavorite)
+        if norm:
+            query = query.filter(NewsFavorite.ticker == norm)
+        rows = query.all()
         return {
             r.link: {"ticker": r.ticker, "title": r.title}
             for r in rows
@@ -61,35 +77,49 @@ def _post_id(link: str) -> int | None:
     return int(digits) if digits else None
 
 
-def list_favorites() -> list[dict]:
+def list_favorites(ticker: str | None = None) -> list[dict]:
     """Избранные новости списком для вкладки «Избранные Новости».
+
+    ticker — выбранный в watchlist тикер: вкладка показывает избранные
+    новости индивидуально по каждому тикеру (флажки, поставленные в ленте
+    SBER, не видны при выбранном GAZP). Пустой/None — все избранные новости
+    (используется как фолбэк для новостей без привязанного тикера).
 
     Каждая запись: {link, ticker, title, time}. Заголовок и время по
     возможности подтягиваются из news_cache (парсер сохраняет там full_text
-    и точный таймстемп поста); если новость ещё не лежит ни в одном кэше —
-    возвращаем title из таблицы favorites (он пишется при постановке
-    флажка), time остаётся пустым. Отсортировано по времени (свежие выше),
-    безвременные — в конце.
+    и точный таймстемп поста; при запросе по тикеру сначала смотрим его
+    собственный кэш, затем общий поток); если новость ещё не лежит ни в
+    одном кэше — возвращаем title из таблицы favorites (он пишется при
+    постановке флажка), time остаётся пустым. Отсортировано по времени
+    (свежие выше), безвременные — в конце.
     """
-    favs = get_all()
+    norm = _normalize_ticker(ticker)
+    favs = get_all(norm)
     if not favs:
         return []
 
-    # Индекс постов по id Telegram-поста из всего кэшированного потока новостей.
+    # Индекс постов по id Telegram-поста: сначала из кэша выбранного тикера
+    # (свежие заголовки/время его ленты), затем из всего потока новостей.
     post_index: dict[int, dict] = {}
+
+    def _index_posts(rows) -> None:
+        for row in rows:
+            try:
+                posts = json.loads(row.news_data or "[]")
+            except (ValueError, TypeError):
+                continue
+            for p in posts if isinstance(posts, list) else []:
+                if not isinstance(p, dict):
+                    continue
+                pid = _post_id(p.get("link", ""))
+                if pid is not None and pid not in post_index:
+                    post_index[pid] = p
+
     try:
         with get_session() as db:
-            for row in db.query(NewsCache).all():
-                try:
-                    posts = json.loads(row.news_data or "[]")
-                except (ValueError, TypeError):
-                    continue
-                for p in posts if isinstance(posts, list) else []:
-                    if not isinstance(p, dict):
-                        continue
-                    pid = _post_id(p.get("link", ""))
-                    if pid is not None and pid not in post_index:
-                        post_index[pid] = p
+            if norm:
+                _index_posts(db.query(NewsCache).filter(NewsCache.ticker == norm).all())
+            _index_posts(db.query(NewsCache).all())
     except Exception as e:  # кэш мог быть битым/недоступным — не критично
         print(f"⚠ Не удалось обогатить избранное из news_cache: {e}")
 
