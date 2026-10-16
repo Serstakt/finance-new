@@ -10,6 +10,8 @@
          «вечно грузит» и локальный сервер тут ни при чём. -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script defer src="https://s3.tradingview.com/tv.js"></script>
+    <!-- TradingView Lightweight Charts (используется на вкладке «Тестовый график») -->
+    <script defer src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <nav id="nav-bar">
@@ -18,10 +20,6 @@
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
     <button class="nav-btn" data-page="testchart" onclick="navigateTo('testchart')">Тестовый график</button>
-    <button class="nav-btn" data-page="lwc" onclick="navigateTo('lwc')">LWC-тест</button>
-    <button class="nav-btn" data-page="echarts" onclick="navigateTo('echarts')">ECharts-тест</button>
-    <button class="nav-btn" data-page="chartjs" onclick="navigateTo('chartjs')">Chart.js-тест</button>
-    <button class="nav-btn" data-page="d3" onclick="navigateTo('d3')">D3-тест</button>
 </nav>
 
 <div id="main-content">
@@ -304,94 +302,40 @@
         </div>
     </div>
 
-    <!-- Тестовый график: сравнение двух вариантов работы с TradingView.
-         Вариант A — текущий функционал Watchlist (публичный виджет + наша
-         canvas-разметка поверх). Вариант B — переход на tradingview.com
-         (при наличии сессии TradingView открывается ваш аккаунт без
-         отдельного экрана входа; если сессии нет — TradingView сам покажет
-         форму логина, т.е. авторизация «условная»). -->
+    <!-- Тестовый график: теперь здесь только TradingView Lightweight Charts —
+         библиотека рисует график прямо внутри страницы (без iframe и виджета
+         tv.js). Данные: GET /api/history/{symbol}. Разметка — нативные объекты
+         API LWC (price lines / markers), хранится в localStorage по тикеру. -->
     <div id="testchart-page" class="page">
         <div class="portfolio-container" style="max-width:100%; width:100%;">
             <div class="portfolio-header">
                 <h2 class="portfolio-title">🧪 Тестовый график</h2>
-                <div class="portfolio-actions">
-                    <button class="btn-secondary" onclick="openTestChartTVTab()" title="Вариант B: открыть полный TradingView в новой вкладке (как кнопка Chart в Watchlist)">B: Новая вкладка</button>
-                    <button class="btn-primary" onclick="loadTestChartEmbed()" title="Вариант B-embed: график tradingview.com прямо здесь, во фрейме на этой странице (без перехода и без перезагрузки терминала)">B: Во фрейме здесь</button>
-                </div>
             </div>
 
-            <div class="portfolio-summary">
-                <div class="summary-card" style="text-align:left;">
-                    <h4>Вариант A — виджет + разметка (текущий)</h4>
-                    <p style="color:#9aa0ab; font-size:13px; line-height:1.5; margin:8px 0 0;">
-                        Публичный TradingView-виджет внутри терминала. Наша разметка рисуется
-                        canvas-оверлеем поверх графика и сохраняется по тикеру.
-                        Плюсы: списки, новости и разметка всегда под рукой, ничего не покидает страницу.
-                        Минусы: нет вашего аккаунта TradingView, ограниченный набор инструментов.
-                    </p>
-                </div>
-                <div class="summary-card" style="text-align:left;">
-                    <h4>Вариант B — условная авторизация на TradingView</h4>
-                    <p style="color:#9aa0ab; font-size:13px; line-height:1.5; margin:8px 0 0;">
-                        Ведёт на tradingview.com/chart с выбранным символом.
-                        Если вы уже залогинены в браузере — сразу откроется ваш график с saved-layout;
-                        если нет — TradingView сам предложит войти (авторизация только когда нужна).
-                        Кнопка «Во фрейме здесь» пробует показать тот же график прямо на странице, но
-                        полный chart на tradingview.com сервер запрещает встраивать в чужой iframe
-                        (CSP frame-ancestors 'none') — в этом случае блок вежливо объяснит причину и
-                        предложит открыть в новой вкладке. Разметка оверлея на TradingView недоступна.
-                    </p>
-                </div>
-            </div>
-
-            <!-- Блок варианта A: копия связки «график + разметка» из Watchlist,
-                 с независимым контейнером, чтобы не конфликтовать с основным виджетом. -->
             <div class="chart-container" style="margin-top:16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap;">
-                    <h3 class="chart-title" style="margin-bottom:0;">Вариант A: виджет + разметка поверх</h3>
+                    <h3 class="chart-title" style="margin-bottom:0;">TradingView Lightweight Charts</h3>
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <input type="text" id="testchart-symbol" placeholder="Например, MOEX:SBER" style="background:#2a2e39; border:1px solid #363a45; color:#d1d4dc; padding:8px 12px; border-radius:6px;" />
-                        <button class="btn-primary" onclick="loadTestChart()">Показать график</button>
-                        <button class="btn-secondary" id="testchart-markup-toggle" onclick="toggleTestMarkupToolbar()" title="Показать/скрыть инструменты разметки">🖊 Разметка</button>
+                        <input type="text" id="lwc-symbol" placeholder="Например, MOEX:SBER" style="background:#2a2e39; border:1px solid #363a45; color:#d1d4dc; padding:8px 12px; border-radius:6px;" />
+                        <button class="btn-primary" onclick="loadLwcChart()">Показать график</button>
+                        <button class="btn-secondary" id="lwc-markup-toggle" onclick="toggleLwcMarkupToolbar()" title="Показать/скрыть инструменты разметки">🖊 Разметка</button>
                     </div>
                 </div>
-                <div id="testchart-chart-box" style="position:relative; height:560px; background:#131722; border-radius:8px; overflow:hidden;">
-                    <div id="testchart-markup-toolbar" style="display:none;">
-                        <button data-tool="hline" onclick="setTestMarkupTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
-                        <button data-tool="vline" onclick="setTestMarkupTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
-                        <button data-tool="text" onclick="setTestMarkupTool('text')" title="Текстовая заметка">🅰 Текст</button>
-                        <button onclick="undoTestMarkup()" title="Удалить последний объект">↩️</button>
-                        <button onclick="clearTestMarkup()" title="Очистить всю разметку этого символа">🧹</button>
-                        <span id="testmarkup-status"></span>
+                <div id="lwc-chart-box" style="position:relative; height:560px; background:#131722; border-radius:8px; overflow:hidden;">
+                    <div id="lwc-markup-toolbar" style="display:none;">
+                        <button data-tool="hline" onclick="setLwcTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
+                        <button data-tool="vline" onclick="setLwcTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
+                        <button data-tool="text" onclick="setLwcTool('text')" title="Текстовая заметка">🅰 Текст</button>
+                        <button onclick="undoLwcMarkup()" title="Удалить последний объект">↩️</button>
+                        <button onclick="clearLwcMarkup()" title="Очистить всю разметку этого символа">🧹</button>
+                        <span id="lwc-status"></span>
                     </div>
-                    <div id="testchart_tv_chart" style="height:100%;"></div>
+                    <div id="lwc_chart" style="height:100%;"></div>
                 </div>
                 <div style="margin-top:10px; color:#787b86; font-size:12px;">
-                    Подсказка: разметка здесь хранится отдельно от Watchlist (ключ localStorage
-                    «testchart_markup:<символ>») — можно сравнивать, не портя боевые данные.
-                </div>
-            </div>
-
-            <!-- Блок варианта B: график tradingview.com во фрейме прямо на странице. -->
-            <div class="chart-container" id="testchart-b-block" style="margin-top:16px; display:none;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap;">
-                    <h3 class="chart-title" style="margin-bottom:0;">Вариант B: TradingView во фрейме <span id="testchart-b-symbol" style="color:#2962ff;"></span></h3>
-                    <button class="btn-secondary" onclick="closeTestChartEmbed()" title="Закрыть фрейм">✖ Закрыть</button>
-                </div>
-                <div id="testchart-b-frame-box" style="position:relative; height:640px; background:#131722; border-radius:8px; overflow:hidden;">
-                    <iframe id="testchart-b-frame" src="about:blank" style="width:100%; height:100%; border:0; display:block;" allowfullscreen></iframe>
-                    <div id="testchart-b-fallback" style="display:none; position:absolute; inset:0; background:#131722; color:#d1d4dc; padding:24px; box-sizing:border-box; text-align:center;">
-                        <p style="font-size:15px; line-height:1.6;">⚠️ TradingView запретил встраивание полного графика в чужой iframe
-                            (сервер отдаёт заголовок X-Frame-Options / CSP frame-ancestors 'none'). Это ограничение на их стороне —
-                            обойти его со своей страницы нельзя.</p>
-                        <p style="color:#9aa0ab;">Рабочий вариант B — кнопка «B: Новая вкладка»: там сработает условная авторизация
-                            (есть сессия TV — откроется ваш аккаунт, нет — TV сам покажет форму входа).</p>
-                        <button class="btn-primary" onclick="openTestChartTVTab()">Открыть TradingView в новой вкладке</button>
-                    </div>
-                </div>
-                <div style="margin-top:10px; color:#787b86; font-size:12px;">
-                    Если фрейм остался пустым — значит TradingView блокирует встраивание. Авторизация при этом «условная»:
-                    фрейм использует cookie вашего браузера, так что залогиненный пользователь увидит свой график сразу.
+                    TradingView Lightweight Charts: свечи и объём рисуются библиотекой прямо на странице,
+                    разметка сохраняется по тикеру в localStorage («libchart_markup:lwc:<символ>») —
+                    боевые данные Watchlist не затрагиваются.
                 </div>
             </div>
         </div>
@@ -435,6 +379,7 @@
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
+<script defer src="js/libcharts.js"></script>
 <script defer src="js/testchart.js"></script>
 <script defer src="js/portfolio.js"></script>
 
