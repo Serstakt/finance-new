@@ -887,5 +887,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
             .tc-action-btn { background: #363c4e; color: #d1d4dc; border: 1px solid #4a5168;
                              border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
             #tc-status { font-size: 13px; color: #787b86; margin-left: auto; }
-            #tc-chart { flex: 1; width: 100%; min-height: 420px;
-                        background: #131722; border-radius: 8px; }
+            /* height:0 + flex-grow — надёжная высота контейнера: min-height на
+               flex-элементе не гарантирует ненулевой размер, из-за чего
+               KLineChart при init() измерял контейнер высотой 0 px. */
+            #tc-chart { flex: 1 1 0; width: 100%; height: 0; min-height: 420px;
+                        background: #131722; border-radius: 8px; overflow: hidden; }
