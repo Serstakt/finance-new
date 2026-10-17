@@ -525,6 +525,57 @@ def remove_symbol(list_id: str, symbol: str) -> dict:
             return {"status": "ok", "list_id": list_id, "symbol": symbol}
 
 
+def move_symbol(list_id: str, symbol: str, target_index: int) -> dict:
+    """Перемещает один элемент списка на новую позицию (drag&drop).
+
+    В отличие от set_order, который перезаписывает весь список снимком с
+    клиента, здесь сервер сам читает актуальный порядок из БД и переставляет
+    только указанный символ. Это решает две проблемы:
+      1) payload не растёт с размером списка;
+      2) гонка двух устройств перестаёт терять данные — изменение второго
+         устройства (например, добавленный тикер) сохранится, потому что мы
+         не затираем список целиком.
+    target_index — позиция в списке БЕЗ перемещаемого элемента (0..len-1);
+    значения вне диапазона прижимаются к краям. Позиции после перестановки
+    перенумеровываются плотно 0..n-1.
+    """
+    symbol = _normalize_symbol(symbol or "")
+    if not symbol:
+        raise ValueError("Пустой символ")
+    with get_session() as db:
+            rows = (
+                db.query(WatchlistItem)
+                .filter(WatchlistItem.list_id == list_id)
+                .order_by(WatchlistItem.position.asc(), WatchlistItem.id.asc())
+                .all()
+            )
+            idx = next((i for i, r in enumerate(rows) if r.symbol == symbol), None)
+            if idx is None:
+                return {"status": "not_found", "list_id": list_id, "symbol": symbol}
+
+            row = rows.pop(idx)
+            try:
+                pos = int(target_index)
+            except (TypeError, ValueError):
+                pos = idx
+            pos = max(0, min(pos, len(rows)))
+            rows.insert(pos, row)
+
+            # Перенумеровываем только реально сдвинувшиеся строки;
+            # flush одним коммитом — список меняется атомарно.
+            for i, r in enumerate(rows):
+                if r.position != i:
+                    r.position = i
+            db.commit()
+            return {
+                "status": "ok",
+                "list_id": list_id,
+                "symbol": symbol,
+                "position": pos,
+                "symbols": [r.symbol for r in rows],
+            }
+
+
 def set_order(
     list_id: str,
     symbols: list[str],

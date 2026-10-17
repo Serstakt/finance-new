@@ -252,9 +252,34 @@ async def remove_watchlist_ticker(payload: schemas.WatchlistRemove):
     return result
 
 
+@app.post("/api/watchlist/move")
+async def move_watchlist_ticker(payload: schemas.WatchlistMove):
+    """Перемещает один элемент списка (drag&drop) без перезаписи всего состава.
+
+    Сервер читает актуальный порядок из БД и вставляет перемещаемый символ на
+    target_index — поэтому одновременные правки с двух устройств не затирают
+    друг друга, а payload остаётся маленьким на списках любого размера.
+    Возвращает новый порядок (symbols), чтобы фронтенд мог сверить UI с БД.
+    """
+    try:
+        result = watchlist_service.move_symbol(
+            payload.list_id, payload.symbol, payload.target_index
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Тикер не найден в списке")
+    return result
+
+
 @app.post("/api/watchlist/order")
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
-    """Сохраняет новый порядок/состав списка (drag&drop, разделы).
+    """Сохраняет новый порядок/состав списка (разделы, импорт, миграция).
+
+    Для обычного drag&drop предпочтителен /api/watchlist/move — он передаёт
+    только перемещённый элемент и не затирает параллельные изменения других
+    устройств. /order остаётся для операций, где состав действительно меняется
+    целиком (добавление/удаление раздела, переименование, импорт бэкапа).
 
     Флажки и свёрнутость существующих элементов сохраняются в БД автоматически;
     через items можно передать flag_color/collapsed для новых элементов.

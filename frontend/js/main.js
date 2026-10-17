@@ -483,16 +483,42 @@ window.playAlertSound = function() {
 if (typeof Sortable !== 'undefined') {
   new Sortable(document.getElementById('ticker-list'), {
     animation: 150, handle: '.drag-handle', ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
-    onEnd: function () {
+    onEnd: function (evt) {
+      // Собираем новый порядок по DOM и находим перемещённый элемент.
       const newList = [];
       document.querySelectorAll('#ticker-list .ticker-item, #ticker-list .section-header').forEach(item => {
         const btn = item.querySelector('.ticker-remove');
         if (btn) newList.push(btn.getAttribute('data-symbol'));
       });
       getCurrentList().tickers = newList;
-      // сохраняем новый порядок в БД (fav-списки внутри функции пропускаются)
-      // saveState() убран: localStorage больше не пишется, единственный источник истины — БД
-      if (typeof saveOrderToDb === 'function') saveOrderToDb(appState.activeListId, newList);
+      // Сохраняем в БД только перемещённый элемент (move + target position),
+      // а не весь список: payload не растёт с размером списка, и параллельные
+      // правки с другого устройства не затираются снимком с этого.
+      const movedBtn = evt.item ? evt.item.querySelector('.ticker-remove') : null;
+      const symbol = movedBtn ? movedBtn.getAttribute('data-symbol') : null;
+      let targetIndex = -1;
+      if (symbol && evt.oldIndex != null && evt.newIndex != null && evt.oldIndex !== evt.newIndex) {
+        // target_index для бэкенда — позиция в списке БЕЗ перемещаемого
+        // элемента. Считаем по актуальному DOM: сколько других элементов
+        // стоит перед перемещённым после drop.
+        const kids = Array.from(document.getElementById('ticker-list').children);
+        const posInKids = kids.indexOf(evt.item);
+        let othersBefore = 0;
+        for (let i = 0; i < posInKids; i++) {
+          const btn = kids[i] ? kids[i].querySelector('.ticker-remove') : null;
+          const s = btn ? btn.getAttribute('data-symbol') : null;
+          if (s && s !== symbol) othersBefore++;
+        }
+        targetIndex = Math.max(0, Math.min(othersBefore, newList.length - 1));
+      }
+      if (symbol && targetIndex >= 0) {
+        // fav-списки пропускаются внутри moveOrderToDb
+        window.moveOrderToDb(appState.activeListId, symbol, targetIndex);
+      } else if (typeof saveOrderToDb === 'function') {
+        // fallback: не удалось определить перемещённый элемент — сохраняем
+        // порядок по-старому всем списком
+        saveOrderToDb(appState.activeListId, newList);
+      }
       currentSort = { field: null, direction: 'asc' };
       document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
       log('Порядок обновлен', 'info');
