@@ -222,6 +222,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* --- Избранное (флажки) --- */
 .favorite-wrapper { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
 .favorite-flag { font-size: 13px; transition: color 0.2s, transform 0.2s; display: inline-block; line-height: 1; }
+.favorite-flag svg { width: 14px; height: 14px; display: block; }
+/* Закрашенный красный bookmark (lucide), когда тикер в избранном */
+.favorite-flag.favorite-filled svg { fill: #ef5350; stroke: #ef5350; }
 .favorite-flag.empty { color: #363a45; }
 .favorite-flag:hover { transform: scale(1.15); }
 .favorite-flag.empty:hover { color: #787b86; }

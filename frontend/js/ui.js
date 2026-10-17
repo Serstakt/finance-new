@@ -364,6 +364,10 @@ window.dataSig = function(d) {
   return `${d.price}|${d.changeValue}|${d.changeDay}`;
 };
 
+// Иконка-флажок избранного: lucide «bookmark» (https://lucide.dev/icons/bookmark).
+// Закрашивается красным, когда тикер в избранном (класс .favorite в styles.css).
+window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>';
+
 // Создание каркаса строки тикера (структура строится один раз; дальше —
 // только точечное обновление текстов/классов в updateRow).
 window.buildRowElement = function(sym) {
@@ -378,7 +382,7 @@ window.buildRowElement = function(sym) {
   div.innerHTML = `
     <span class="drag-handle" title="Перетащить">⋮</span>
     <div class="favorite-wrapper" onclick="toggleFavoritePicker('${escapeHtml(sym)}', event)" title="Флажок избранного">
-      <span class="favorite-flag empty" style="color: #363a45">⚑</span>
+      <span class="favorite-flag empty" style="color: #363a45"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span>
       <div class="favorite-picker">
         <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
         <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'blue')" style="color:#2962ff" title="Синий">🔵</span>
@@ -499,11 +503,13 @@ window.updateRow = function(div, sym, data, list, prev) {
   const wrapper = div.querySelector('.favorite-wrapper');
   const flagEl = wrapper.querySelector('.favorite-flag');
   const flagColor = appState.favorites[sym] || null;
-  const flagHex = flagColor ? FLAG_COLORS[flagColor].hex : '#363a45';
   const flagCls = 'favorite-flag' + (flagColor ? '' : ' empty');
   if (flagColor !== prev.flag) {
-    flagEl.style.color = flagHex;
-    flagEl.className = flagCls;
+    // Закрашенный красный bookmark (lucide): при избранном цвете — красная
+    // заливка, иначе — контурный серый.
+    flagEl.style.color = flagColor ? '#ef5350' : '#363a45';
+    flagEl.innerHTML = BOOKMARK_SVG;
+    flagEl.className = flagCls + (flagColor ? ' favorite-filled' : '');
     wrapper.title = flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет';
     prev.flag = flagColor;
   }
