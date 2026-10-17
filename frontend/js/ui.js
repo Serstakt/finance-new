@@ -564,8 +564,8 @@ window.buildSectionElement = function(sym) {
       if (cur.collapsedSections && cur.collapsedSections.includes(sym)) {
         cur.collapsedSections[cur.collapsedSections.indexOf(sym)] = newSectionSymbol;
       }
-      saveState(); render();
-      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД
+      render();
+      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД (saveState не нужен: состояние живёт в БД)
       log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
     }
   });
@@ -628,7 +628,10 @@ window.render = async function() {
 
   if (sortedList.length > 0 && !currentList.activeSymbol) {
     const firstTicker = sortedList.find(s => !s.startsWith('SECTION:'));
-    if (firstTicker) { currentList.activeSymbol = firstTicker; saveState(); }
+    if (firstTicker) {
+      currentList.activeSymbol = firstTicker;
+      setActiveSymbolInDb(appState.activeListId, firstTicker); // выбор — в БД, иначе потеряется после перезагрузки
+    }
   }
 
   // === KEYED DIFF: узлы создаются один раз, дальше только точечные правки ===

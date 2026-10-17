@@ -108,11 +108,10 @@ window.readLegacyState = function() {
   return null;
 };
 
-// saveState() сохранён как no-op-совместимый хук: состояние watchlist теперь
-// живёт в БД, а UI-настройки пишутся напрямую в sessionStorage. Все прежние
-// вызовы saveState() остаются в коде и ничего не делают — это страховка от
-// случайного возврата второго источника истины.
-window.saveState = function() { /* состояние — в БД; localStorage больше не пишется */ };
+// saveState() упразднён полностью: все прежние вызовы заменены на точечные
+// записи в БД (saveOrderToDb / setActiveSymbolInDb / renameListInDb и т.п.),
+// а UI-настройки пишутся напрямую в sessionStorage. localStorage для данных
+// watchlist больше не пишется никогда — второго источника истины нет.
 
 // Одноразовая миграция «localStorage -> БД»: поднимает устаревший снимок
 // multi_watchlists_state (тикеры, названия, флажки, заметки, активный тикер)

@@ -490,8 +490,8 @@ if (typeof Sortable !== 'undefined') {
         if (btn) newList.push(btn.getAttribute('data-symbol'));
       });
       getCurrentList().tickers = newList;
-      saveState();
       // сохраняем новый порядок в БД (fav-списки внутри функции пропускаются)
+      // saveState() убран: localStorage больше не пишется, единственный источник истины — БД
       if (typeof saveOrderToDb === 'function') saveOrderToDb(appState.activeListId, newList);
       currentSort = { field: null, direction: 'asc' };
       document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
