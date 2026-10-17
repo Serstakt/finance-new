@@ -228,10 +228,37 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       `;
   }
 
+  const tickerNorm = String(symbol || '').replace('MOEX:', '').trim().toUpperCase();
+
+  // === ИЗБРАННОЕ НОВОСТЕЙ — НЕЗАВИСИМО ОТ ЛЕНТЫ «НОВОСТИ» ===
+  // Флажки и вкладка «🚩 Избранные новости» тянутся НАПРЯМУЮ из БД
+  // (GET /api/news/favorites?ticker=... читает таблицу news_favorites),
+  // поэтому запрашиваем их СРАЗУ, не дожидаясь медленного парсинга
+  // Telegram во вкладке «Новости». Раздел «Избранные» появляется и
+  // открывается сразу после выбора тикета, даже если лента ещё грузится
+  // (или вовсе не загрузилась из-за ошибки/таймаута).
+  if (!window.newsFavorites) window.newsFavorites = {};
+  // Сохраняем промис загрузки избранного — лента будет ждать его только
+  // перед отрисовкой карточек (чтобы флажки не «догонялись» позже), но
+  // сам запрос стартует немедленно, параллельно с лентой «Новости».
+  window.newsFavoritesLoad = Promise.all([
+    window.loadNewsFavorites(tickerNorm).catch(() => {}),
+    window.loadNewsAllFavorites().catch(() => {}),
+  ]).then(() => {
+    // Снимок флажков готов — обновляем видимость раздела и, если
+    // пользователь уже сидит на вкладке «Избранные», рисуем её по
+    // данным из БД, НЕ дожидаясь ответа ленты «Новости».
+    updateNewsFavTabVisibility();
+    if (sessionStorage.getItem('bottomTab') === 'news-fav'
+        && typeof renderNewsFavoritesTab === 'function') {
+      renderNewsFavoritesTab(true);
+    }
+  }).catch(() => {});
+
   try {
     let news = [];
     if (symbol.startsWith("MOEX:")) {
-      const ticker = symbol.replace("MOEX:", "").toUpperCase();
+      const ticker = tickerNorm;
 
       // Добавляем параметр force_refresh в URL запроса
       const url = `/api/news/telegram/${ticker}?force_refresh=${forceRefresh}`;
@@ -248,18 +275,14 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       }
     }
 
-    // Избранное новостей подтягиваем параллельно с лентой (см. newsFavorites):
-    // только флажки ЭТОГО тикера — у каждого тикета своё избранное.
-    if (!window.newsFavorites) window.newsFavorites = {};
-    const tickerNorm = String(symbol || '').replace('MOEX:', '').trim().toUpperCase();
-    const favsReady = Promise.all([
-      window.loadNewsFavorites(tickerNorm).catch(() => {}),
-      window.loadNewsAllFavorites().catch(() => {}),
-    ]);
-
-    // Ждём избранное до отрисовки ленты: иначе уже избранные новости
-    // мелькнули бы серыми флажками (догоняющая перерисовка выглядит дёрганьем).
-    await favsReady;
+    // Ждём снимок флажков только перед отрисовкой ЛЕНТЫ: иначе уже
+    // избранные новости мелькнули бы серыми флажками (догоняющая
+    // перерисовка выглядит дёрганьем). Важно: сам запрос избранного
+    // стартовал выше, параллельно с лентой — лента не ждёт избранное,
+    // а избранное и вкладка «🚩 Избранные» не ждут ответ Telegram-парсера.
+    if (window.newsFavoritesLoad) {
+      try { await window.newsFavoritesLoad; } catch (e) { /* не критично */ }
+    }
 
     // Ссылка на пост — каноничный идентификатор новости (как на бэкенде:
     // https-схема, без хвостового слэша), по нему сверяем флажки.

@@ -25,6 +25,9 @@ class Node {
     this.style = {};
     this.attrs = {};
     this.textContent = '';
+    // синхронный «ризер» innerHTML — как в настоящем DOM: после
+    // set innerHTML дочерние узлы доступны сразу, до microtask'ов
+    this._renderFn = null;
   }
   get children() { return this._kids.filter(k => k.tagName !== '#TEXT'); }
   appendChild(n) { n.parentNode = this; this._kids.push(n); return n; }
@@ -34,22 +37,7 @@ class Node {
   // innerHTML: храним строку и парсим data-link кнопок/карточек для запросов
   set innerHTML(html) {
     this._html = html;
-    this._kids = [];
-    // вытаскиваем блоки news-item с их data-link — этого достаточно тесту
-    const re = /<div class="news-item" data-link="([^"]*)"[\s\S]*?<button[^>]*>([\s\S]*?)<\/button>/g;
-    let m;
-    while ((m = re.exec(html))) {
-      const item = new Node('div');
-      item.className = 'news-item';
-      item.dataset.link = m[1];
-      const btn = new Node('button');
-      btn._isFlagBtn = true;
-      btn.textContent = m[2].trim(); // ⚑ или 🚩 — как отрисовал api.js
-      item.appendChild(btn);
-      const a = new Node('a');
-      item.appendChild(a);
-      this.appendChild(item);
-    }
+    if (this._renderFn) this._renderFn(html);
   }
   get innerHTML() { return this._html || ''; }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
@@ -81,6 +69,28 @@ class Node {
 const byId = {};
 for (const id of ['news-panel', 'news-list', 'notes-list']) byId[id] = new Node('div');
 
+// Синхронный парсер отрисованного HTML: вытаскиваем блоки news-item с их
+// data-link и флагом — этого достаточно тесту. Вызывается из сеттера
+// innerHTML, как в настоящем DOM (узлы доступны сразу после записи).
+function renderNewsItems(node, html) {
+  node._kids = [];
+  const re = /<div class="news-item" data-link="([^"]*)"[\s\S]*?<button[^>]*>([\s\S]*?)<\/button>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const item = new Node('div');
+    item.className = 'news-item';
+    item.dataset.link = m[1];
+    const btn = new Node('button');
+    btn._isFlagBtn = true;
+    btn.textContent = m[2].trim(); // ⚑ или 🚩 — как отрисовал api.js
+    item.appendChild(btn);
+    const a = new Node('a');
+    item.appendChild(a);
+    node.appendChild(item);
+  }
+}
+byId['news-list']._renderFn = (html) => renderNewsItems(byId['news-list'], html);
+
 const posts = [
   { title: 'Сбер: МСФО за квартал', publisher: 'Smart-Lab News', time: '01.10.2026 10:00', link: 'https://t.me/newssmartlab/111/' },
   { title: 'Лукойл дивиденды', publisher: 'Smart-Lab News', time: '30.09.2026', link: 'http://t.me/newssmartlab/222' },
@@ -89,10 +99,12 @@ const posts = [
 // ---------- Сеть ----------
 const favoritesStore = {}; // link -> {ticker,title}
 let failNextFavoritePost = false;
+let newsTelegramDelayMs = 0; // имитация медленного парсинга Telegram (лента «Новости»)
 const fetchLog = [];
 const fakeFetch = async (url, opts = {}) => {
   fetchLog.push({ url, method: opts.method || 'GET', body: opts.body });
   if (String(url).includes('/api/news/telegram/')) {
+    if (newsTelegramDelayMs > 0) await new Promise(r => setTimeout(r, newsTelegramDelayMs));
     return { ok: true, status: 200, json: async () => ({ symbol: 'MOEX:SBER', news: posts }) };
   }
   if (String(url).includes('/api/news/favorites')) {
@@ -176,6 +188,28 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   assert(secondBlock && secondBlock.includes('🚩'), 'Избранная новость отрисована с красным флажком слева');
   assert(secondBlock.includes("border: 1px solid #ef5350") || secondBlock.includes('#ef5350'),
     'Карточка избранной новости подсвечена красной рамкой');
+
+  // --- ГЛАВНАЯ ПРОВЕРКА: избранные новости по тикеру тянутся из БД НАПРЯМУЮ,
+  // без ожидания загрузки ленты «Новости» (парсинга Telegram). Эмулируем
+  // медленный Telegram-эндпоинт (600 мс) и убеждаемся, что снимок флажков
+  // (GET /api/news/favorites?ticker=...) приходит раньше его ответа.
+  newsTelegramDelayMs = 600;
+  favoritesStore[firstLink] = { ticker: 'SBER', title: 'Сбер: МСФО за квартал' };
+  const favSnapshotBefore = fetchLog.length;
+  const loadPromise = sandbox.window.loadTickerNews('MOEX:SBER', true);
+  await new Promise(r => setTimeout(r, 50)); // лента ещё «парсит» Telegram
+  const telegramStarted = fetchLog.slice(favSnapshotBefore)
+    .some(f => String(f.url).includes('/api/news/telegram/'));
+  assert(telegramStarted, 'Медленный запрос ленты «Новости» уже стартовал');
+  assert(Object.keys(sandbox.window.newsFavorites).length > 0
+         && !!sandbox.window.newsFavorites[firstLink],
+    'Избранное по тикеру загружено из БД ДО ответа ленты «Новости» (без ожидания парсинга)');
+  assert(!byId['news-list'].innerHTML.includes(firstLink),
+    'Сама лента при этом ещё не отрисована — избранное её не дожидается');
+  await loadPromise;
+  assert(byId['news-list'].innerHTML.includes(firstLink),
+    'Лента всё же дорисовалась после медленного Telegram-ответа');
+  newsTelegramDelayMs = 0;
 
   console.log(failures ? `\n${failures} TEST(S) FAILED` : '\nALL TESTS PASSED');
   process.exit(failures ? 1 : 0);
