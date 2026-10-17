@@ -936,66 +936,100 @@ window.openAddAlertForActiveSymbol = async function() {
   await openAlertModal(symbol);
 };
 
-// Рендер содержимого вкладки «Алерты»: список алертов ВЫБРАННОГО тикера
-// (бывшая модалка «📋 Алерты для …»). При пустом кеше алертов тянем свежие
-// данные из БД, затем рисуем список и заголовок с символом.
+// Рендер содержимого вкладки «Алерты»: ТАБЛИЦА алертов выбранного тикера
+// (строки: Тикер, Цена, Статус, Время и дата; у активных справа кнопка
+// «Отменить»). Без выбранного тикера таблица пуста. При пустом кеше алертов
+// тянем свежие данные из БД.
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
-  if (!symbol || symbol.startsWith('SECTION:')) {
-    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
-    return;
-  }
+  // На вкладке видны только алерты выбранного тикера.
+  const sym = (!symbol || symbol.startsWith('SECTION:')) ? '' : symbol;
   // Свежие статусы из БД. Кеш пуст — тянем всё; есть алерты этого тикера —
   // рисуем сразу (иначе пересозданный/новый алерт мог «исчезать» до ответа
-  // сервера и вкладка показывала «Нет алертов для этого тикера»).
+  // сервера и вкладка показывала «Нет алертов»).
   const alerts = window.dbAlerts || [];
-  const hasCacheForSymbol = alerts.some(a => a.symbol === symbol);
+  const hasCacheForSymbol = alerts.some(a => a.symbol === sym);
   if (!alerts.length || !hasCacheForSymbol) await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
-  const activeSym = (cur && cur.activeSymbol) || '';
-  if (activeSym !== symbol && !(activeSym.startsWith('SECTION:') && hasCacheForSymbol)) return;
+  const activeSymRaw = (cur && cur.activeSymbol) || '';
+  const activeSym = activeSymRaw.startsWith('SECTION:') ? '' : activeSymRaw;
+  if (activeSym !== sym) return;
   renderAlertsList(symbol);
 };
 
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  const symbolAlerts = alerts.filter(a => a.symbol === symbol);
+  // Только алерты выбранного тикера — таблица строками (столбцы: Тикер,
+  // Цена, Статус, Время и дата, справа кнопка «Отменить» у активных).
+  const sym = (!symbol || String(symbol).startsWith('SECTION:')) ? '' : symbol;
+  const allAlerts = alerts.filter(a => a.symbol === sym);
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
 
   const header = document.createElement('div');
   header.className = 'alerts-tab-header';
-  header.innerHTML = `📋 Алерты для <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
+  header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
   container.appendChild(header);
 
   const listWrap = document.createElement('div');
   listWrap.className = 'alerts-tab-content';
   container.appendChild(listWrap);
 
-  if (symbolAlerts.length === 0) {
-    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов для этого тикера</div>';
+  if (allAlerts.length === 0) {
+    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов</div>';
     return;
   }
 
   const statusOrder = { 'active': 1, 'triggered': 2, 'cancelled': 3 };
-  symbolAlerts.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+  allAlerts.sort((a, b) => {
+    const byStatus = (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9);
+    if (byStatus !== 0) return byStatus;
+    // внутри статуса — новые сверху
+    return (b.id || 0) - (a.id || 0);
+  });
 
   const fmtTime = (iso) => {
     if (!iso) return '';
-    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   };
 
-  symbolAlerts.forEach((alertData) => {
+  // Таблица: Тикер | Цена | Статус | Время и дата | (кнопка «Отменить»).
+  // Разметку строим через createElement/appendChild, а текст ячеек — через
+  // textContent: так она одинаково работает и в реальном DOM браузера, и в
+  // тестовом мини-DOM (без парсинга innerHTML). Обработчик кнопки вешается
+  // через addEventListener вместо inline onclick.
+  const table = document.createElement('table');
+  table.className = 'alerts-table';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Тикер', 'Цена', 'Статус', 'Время и дата', ''].forEach((title) => {
+    const th = document.createElement('th');
+    th.textContent = title;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  listWrap.appendChild(table);
+
+  const makeCell = (cls, text) => {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text == null ? '' : String(text);
+    return td;
+  };
+
+  allAlerts.forEach((alertData) => {
     const status = alertData.status;
-    let statusText = '', statusClass = '', actionBtn = '';
+    let statusText = '', statusClass = '';
 
     if (status === 'active') {
       statusText = '🟢 В работе'; statusClass = 'status-active';
-      actionBtn = `<button class="mini-btn" onclick="cancelAlert(${alertData.id}, '${symbol}')">Отменить</button>`;
     } else if (status === 'triggered') {
       statusText = '✅ Исполнено'; statusClass = 'status-triggered';
     } else {
@@ -1006,16 +1040,24 @@ window.renderAlertsList = function(symbol) {
     const created = fmtTime(alertData.created_at);
     const triggeredInfo = status === 'triggered' && alertData.triggered_price != null
       ? ` · по цене ${alertData.triggered_price}` : '';
-    const div = document.createElement('div');
-    div.className = `alert-list-item ${statusClass}`;
-    div.innerHTML = `
-      <div class="alert-item-info">
-        <span class="alert-item-condition">${conditionText} ${alertData.target}</span>
-        <span class="alert-status ${statusClass}">${statusText}${triggeredInfo}</span>
-        ${created ? `<span style="color:#787b86; font-size:11px;">${created}</span>` : ''}
-      </div>
-      ${actionBtn}`;
-    listWrap.appendChild(div);
+    const tr = document.createElement('tr');
+    tr.className = `alert-row ${statusClass}`;
+    tr.appendChild(makeCell('alert-cell-symbol', alertData.symbol));
+    tr.appendChild(makeCell('alert-cell-price', `${conditionText} ${alertData.target}`));
+    tr.appendChild(makeCell(`alert-status ${statusClass}`, statusText + triggeredInfo));
+    tr.appendChild(makeCell('alert-cell-time', created));
+
+    const actionTd = document.createElement('td');
+    actionTd.className = 'alert-cell-action';
+    if (status === 'active') {
+      const btn = document.createElement('button');
+      btn.className = 'mini-btn';
+      btn.textContent = 'Отменить';
+      btn.addEventListener('click', () => cancelAlert(alertData.id, alertData.symbol));
+      actionTd.appendChild(btn);
+    }
+    tr.appendChild(actionTd);
+    tbody.appendChild(tr);
   });
 };
 

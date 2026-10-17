@@ -38,23 +38,53 @@ class Node {
     toggle: (c, force) => { const on = force === undefined ? !this._classes.has(c) : !!force; on ? this._classes.add(c) : this._classes.delete(c); return on; },
     contains: (c) => this._classes.has(c),
   };
+  // ---- Поддержка innerHTML с вложенными одноимёнными тегами (<table><tr><td>) ----
+  static _parseFragment(html) {
+    const out = [];
+    const stack = [{ kids: out }];
+    const VOID = new Set(['br', 'img', 'input', 'hr']);
+    const re = /<(\/?)(\w+)((?:[^>"']|"[^"]*"|'[^']*')*)>|([^<]+)/g;
+    for (const m of String(html).matchAll(re)) {
+      if (m[4] !== undefined) {
+        const t = m[4];
+        if (t.trim()) {
+          const top = stack[stack.length - 1];
+          const last = top.kids[top.kids.length - 1];
+          if (last && !(last instanceof Node)) last.text += t;
+          else top.kids.push({ text: t });
+        }
+        continue;
+      }
+      const closing = m[1] === '/';
+      const tag = m[2].toLowerCase();
+      if (closing) {
+        for (let i = stack.length - 1; i > 0; i--) {
+          if (stack[i].tag === tag) { stack.length = i; break; }
+        }
+        continue;
+      }
+      const node = new Node(tag);
+      for (const a of m[3].matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(a[1], a[2]);
+      stack[stack.length - 1].kids.push(node);
+      if (!VOID.has(tag) && !m[3].endsWith('/')) stack.push({ tag, kids: node._kids, node });
+    }
+    return out;
+  }
   get textContent() {
     if (this._html) return String(this._html).replace(/<[^>]*>/g, '');
     if (this.children.length === 0) return this._text;
     return this.children.map(c => c.textContent).join('');
   }
   set textContent(v) { this.children = []; this._text = String(v); this._html = ''; }
-  get innerHTML() { return this._html || ''; }
+  get innerHTML() {
+    if (this._html) return this._html;
+    if (this._kids.length === 0) return this._text;
+    return this._kids.map(k => (k instanceof Node ? k.innerHTML : k.text)).join('');
+  }
   set innerHTML(v) {
-    this._html = String(v); this._text = '';
-    this._kids = [];
-    for (const m of String(v).matchAll(/<(\w+)([^>]*)>(?:(?!<\/\1>)[\s\S])*?<\/\1>/g)) {
-      const child = new Node(m[1]);
-      for (const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g)) child.setAttribute(a[1], a[2]);
-      child._html = m[0];
-      child.parentNode = this;
-      this._kids.push(child);
-    }
+    this._html = ''; this._text = '';
+    this._kids = Node._parseFragment(String(v));
+    for (const k of this._kids) if (k instanceof Node) k.parentNode = this;
   }
   appendChild(n) { n.parentNode = this; this._kids.push(n); return n; }
   insertBefore(n, ref) { if (!ref) return this.appendChild(n); const i = this._kids.indexOf(ref); this._kids.splice(i < 0 ? this._kids.length : i, 0, n); n.parentNode = this; return n; }
@@ -192,7 +222,7 @@ const alertsContainer = nodesById['alerts-list'];
 // из innerHTML), поэтому берём детей контейнера напрямую.
 const contentText = () => {
   const wrap = alertsContainer.children.find(c => c._classes.has('alerts-tab-content'));
-  return wrap ? wrap.children.map(k => k.innerHTML).join('\n') : (wrap ? wrap.innerHTML : '');
+  return wrap ? (wrap.innerHTML || wrap.children.map(k => k.innerHTML).join('\n')) : '';
 };
 
 (async () => {
@@ -220,8 +250,15 @@ const contentText = () => {
   cur.activeSymbol = 'GAZP';                  // «успели» переключиться на GAZP до saveAlert
   await sandbox.saveAlert();
   assert(dbRows.length === 2, 'Второй алерт создан в «БД»');
-  assert(contentText().includes('290') && !contentText().includes('Нет алертов'),
-    'Новый алерт ≤ 290 сразу виден в списке (не «Нет алертов»)');
+  // Вкладка относится к выбранному тикеру: после гонки выбран GAZP, а алерт
+  // создан для SBER — на вкладке (GAZP) чужой алерт не показывается.
+  assert(!contentText().includes('290') && contentText().includes('Нет алертов'),
+    'После гонки вкладка показывает только алерты выбранного тикера (GAZP — «Нет алертов»)');
+  // Тот же алерт ≤ 290 виден, когда выбран его тикер (SBER).
+  cur.activeSymbol = 'SBER';
+  await sandbox.renderAlertsTab('SBER');
+  assert(contentText().includes('290') && !contentText().includes('310'),
+    'Алерт ≤ 290 виден на вкладке своего тикера (SBER), чужой (310/GAZP) скрыт');
 
   // --- Сценарий 2б: открытие модалки для другого тикера при открытой вкладке
   // синхронизирует выбранный тикер со списком на вкладке
