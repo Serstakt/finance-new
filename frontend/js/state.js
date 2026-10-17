@@ -156,19 +156,47 @@ window.migrateLegacyStateToDb = async function(legacy) {
   return migrated;
 };
 
-// Синхронизация состава списка с бэкендом (БД).
-// Источник истины — только БД: название, тикеры, флажки, свёрнутость разделов,
-// заметки и выбранный тикер (watchlists.active_symbol). Локальные значения
-// перезаписываются ответом сервера; исключение — известные race-случаи с
-// заглушками названий (чинятся через /repair).
+// === Сериализация чтения списков из БД (защита от гонок) ===
+// syncListWithDb вызывается при каждом переключении таба, поэтому медленный
+// ответ списка A мог дойти уже после клика на B и записать данные A в
+// appState.lists[A], а затем вызвать render() поверх активного B. Защита:
+// 1) monotonically increasing request serial — «запрос-серийный номер»:
+//    каждый новый вызов получает свой номер, а применение результата
+//    разрешено только самому свежему запросу для данного списка (устаревшие
+//    ответы отбрасываются целиком, включая их side-effects — repair,
+//    rebuildFavoriteLists, render);
+// 2) render() — только для активного списка: данные неактивного списка
+//    пишутся в appState, но не перерисовывают DOM чужого таба;
+// 3) сверка list_id в теле ответа с запрошенным — страховка на случай, если
+//    сервер/прокси вернёт данные чужого списка.
+window.__syncListSeq = 0;
+const activeSyncSerials = new Map(); // listId -> serial последнего запущенного запроса
+
 window.syncListWithDb = async function(listId) {
   if (!listId || listId.startsWith('fav_')) return;
+  const mySerial = ++window.__syncListSeq;
+  activeSyncSerials.set(listId, mySerial);
+  // результат применения: true — данные списка обновлены, false — устаревший
+  // ответ отброшен или ошибка сети (чтобы awaiting-вызовы могли это учесть)
+  let applied = false;
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/${encodeURIComponent(listId)}`, {}, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    // Пока ждали ответа, по этому списку уже ушёл более свежий запрос —
+    // наш результат устарел, применять его нельзя (данные перезапишет
+    // более новый ответ).
+    if (activeSyncSerials.get(listId) !== mySerial) {
+      if (typeof log === 'function') log(`Ответ по списку "${listId}" устарел (запрос #${mySerial}) — пропущен`, 'info');
+      return false;
+    }
+    // Страховка: тело ответа должно относиться именно к запрошенному списку.
+    if (data.list_id && data.list_id !== listId) {
+      if (typeof log === 'function') log(`Ответ GET /watchlist содержит чужой list_id "${data.list_id}" вместо "${listId}" — пропущен`, 'error');
+      return false;
+    }
     const list = appState.lists[listId];
-    if (!list) return;
+    if (!list) return false;
     const dbSymbols = data.symbols || [];
     // Новые колонки БД: flag_color, collapsed и note у каждого элемента.
     // Это источник истины для избранного, свёрнутых разделов и заметок (не localStorage).
@@ -184,14 +212,16 @@ window.syncListWithDb = async function(listId) {
     if (!isStub && dbRaw !== list.name) {
       list.name = data.name;
     } else if (isStub && localName && localName !== 'Новый список' && localName !== listId) {
-      try {
-        await fetchWithTimeout(`${API_BASE}/api/watchlist/repair`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ names: { [listId]: localName } })
-        }, 15000);
+      // Фиксация заглушки имени — фоновая операция, не ждём ответ в этом
+      // async-участке: единственный await здесь давал бы другому запросу
+      // «просочиться» между проверкой серийного номера и применением данных.
+      fetchWithTimeout(`${API_BASE}/api/watchlist/repair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: { [listId]: localName } })
+      }).then(() => {
         if (typeof log === 'function') log(`Название "${localName}" восстановлено в БД вместо заглушки`, 'info');
-      } catch (e) { /* попробуем починить при следующей загрузке */ }
+      }).catch(() => { /* попробуем починить при следующей загрузке */ });
     }
 
     // Миграция «в БД пусто, локально есть тикеры» упразднена: localStorage
@@ -237,12 +267,23 @@ window.syncListWithDb = async function(listId) {
         : (dbSymbols.find(s => !s.startsWith('SECTION:')) || '');
     }
 
+    applied = true;
+    // Весь участок от проверки серийного номера до применения данных и вывода
+    // в UI синхронный (await здесь только выше, до dbSymbols) — другой вызов
+    // syncListWithDb не может «вклиниться» в середину. Поэтому render()
+    // вызываем ТОЛЬКО когда ответ относится к активному табу: медленный ответ
+    // A при активном B не должен перерисовывать список B (сам render читает
+    // активный список — данные A попали бы в DOM B). Данные A остаются в
+    // appState.lists[A]; их отрисует syncListWithDb(A)/render() при возврате
+    // на таб A. Выпадающий список (счётчики/названия) обновляем всегда —
+    // он показывает все списки сразу.
     if (listId === appState.activeListId && typeof render === 'function') render();
     if (typeof populateListSelector === 'function') populateListSelector();
     if (typeof log === 'function') log(`Список "${list.name}" загружен из БД (${list.tickers.length} эл.)`, 'info');
   } catch (e) {
     if (typeof log === 'function') log('Не удалось загрузить watchlist из БД: ' + e.message, 'error');
   }
+  return applied;
 };
 
 // Названия всех пользовательских списков подтягиваются из БД (таблица watchlists)
