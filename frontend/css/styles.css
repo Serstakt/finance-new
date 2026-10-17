@@ -152,12 +152,38 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
 }
 #list-controls { display: flex; align-items: center; gap: 6px; flex: 1; }
+
+/* Кастомный селектор списков (в <select>/<option> нельзя отрисовать SVG-флажок
+   bookmark своего цвета — см. populateListSelector в state.js) */
 #list-selector {
-  flex: 1; background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;
+  flex: 1; position: relative; min-width: 0;
+}
+#list-selector-toggle {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;
   padding: 5px 8px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer;
 }
-#list-selector:focus { border-color: #2962ff; }
-#list-selector option { background: #1e222d; color: #d1d4dc; }
+#list-selector-toggle:focus, #list-selector-toggle:hover { border-color: #2962ff; }
+#list-selector-toggle .list-option-name {
+  flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.list-selector-caret { color: #787b86; font-size: 10px; flex: none; }
+/* Флажок-закладка (lucide bookmark) — та же иконка, что у избранных тикеров */
+.list-flag { display: inline-flex; flex: none; line-height: 1; }
+.list-flag svg { width: 14px; height: 14px; display: block; fill: currentColor; stroke: currentColor; }
+.list-selector-menu {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  background: #1e222d; border: 1px solid #363a45; border-radius: 4px;
+  max-height: 260px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.list-selector-menu.open { display: block; }
+.list-option {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  font-size: 12px; color: #d1d4dc; cursor: pointer;
+}
+.list-option:hover { background: #2a2e39; }
+.list-option.selected { background: #2962ff22; color: #fff; }
+.list-option .list-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 #auto-refresh-indicator { color: #787b86; font-size: 10px; font-weight: 400; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 #auto-refresh-indicator .dot { width: 6px; height: 6px; border-radius: 50%; background: #26a69a; animation: pulse 2s infinite; }

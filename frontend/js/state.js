@@ -36,12 +36,34 @@ window.CACHE_DURATION = 120 * 1000;
 window.AUTO_REFRESH_INTERVAL = 120 * 1000;
 window.ALERTS_KEY = 'price_alerts';
 
+// Флажки избранного: иконка — bookmark lucide (https://lucide.dev/icons/bookmark),
+// та же BOOKMARK_SVG, что ставится у тикеров в списке; цвет задаётся полем hex.
+// Раньше использовались цветные кружки (🔴🔵🟡🟠🟢) — их заменяет replaceCircleIcons.
 window.FLAG_COLORS = {
-  'red': { name: 'Красный', icon: '🔴', hex: '#ef5350' },
-  'blue': { name: 'Синий', icon: '🔵', hex: '#2962ff' },
-  'yellow': { name: 'Желтый', icon: '🟡', hex: '#ffca28' },
-  'orange': { name: 'Оранжевый', icon: '🟠', hex: '#ff9800' },
-  'green': { name: 'Зеленый', icon: '🟢', hex: '#26a69a' }
+  'red': { name: 'Красный', hex: '#ef5350' },
+  'blue': { name: 'Синий', hex: '#2962ff' },
+  'yellow': { name: 'Желтый', hex: '#ffca28' },
+  'orange': { name: 'Оранжевый', hex: '#ff9800' },
+  'green': { name: 'Зеленый', hex: '#26a69a' }
+};
+
+// Название fav_-списка: только имя цвета («Красный», «Синий»…). Иконку в
+// интерфейсе не вставляют в текст: селектор списков рисует bookmark (lucide)
+// своего цвета рядом с названием (BOOKMARK_SVG в ui.js — тот же флажок, что
+// используется при отметке избранных тикеров). replaceCircleIcons при этом
+// вычищает из названий иконки прошлых форматов — цветные кружки (🔴🔵🟡🟠🟢)
+// и emoji-флажки (🚩⚑), которые раньше вставлялись прямо в имя списка.
+window.favoriteListName = function(color) {
+  const c = window.FLAG_COLORS[color];
+  return c ? c.name : color;
+};
+
+window.replaceCircleIcons = function(name) {
+  const LEGACY_ICONS = ['🔴', '🔵', '🟡', '🟠', '🟢', '🚩', '⚑', '🔖'];
+  let out = String(name ?? '');
+  for (const legacy of LEGACY_ICONS) out = out.split(legacy).join('');
+  // после удаления иконок мог остаться двойной пробел («🔴 Красный» → « Красный»)
+  return out.replace(/\s{2,}/g, ' ').trim();
 };
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
@@ -616,7 +638,7 @@ window.rebuildFavoriteLists = function() {
     const favId = `fav_${color}`;
     if (!appState.lists[favId]) {
       appState.lists[favId] = {
-        name: `${FLAG_COLORS[color].icon} ${FLAG_COLORS[color].name}`,
+        name: window.favoriteListName(color),
         tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true
       };
     }
@@ -718,14 +740,71 @@ window.switchList = function(listId) {
   if (typeof syncListWithDb === 'function') syncListWithDb(listId);
 };
 
+// Кастомный селектор списков (div вместо <select>): в нативных <option>
+// нельзя отрисовать SVG, а по требованию UI перед названием избранного
+// списка показывается тот же флажок bookmark (lucide, BOOKMARK_SVG), что
+// используется при отметке избранных тикеров — закрашенный цветом списка.
+window.listSelectorValue = function() {
+  const el = document.getElementById('list-selector');
+  return el ? (el.dataset.value || '') : '';
+};
+
 window.populateListSelector = function() {
-  const selector = document.getElementById('list-selector');
-  selector.innerHTML = '';
-  for (const [id, list] of Object.entries(appState.lists)) {
-    const option = document.createElement('option');
-    option.value = id;
-    option.textContent = list.name + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
-    if (id === appState.activeListId) option.selected = true;
-    selector.appendChild(option);
+  const wrap = document.getElementById('list-selector');
+  if (!wrap) return;
+  // значение выбранного списка храним в data-атрибуте (аналог select.value)
+  wrap.dataset.value = appState.activeListId;
+  // кастомный селектор (div + SVG-флажки): элементы есть только в index.html;
+  // если их нет (например, в тестовой DOM-заглушке), откатываемся к простому
+  // заполнению элемента текстом названий — без иконок.
+  const toggle = typeof wrap.querySelector === 'function' ? wrap.querySelector('#list-selector-toggle') : null;
+  const menu = typeof wrap.querySelector === 'function' ? wrap.querySelector('#list-selector-menu') : null;
+  if (!toggle || !menu) {
+    let text = '';
+    for (const [id, list] of Object.entries(appState.lists)) {
+      text += (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
+        + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '') + '; ';
+    }
+    wrap.textContent = text;
+    return;
   }
+
+  const renderEntry = (id, list, inMenu) => {
+    const name = (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
+      + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
+    const color = id.startsWith('fav_') ? id.slice(4) : null;
+    const hex = (color && window.FLAG_COLORS[color]) ? FLAG_COLORS[color].hex : null;
+    // Флажок-закладка своего цвета — только у избранных списков (fav_*).
+    const iconHtml = hex
+      ? `<span class="list-flag" style="color:${hex}">${typeof BOOKMARK_SVG === 'string' ? BOOKMARK_SVG : ''}</span>`
+      : '';
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml(name) : String(name);
+    if (inMenu) {
+      const selected = id === appState.activeListId;
+      return `<div class="list-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-list-id="${escAttr(id)}" title="${esc}">${iconHtml}<span class="list-option-name">${esc}</span></div>`;
+    }
+    return `${iconHtml}<span class="list-option-name">${esc}</span><span class="list-selector-caret">▾</span>`;
+  };
+
+  let htmlMenu = '';
+  for (const [id, list] of Object.entries(appState.lists)) {
+    htmlMenu += renderEntry(id, list, true);
+  }
+  const active = appState.lists[appState.activeListId];
+  toggle.innerHTML = renderEntry(appState.activeListId,
+    active || { name: String(appState.activeListId), tickers: [] }, false);
+  menu.innerHTML = htmlMenu;
+  menu.classList.remove('open');
+  toggle.setAttribute('aria-expanded', 'false');
+};
+
+function escAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+window.closeListSelector = function() {
+  const wrap = document.getElementById('list-selector');
+  if (!wrap) return;
+  wrap.querySelector('#list-selector-menu')?.classList.remove('open');
+  wrap.querySelector('#list-selector-toggle')?.setAttribute('aria-expanded', 'false');
 };

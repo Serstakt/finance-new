@@ -87,7 +87,14 @@
         <div id="watchlist">
             <div id="watchlist-header">
                 <div id="list-controls">
-                    <select id="list-selector" title="Выбрать список"></select>
+                    <!-- Кастомный селектор списков: в <option> нельзя вставить
+                         SVG, а у избранных списков (fav_*) перед названием
+                         показываем флажок bookmark (lucide) своего цвета —
+                         та же иконка, что у тикеров в списке. -->
+                    <div id="list-selector" title="Выбрать список">
+                        <button id="list-selector-toggle" type="button" aria-haspopup="listbox" aria-expanded="false"></button>
+                        <div id="list-selector-menu" class="list-selector-menu" role="listbox"></div>
+                    </div>
                     <button id="add-list-btn" class="toggle-watchlist-btn" title="Создать новый список">+</button>
                     <button id="rename-list-btn" class="toggle-watchlist-btn" title="Переименовать список">✎</button>
                     <button id="delete-list-btn" class="toggle-watchlist-btn danger" title="Удалить текущий список">×</button>
