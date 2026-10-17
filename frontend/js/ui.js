@@ -442,8 +442,13 @@ window.updateRow = function(div, sym, data, list, prev) {
   const changePctEl = div.querySelector(`#change-pct-${safeId}`);
   if (!priceEl || !changeValEl || !changePctEl) return;
 
+  // data === undefined — «обновить только флажок» (см. updateFavoriteFlagsOnly):
+  // цены/логотип не трогаем и подписи (prev.sig / prev.logoHtml) не сбиваем,
+  // чтобы следующий обычный рендер корректно определил изменение цены.
+  const flagsOnly = data === undefined;
+
   const newSig = dataSig(data);
-  const changed = newSig !== prev.sig;
+  const changed = !flagsOnly && newSig !== prev.sig;
   const wasError = prev.sig === 'ERR';
   const isError = newSig === 'ERR';
 
@@ -486,16 +491,20 @@ window.updateRow = function(div, sym, data, list, prev) {
 
   // Логотип: перестраиваем HTML только если URL реально сменился
   // (иначе <img> перезагружался бы при каждой перерисовке и мигал).
-  const parts = sym.split(':');
-  const baseTicker = parts.length > 1 ? parts[1] : sym;
-  const logoContainer = div.querySelector('.ticker-logo-container');
-  const wantLogo = buildLogoHtml(sym, baseTicker, data);
-  if (wantLogo !== prev.logoHtml) {
-    logoContainer.innerHTML = wantLogo;
-    prev.logoHtml = wantLogo;
+  if (!flagsOnly) {
+    const parts = sym.split(':');
+    const baseTicker = parts.length > 1 ? parts[1] : sym;
+    const logoContainer = div.querySelector('.ticker-logo-container');
+    const wantLogo = buildLogoHtml(sym, baseTicker, data);
+    if (wantLogo !== prev.logoHtml) {
+      logoContainer.innerHTML = wantLogo;
+      prev.logoHtml = wantLogo;
+    }
   }
 
-  // Флажок избранного
+  // Флажок избранного. Смена флажка НЕ должна порождать запрос цен: строки
+  // с flags-only-обновлением получают data === undefined и обновляют только
+  // закладку/пикер (цены, логотипы и подписи остаются нетронутыми).
   const wrapper = div.querySelector('.favorite-wrapper');
   const flagEl = wrapper.querySelector('.favorite-flag');
   const flagColor = appState.favorites[sym] || null;
@@ -525,8 +534,28 @@ window.updateRow = function(div, sym, data, list, prev) {
   const isActive = sym === list.activeSymbol;
   if (isActive !== prev.active) {
     div.classList.toggle('active', isActive);
+    div.dataset.active = String(isActive);
     prev.active = isActive;
   }
+};
+
+// Точечно обновляет ТОЛЬКО флажки/пикер избранных у уже отрисованных строк —
+// без пересборки DOM и без единого сетевого запроса. Используется действиями
+// «в избранное / убрать из избранного» (setFavorite / toggleFavoritePicker).
+window.updateFavoriteFlagsOnly = function() {
+  const container = document.getElementById('ticker-list');
+  if (!container) return;
+  const list = getCurrentList();
+  container.querySelectorAll('.ticker-item').forEach(item => {
+    const sym = item.dataset.symbol;
+    if (!sym || sym.startsWith('SECTION:')) return;
+    const entry = window.__rowsCache.map.get(sym);
+    // Строка «не из этого списка» (например, открыт fav_-список, а узлы ещё
+    // старые) — пересобирать её на лету не нужно, обычный render() сделает
+    // это при смене списка. Здесь важна только синхронизация флажка/пикера.
+    const state = entry ? entry.state : { sig: 'INIT', logoHtml: null, flag: undefined, active: null };
+    updateRow(item, sym, undefined, list, state);
+  });
 };
 
 // Каркас секции создаётся один раз; обработчики живут на самом узле.
@@ -611,6 +640,22 @@ window.applySectionCollapse = function(list) {
   });
 };
 
+// === ЛЁГКАЯ ПЕРЕРИСОВКА (БЕЗ ЗАПРОСА ЦЕН) ===
+// symbol -> данные последнего рендера с ценами. Нужна для того, чтобы
+// действия, которые меняют только оформление (флажок избранного, открытие/
+// закрытие пикера цветов), не дёргали /api/prices для каждого тикера списка.
+window.__lastRenderData = null;
+window.__lastRenderAt = 0;
+
+// True, если можно перерисовать список из кэша цен, не обращаясь к API:
+// тот же список, данные свежие (не старше TTL кэша) и все тикеры уже известны.
+window.canRenderWithoutPrices = function(list) {
+  const d = window.__lastRenderData;
+  if (!d || window.__rowsCache.listId !== appState.activeListId) return false;
+  if (Date.now() - window.__lastRenderAt >= (window.CACHE_DURATION || 120000)) return false;
+  return list.tickers.every(s => s.startsWith('SECTION:') || (s in d));
+};
+
 window.render = async function() {
   const currentList = getCurrentList();
   const container = document.getElementById('ticker-list');
@@ -624,23 +669,38 @@ window.render = async function() {
     window.__rowsCache = { map: new Map(), listId: appState.activeListId };
     container.innerHTML = '';
   }
-  const cacheMap = window.__rowsCache.map;
 
-  // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
-  // Последовательный await для каждого тикера складывал задержки: при медленном
-  // внешнем API список «загружался» бесконечно долго.
-  const dataMap = {};
   const symbols = currentList.tickers.filter(s => !s.startsWith('SECTION:'));
-  const results = await Promise.all(symbols.map(sym => fetchTickerData(sym)));
-  symbols.forEach((sym, i) => { dataMap[sym] = results[i]; });
+  let dataMap = {};
+  let lightweightRender = false;
 
-  // Пока ждали ответа API, пользователь мог переключить список — не рисуем
-  // устаревшие данные в чужой DOM (иначе цены «переехали» бы между списками).
-  if (window.__rowsCache.listId !== appState.activeListId) return;
+  if (window.canRenderWithoutPrices(currentList)) {
+    // Цены уже есть в свежем in-memory-кэше последнего рендера (например, пользователь
+    // просто поставил/снял флажок избранного или открыл пикер цветов) —
+    // запросы /api/prices НЕ выполняются вовсе, строки обновляются точечно.
+    // Полная загрузка цен остаётся при первой отрисовке списка, переключении
+    // списка, сортировке, добавлении/удалении тикера и автообновлении.
+    lightweightRender = true;
+    symbols.forEach(sym => { dataMap[sym] = window.__lastRenderData[sym]; });
+  } else {
+    // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
+    // Последовательный await для каждого тикера складывал задержки: при медленном
+    // внешнем API список «загружался» бесконечно долго.
+    const results = await Promise.all(symbols.map(sym => fetchTickerData(sym)));
+    symbols.forEach((sym, i) => { dataMap[sym] = results[i]; });
+
+    // Пока ждали ответа API, пользователь мог переключить список — не рисуем
+    // устаревшие данные в чужой DOM (иначе цены «переехали» бы между списками).
+    if (window.__rowsCache.listId !== appState.activeListId) return;
+
+    // Обновляем кэш данных для лёгкой перерисовки (см. canRenderWithoutPrices)
+    window.__lastRenderData = Object.assign({}, dataMap);
+    window.__lastRenderAt = Date.now();
+  }
 
   const sortedList = sortList(currentList.tickers, dataMap);
 
-  if (sortedList.length > 0 && !currentList.activeSymbol) {
+  if (!lightweightRender && sortedList.length > 0 && !currentList.activeSymbol) {
     const firstTicker = sortedList.find(s => !s.startsWith('SECTION:'));
     if (firstTicker) {
       currentList.activeSymbol = firstTicker;
@@ -649,6 +709,7 @@ window.render = async function() {
   }
 
   // === KEYED DIFF: узлы создаются один раз, дальше только точечные правки ===
+  const cacheMap = window.__rowsCache.map;
   const seen = new Set();
   let cursor = container.firstElementChild;
   let isCollapsed = false;
@@ -671,6 +732,8 @@ window.render = async function() {
       cacheMap.set(sym, entry);
     }
     seen.add(sym);
+    // На лёгком рендере строкам передаём закэшированные данные: подписи (prev.sig)
+    // совпадают, поэтому в DOM пишется только реально изменившийся флажок.
     updateRow(entry.el, sym, dataMap[sym], currentList, entry.state);
     entry.el.style.display = isCollapsed ? 'none' : '';
     if (cursor !== entry.el) container.insertBefore(entry.el, cursor);
@@ -689,7 +752,9 @@ window.render = async function() {
   // Проверка алертов на бэкенде «по горячим следам» — ОДИН раз за перерисовку
   // (раньше таймер перезапускался из каждой строки). Фоновый цикл сервера
   // делает то же самое каждые 60 с, но при открытом терминале реакция мгновенна.
-  if (symbols.some(s => dataMap[s] && dataMap[s].price)) {
+  // Только на обычном рендере: лёгкая перерисовка (флажок избранного) не должна
+  // порождать лишний запрос проверки алертов.
+  if (!lightweightRender && symbols.some(s => dataMap[s] && dataMap[s].price)) {
     clearTimeout(window.__alertSyncTimer);
     window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
   }
