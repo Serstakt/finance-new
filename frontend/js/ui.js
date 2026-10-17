@@ -19,6 +19,20 @@ window.escapeHtml = function(s) {
     .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 };
 
+// === ИКОНКИ LUCIDE ===
+// Библиотека подключена в index.html (UMD-бандл lucide). Статичные иконки
+// задаются разметкой <i data-lucide="имя"></i>; для контента, вставляемого
+// динамически через innerHTML, нужно после вставки вызывать refreshIcons().
+// Функция определена здесь (самый ранний общий скрипт), чтобы api.js/ui.js
+// могли ссылаться на неё независимо от порядка загрузки.
+window.refreshIcons = function(root) {
+  try {
+    if (typeof window.lucide !== 'undefined' && typeof window.lucide.createIcons === 'function') {
+      window.lucide.createIcons(root ? { root } : undefined);
+    }
+  } catch (e) { /* CDN с lucide недоступен — текст кнопок остаётся читаемым */ }
+};
+
 window.sortList = function(list, dataMap) {
   if (!currentSort.field) return list;
   const blocks = [];
@@ -67,14 +81,25 @@ window.setupColumnHeaders = function() {
 
       document.querySelectorAll('.column-header').forEach(h => {
         h.classList.remove('active');
-        h.querySelector('.sort-icon').textContent = '↕';
+        setSortIcon(h, 'none');
       });
       header.classList.add('active');
-      header.querySelector('.sort-icon').textContent = currentSort.direction === 'asc' ? '↑' : '↓';
+      setSortIcon(header, currentSort.direction);
       render();
       log(`Сортировка: ${field} (${currentSort.direction === 'asc' ? 'по возрастанию' : 'по убыванию'})`, 'info');
     });
   });
+};
+
+// Иконка сортировки в заголовке колонки (Lucide). Сброс по умолчанию —
+// «unsorted», активная — arrow-up/arrow-down. Простой и надёжный способ:
+// пересоздаём <i data-lucide> внутри .sort-icon и просим lucide отрендерить.
+window.setSortIcon = function(header, dir) {
+  const el = header.querySelector('.sort-icon');
+  if (!el) return;
+  const name = dir === 'asc' ? 'arrow-up' : (dir === 'desc' ? 'arrow-down' : 'unsorted');
+  el.innerHTML = `<i data-lucide="${name}"></i>`;
+  refreshIcons();
 };
 
 // === ВКЛАДКИ «НОВОСТИ / ЗАМЕТКИ» (панель под графиком) ===
@@ -376,15 +401,15 @@ window.buildRowElement = function(sym) {
   const smartLabUrl = `https://smart-lab.ru/forum/${baseTicker}/`;
 
   div.innerHTML = `
-    <span class="drag-handle" title="Перетащить">⋮</span>
+    <span class="drag-handle" title="Перетащить"><i data-lucide="grip-vertical" class="ico-sm"></i></span>
     <div class="favorite-wrapper" onclick="toggleFavoritePicker('${escapeHtml(sym)}', event)" title="Флажок избранного">
-      <span class="favorite-flag empty" style="color: #363a45">⚑</span>
+      <span class="favorite-flag empty" style="color: #363a45"><i data-lucide="flag" class="ico-sm"></i></span>
       <div class="favorite-picker">
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'blue')" style="color:#2962ff" title="Синий">🔵</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'yellow')" style="color:#ffca28" title="Желтый">🟡</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'orange')" style="color:#ff9800" title="Оранжевый">🟠</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'green')" style="color:#26a69a" title="Зеленый">🟢</span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'red')" style="color:#ef5350" title="Красный"><i data-lucide="circle" class="ico-sm fill-current"></i></span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'blue')" style="color:#2962ff" title="Синий"><i data-lucide="circle" class="ico-sm fill-current"></i></span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'yellow')" style="color:#ffca28" title="Желтый"><i data-lucide="circle" class="ico-sm fill-current"></i></span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'orange')" style="color:#ff9800" title="Оранжевый"><i data-lucide="circle" class="ico-sm fill-current"></i></span>
+        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'green')" style="color:#26a69a" title="Зеленый"><i data-lucide="circle" class="ico-sm fill-current"></i></span>
       </div>
     </div>
     <div class="ticker-logo-container"></div>
@@ -394,7 +419,8 @@ window.buildRowElement = function(sym) {
     <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
     <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
     <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить">×</span>`;
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить"><i data-lucide="x" class="ico-sm"></i></span>`;
+  refreshIcons(div);
 
   // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
   // жизни узла (раньше слушатель создавался при каждой перерисовке).
@@ -529,10 +555,11 @@ window.buildSectionElement = function(sym) {
   div.dataset.symbol = sym;
   const sectionName = sym.replace('SECTION:', '');
   div.innerHTML = `
-    <span class="drag-handle" title="Перетащить">⋮</span>
-    <span class="section-collapse-btn" title="Свернуть/Развернуть">▼</span>
+    <span class="drag-handle" title="Перетащить"><i data-lucide="grip-vertical" class="ico-sm"></i></span>
+    <span class="section-collapse-btn" data-icon="chevron-down" title="Свернуть/Развернуть"><i data-lucide="chevron-down" class="ico-sm"></i></span>
     <span class="section-title" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить раздел">×</span>`;
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить раздел"><i data-lucide="x" class="ico-sm"></i></span>`;
+  refreshIcons(div);
 
   div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -584,8 +611,18 @@ window.updateSectionElement = function(div, sym, list) {
   const collapsed = !!(list.collapsedSections && list.collapsedSections.includes(sym));
   div.classList.toggle('collapsed', collapsed);
   const btn = div.querySelector('.section-collapse-btn');
-  const arrow = collapsed ? '▶' : '▼';
-  if (btn.textContent !== arrow) btn.textContent = arrow;
+  const iconName = collapsed ? 'chevron-right' : 'chevron-down';
+  if ((btn.getAttribute('data-icon') || '') === iconName) return;
+  btn.setAttribute('data-icon', iconName);
+  // lucide рендерит <i data-lucide> в <svg>: меняем атрибут у ещё не
+  // отрендеренного <i> или пересоздаём узел, если svg уже на месте
+  const pending = btn.querySelector('i[data-lucide]');
+  if (pending && !btn.querySelector('svg')) {
+    pending.setAttribute('data-lucide', iconName);
+  } else {
+    btn.innerHTML = `<i data-lucide="${iconName}" class="ico-sm"></i>`;
+  }
+  refreshIcons(btn);
 };
 
 // Применяет свёрнутость секций к уже существующим строкам (без пересборки DOM).
@@ -971,8 +1008,9 @@ window.renderAlertsList = function(symbol) {
 
   const header = document.createElement('div');
   header.className = 'alerts-tab-header';
-  header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
+  header.innerHTML = `<i data-lucide="clipboard-list" class="ico"></i> Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
   container.appendChild(header);
+  refreshIcons(container);
 
   const listWrap = document.createElement('div');
   listWrap.className = 'alerts-tab-content';

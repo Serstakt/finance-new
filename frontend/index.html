@@ -10,10 +10,14 @@
          «вечно грузит» и локальный сервер тут ни при чём. -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script defer src="https://s3.tradingview.com/tv.js"></script>
+    <!-- Иконки: Lucide (MIT) через web-компоненты. Использование:
+         <i data-lucide="name"></i>. После вставки иконок в DOM динамически
+         вызывается lucide.createIcons() (см. refreshIcons() в ui.js). -->
+    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
 <nav id="nav-bar">
-    <div class="nav-title">📊 Финансовый терминал</div>
+    <div class="nav-title"><i data-lucide="candlestick-chart" class="ico"></i> Финансовый терминал</div>
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
@@ -72,25 +76,25 @@
         <h2 style="font-size: 18px; margin-bottom: 15px; color: #d1d4dc;">Быстрые действия</h2>
         <div class="quick-actions">
             <div class="action-card" onclick="navigateTo('watchlist')">
-                <div class="action-icon">📋</div>
+                <div class="action-icon"><i data-lucide="list-checks"></i></div>
                 <div class="action-info"><h3>Watchlist</h3><p>Списки наблюдения с ценами</p></div>
             </div>
             <div class="action-card" onclick="navigateTo('portfolio')">
-                <div class="action-icon">💼</div>
+                <div class="action-icon"><i data-lucide="briefcase"></i></div>
                 <div class="action-info"><h3>Портфель</h3><p>Управление активами</p></div>
             </div>
         </div>
     </div>
 
     <div id="watchlist-page" class="page">
-        <button id="show-watchlist-btn" title="Показать Watchlist">◀ Списки</button>
+        <button id="show-watchlist-btn" title="Показать Watchlist"><i data-lucide="panel-left-open" class="ico"></i> Списки</button>
         <div id="watchlist">
             <div id="watchlist-header">
                 <div id="list-controls">
                     <select id="list-selector" title="Выбрать список"></select>
-                    <button id="add-list-btn" class="toggle-watchlist-btn" title="Создать новый список">+</button>
-                    <button id="rename-list-btn" class="toggle-watchlist-btn" title="Переименовать список">✎</button>
-                    <button id="delete-list-btn" class="toggle-watchlist-btn danger" title="Удалить текущий список">×</button>
+                    <button id="add-list-btn" class="toggle-watchlist-btn" title="Создать новый список"><i data-lucide="plus"></i></button>
+                    <button id="rename-list-btn" class="toggle-watchlist-btn" title="Переименовать список"><i data-lucide="pencil"></i></button>
+                    <button id="delete-list-btn" class="toggle-watchlist-btn danger" title="Удалить текущий список"><i data-lucide="x"></i></button>
                 </div>
                 <div style="display: flex; align-items: center;">
                     <span id="auto-refresh-indicator"><span class="dot"></span><span id="countdown">120с</span></span>
@@ -101,16 +105,16 @@
             </div>
             <div id="add-form">
                 <input id="add-input" placeholder="SBER, AAPL, BTCUSDT" title="Введите тикер. Биржа определяется автоматически." />
-                <button id="add-btn" type="button" title="Добавить тикер">+</button>
+                <button id="add-btn" type="button" title="Добавить тикер"><i data-lucide="plus"></i></button>
                 <button id="add-section-btn" type="button" title="Добавить раздел">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
                 </button>
             </div>
             <div class="column-headers">
-                <div class="column-header col-ticker" data-sort="ticker">Тикер <span class="sort-icon">↕</span></div>
-                <div class="column-header col-price" data-sort="price">Цена <span class="sort-icon">↕</span></div>
-                <div class="column-header col-change" data-sort="change">Изм. <span class="sort-icon">↕</span></div>
-                <div class="column-header col-change-pct" data-sort="changePct">Изм.% <span class="sort-icon">↕</span></div>
+                <div class="column-header col-ticker" data-sort="ticker">Тикер <span class="sort-icon"><i data-lucide="unsorted"></i></span></div>
+                <div class="column-header col-price" data-sort="price">Цена <span class="sort-icon"><i data-lucide="unsorted"></i></span></div>
+                <div class="column-header col-change" data-sort="change">Изм. <span class="sort-icon"><i data-lucide="unsorted"></i></span></div>
+                <div class="column-header col-change-pct" data-sort="changePct">Изм.% <span class="sort-icon"><i data-lucide="unsorted"></i></span></div>
             </div>
             <div id="ticker-list"></div>
             <div id="io-panel">
@@ -125,10 +129,10 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> Настройки
                     </button>
                     <div class="admin-menu">
-                        <button id="refresh-btn" onclick="refreshAllPrices()">🔄 Обновить</button>
-                        <button onclick="exportAllData()">📤 Экспорт</button>
-                        <button onclick="importAllData()">📥 Импорт</button>
-                        <button onclick="toggleDebug()">🐞 Debug</button>
+                        <button id="refresh-btn" onclick="refreshAllPrices()"><i data-lucide="refresh-cw"></i> Обновить</button>
+                        <button onclick="exportAllData()"><i data-lucide="upload"></i> Экспорт</button>
+                        <button onclick="importAllData()"><i data-lucide="download"></i> Импорт</button>
+                        <button onclick="toggleDebug()"><i data-lucide="bug"></i> Debug</button>
                     </div>
                 </div>
             </div>
@@ -139,11 +143,11 @@
                  TradingView-виджет не позволяет рисовать внутри iframe, поэтому
                  разметка лежит на canvas-оверлее над контейнером графика. -->
             <div id="markup-toolbar" style="display: none;">
-                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
-                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
-                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика">🅰 Текст</button>
-                <button onclick="undoLastMarkup()" title="Удалить последний объект">↩️</button>
-                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера">🧹</button>
+                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене"><i data-lucide="minus"></i> Уровень</button>
+                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате"><i data-lucide="move-vertical"></i> Дата</button>
+                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика"><i data-lucide="type"></i> Текст</button>
+                <button onclick="undoLastMarkup()" title="Удалить последний объект"><i data-lucide="undo-2"></i></button>
+                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера"><i data-lucide="eraser"></i></button>
                 <span id="markup-status"></span>
             </div>
             <!-- Сам график TradingView -->
@@ -158,18 +162,18 @@
             <div id="news-panel">
                 <div id="bottom-tabs">
                     <div class="tabs-group">
-                        <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
-                        <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')">🚩 Избранные</button>
-                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
-                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')">🔔 Алерты</button>
+                        <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')"><i data-lucide="newspaper"></i> Новости</button>
+                        <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')"><i data-lucide="flag"></i> Избранные</button>
+                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')"><i data-lucide="sticky-note"></i> Заметки</button>
+                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')"><i data-lucide="bell"></i> Алерты</button>
                     </div>
                     <div class="tab-actions">
-                        <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
-                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика">🖊 Разметка</button>
+                        <button id="news-refresh-btn" onclick="refreshNews()"><i data-lucide="refresh-cw"></i> Обновить</button>
+                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика"><i data-lucide="pen-line"></i> Разметка</button>
                         <!-- Кнопка добавления алерта: перенесена с колокольчика
                              из строк списка тикеров — открывает модалку
                              ценового уведомления для выбранного тикера -->
-                        <button id="add-alert-btn" style="display: none;" onclick="openAddAlertForActiveSymbol()" title="Добавить ценовое уведомление для выбранного тикера">+ Добавить</button>
+                        <button id="add-alert-btn" style="display: none;" onclick="openAddAlertForActiveSymbol()" title="Добавить ценовое уведомление для выбранного тикера"><i data-lucide="plus"></i> Добавить</button>
                     </div>
                 </div>
 
@@ -222,16 +226,16 @@
                         <span class="notes-sep"></span>
                         <button type="button" data-cmd="insertUnorderedList" title="Маркированный список" onclick="notesExec('insertUnorderedList')">•≡</button>
                         <button type="button" data-cmd="insertOrderedList" title="Нумерованный список" onclick="notesExec('insertOrderedList')">1≡</button>
-                        <button type="button" title="Увеличить отступ" onclick="notesExec('indent')" >⇥</button>
-                        <button type="button" title="Уменьшить отступ" onclick="notesExec('outdent')">⇤</button>
+                        <button type="button" title="Увеличить отступ" onclick="notesExec('indent')" ><i data-lucide="indent"></i></button>
+                        <button type="button" title="Уменьшить отступ" onclick="notesExec('outdent')"><i data-lucide="outdent"></i></button>
                         <span class="notes-sep"></span>
-                        <button type="button" data-cmd="justifyLeft" title="По левому краю" onclick="notesExec('justifyLeft')">⬅</button>
-                        <button type="button" data-cmd="justifyCenter" title="По центру" onclick="notesExec('justifyCenter')">↔</button>
-                        <button type="button" data-cmd="justifyRight" title="По правому краю" onclick="notesExec('justifyRight')">➡</button>
+                        <button type="button" data-cmd="justifyLeft" title="По левому краю" onclick="notesExec('justifyLeft')"><i data-lucide="align-left"></i></button>
+                        <button type="button" data-cmd="justifyCenter" title="По центру" onclick="notesExec('justifyCenter')"><i data-lucide="align-center"></i></button>
+                        <button type="button" data-cmd="justifyRight" title="По правому краю" onclick="notesExec('justifyRight')"><i data-lucide="align-right"></i></button>
                         <span class="notes-sep"></span>
-                        <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')">↩️</button>
-                        <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')">↪️</button>
-                        <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')">✂️</button>
+                        <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')"><i data-lucide="undo-2"></i></button>
+                        <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')"><i data-lucide="redo-2"></i></button>
+                        <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')"><i data-lucide="remove-formatting"></i></button>
                         <!-- Статус автосохранения: правый угол панели инструментов -->
                         <div id="notes-editor-status"></div>
                     </div>
@@ -256,20 +260,14 @@
         <div class="portfolio-container">
             <!-- Заголовок и кнопки управления -->
             <div class="portfolio-header">
-                <h2 class="portfolio-title">💼 Мой Портфель</h2>
+                <h2 class="portfolio-title"><i data-lucide="briefcase" class="ico"></i> Мой Портфель</h2>
                 <div class="portfolio-actions">
                     <button class="btn-primary" onclick="openAddPositionModal()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
+                        <i data-lucide="plus" class="ico"></i>
                         Добавить позицию
                     </button>
                     <button class="btn-secondary" onclick="refreshPortfolio()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10"></polyline>
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                        </svg>
+                        <i data-lucide="refresh-cw" class="ico"></i>
                         Обновить
                     </button>
                 </div>
@@ -374,12 +372,12 @@
 
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
-    <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
+    <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть"><i data-lucide="x"></i></button>
 </div>
 
 <div class="modal-overlay" id="alert-modal">
     <div class="modal-box">
-        <div class="modal-title">🔔 Ценовое уведомление: <span id="alert-symbol-name"></span></div>
+        <div class="modal-title"><i data-lucide="bell-ring"></i> Ценовое уведомление: <span id="alert-symbol-name"></span></div>
         <select class="modal-select" id="alert-condition">
             <option value="above">Цена станет ВЫШЕ или равна</option>
             <option value="below">Цена станет НИЖЕ или равна</option>
