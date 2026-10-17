@@ -36,24 +36,30 @@ window.CACHE_DURATION = 120 * 1000;
 window.AUTO_REFRESH_INTERVAL = 120 * 1000;
 window.ALERTS_KEY = 'price_alerts';
 
-// Флажки избранного: иконка — цветной флажок 🚩 (как у тикеров в списке),
-// раньше использовались цветные кружки (🔴🔵🟡🟠🟢) — заменены по требованию UI.
+// Флажки избранного: иконка — bookmark lucide (https://lucide.dev/icons/bookmark),
+// как у тикеров в списке (BOOKMARK_SVG в ui.js); цвет задаётся полем hex.
+// Раньше использовались цветные кружки (🔴🔵🟡🟠🟢), затем emoji-флажок 🚩 —
+// заменены по требованию UI на bookmark (в тексте — 🔖).
 window.FLAG_COLORS = {
-  'red': { name: 'Красный', icon: '🚩', hex: '#ef5350' },
-  'blue': { name: 'Синий', icon: '🚩', hex: '#2962ff' },
-  'yellow': { name: 'Желтый', icon: '🚩', hex: '#ffca28' },
-  'orange': { name: 'Оранжевый', icon: '🚩', hex: '#ff9800' },
-  'green': { name: 'Зеленый', icon: '🚩', hex: '#26a69a' }
+  'red': { name: 'Красный', icon: '🔖', hex: '#ef5350' },
+  'blue': { name: 'Синий', icon: '🔖', hex: '#2962ff' },
+  'yellow': { name: 'Желтый', icon: '🔖', hex: '#ffca28' },
+  'orange': { name: 'Оранжевый', icon: '🔖', hex: '#ff9800' },
+  'green': { name: 'Зеленый', icon: '🔖', hex: '#26a69a' }
 };
 
-// Убираем из названия списков/разделов «круглую» иконку прошлого формата
-// (🔴🔵🟡🟠🟢) и подставляем вместо неё флажок того же цвета (🚩).
-// Используется при отображении названий списков (селектор списков): данные
-// могли быть сохранены ещё с кругами, а рендер должен показывать флажки.
+// Иконка bookmark для текстовых мест (например, <option> селектора списков,
+// куда нельзя вставить SVG): текстовый эквивалент lucide «bookmark».
+window.BOOKMARK_ICON = '🔖';
+
+// Заменяем в названиях списков иконки прошлых форматов — цветные кружки
+// (🔴🔵🟡🟠🟢) и emoji-флажок (🚩) — на bookmark (🔖). Используется при
+// отображении названий списков (селектор списков): данные могли быть
+// сохранены ещё со старыми иконками, а рендер должен показывать bookmark.
 window.replaceCircleIcons = function(name) {
-  const circleToFlag = { '🔴': '🚩', '🔵': '🚩', '🟡': '🚩', '🟠': '🚩', '🟢': '🚩' };
+  const toBookmark = { '🔴': '🔖', '🔵': '🔖', '🟡': '🔖', '🟠': '🔖', '🟢': '🔖', '🚩': '🔖' };
   let out = String(name ?? '');
-  for (const [circle, flag] of Object.entries(circleToFlag)) out = out.split(circle).join(flag);
+  for (const [legacy, icon] of Object.entries(toBookmark)) out = out.split(legacy).join(icon);
   return out;
 };
 
@@ -738,7 +744,8 @@ window.populateListSelector = function() {
     const option = document.createElement('option');
     option.value = id;
     // replaceCircleIcons: старые данные могли сохраниться с цветными кружками
-    // (🔴🔵…) в названиях избранных списков — на экране показываем флажки (🚩).
+    // (🔴🔵…) или emoji-флажком (🚩) в названиях избранных списков — на экране
+    // показываем bookmark (🔖), как флажок избранного у тикеров.
     option.textContent = (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
       + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
     if (id === appState.activeListId) option.selected = true;
