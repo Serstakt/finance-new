@@ -483,8 +483,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Вкладка «Алерты»: заголовок со списком ценовых уведомлений выбранного
    тикера (перенесена из модалки «📋 Алерты для …») */
 .alerts-tab-header {
-  padding: 12px 4px 8px;
-  font-size: 13px;
+  padding: 12px 4px 10px;
+  font-size: 15px;
   font-weight: 600;
   color: #d1d4dc;
 }
@@ -495,24 +495,25 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .alerts-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 15px;
 }
 .alerts-table th {
   text-align: left;
-  padding: 6px 8px;
-  color: #787b86;
-  font-weight: 600;
-  font-size: 11px;
+  padding: 10px 14px;
+  color: #9aa0ab;
+  font-weight: 700;
+  font-size: 14px;
   border-bottom: 1px solid #363a45;
   position: sticky;
   top: 0;
   background: #1e222d;
 }
 .alerts-table td {
-  padding: 7px 8px;
+  padding: 12px 14px;
   border-bottom: 1px solid #2a2f3d;
   color: #d1d4dc;
   vertical-align: middle;
+  font-size: 15px;
 }
 .alert-row.status-active td { background: rgba(38, 166, 154, 0.05); }
 .alert-row.status-triggered td { opacity: 0.8; }
@@ -663,14 +664,14 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .alert-list-item.status-cancelled { border-left-color: #ef5350; opacity: 0.5; }
 .alert-item-info { display: flex; flex-direction: column; gap: 4px; }
 .alert-item-condition { font-size: 14px; font-weight: 600; color: #d1d4dc; }
-.alert-status { font-size: 11px; font-weight: 600; }
+.alert-status { font-size: 14px; font-weight: 600; }
 .status-active { color: #26a69a; }
 .status-triggered { color: #ffca28; }
 .status-cancelled { color: #ef5350; }
 .mini-btn {
   background: rgba(239, 83, 80, 0.2); color: #ef5350;
-  border: 1px solid rgba(239, 83, 80, 0.3); padding: 4px 10px;
-  border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  border: 1px solid rgba(239, 83, 80, 0.3); padding: 7px 16px;
+  border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
 }
 .mini-btn:hover { background: rgba(239, 83, 80, 0.4); color: #fff; }
 

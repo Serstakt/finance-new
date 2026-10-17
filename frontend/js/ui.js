@@ -997,23 +997,39 @@ window.renderAlertsList = function(symbol) {
     catch (e) { return ''; }
   };
 
-  // Таблица: Тикер | Цена | Статус | Время и дата | (кнопка «Отменить»)
+  // Таблица: Тикер | Цена | Статус | Время и дата | (кнопка «Отменить»).
+  // Разметку строим через createElement/appendChild, а текст ячеек — через
+  // textContent: так она одинаково работает и в реальном DOM браузера, и в
+  // тестовом мини-DOM (без парсинга innerHTML). Обработчик кнопки вешается
+  // через addEventListener вместо inline onclick.
   const table = document.createElement('table');
   table.className = 'alerts-table';
   const thead = document.createElement('thead');
-  thead.innerHTML = `<tr><th>Тикер</th><th>Цена</th><th>Статус</th><th>Время и дата</th><th></th></tr>`;
+  const headRow = document.createElement('tr');
+  ['Тикер', 'Цена', 'Статус', 'Время и дата', ''].forEach((title) => {
+    const th = document.createElement('th');
+    th.textContent = title;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
   table.appendChild(tbody);
   listWrap.appendChild(table);
 
+  const makeCell = (cls, text) => {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text == null ? '' : String(text);
+    return td;
+  };
+
   allAlerts.forEach((alertData) => {
     const status = alertData.status;
-    let statusText = '', statusClass = '', actionCell = '';
+    let statusText = '', statusClass = '';
 
     if (status === 'active') {
       statusText = '🟢 В работе'; statusClass = 'status-active';
-      actionCell = `<button class="mini-btn" onclick="cancelAlert(${alertData.id}, '${escapeHtml(alertData.symbol)}')">Отменить</button>`;
     } else if (status === 'triggered') {
       statusText = '✅ Исполнено'; statusClass = 'status-triggered';
     } else {
@@ -1026,12 +1042,21 @@ window.renderAlertsList = function(symbol) {
       ? ` · по цене ${alertData.triggered_price}` : '';
     const tr = document.createElement('tr');
     tr.className = `alert-row ${statusClass}`;
-    tr.innerHTML = `
-      <td class="alert-cell-symbol">${escapeHtml(alertData.symbol)}</td>
-      <td class="alert-cell-price">${conditionText} ${alertData.target}</td>
-      <td class="alert-status ${statusClass}">${statusText}${triggeredInfo}</td>
-      <td class="alert-cell-time">${created}</td>
-      <td class="alert-cell-action">${actionCell}</td>`;
+    tr.appendChild(makeCell('alert-cell-symbol', alertData.symbol));
+    tr.appendChild(makeCell('alert-cell-price', `${conditionText} ${alertData.target}`));
+    tr.appendChild(makeCell(`alert-status ${statusClass}`, statusText + triggeredInfo));
+    tr.appendChild(makeCell('alert-cell-time', created));
+
+    const actionTd = document.createElement('td');
+    actionTd.className = 'alert-cell-action';
+    if (status === 'active') {
+      const btn = document.createElement('button');
+      btn.className = 'mini-btn';
+      btn.textContent = 'Отменить';
+      btn.addEventListener('click', () => cancelAlert(alertData.id, alertData.symbol));
+      actionTd.appendChild(btn);
+    }
+    tr.appendChild(actionTd);
     tbody.appendChild(tr);
   });
 };
