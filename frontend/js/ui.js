@@ -291,9 +291,9 @@ window.initNotesEditor = function() {
   });
 };
 
-// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки».
+// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки» / «Алерты».
 window.switchBottomTab = function(tab) {
-  tab = (tab === 'notes' || tab === 'news-fav') ? tab : 'news';
+  tab = (tab === 'notes' || tab === 'news-fav' || tab === 'alerts') ? tab : 'news';
   // Вкладка «Избранные» существует только пока есть избранное — если с неё
   // сняли последний флажок, возвращаемся на «Новости».
   const favBtn = document.getElementById('news-fav-tab-btn');
@@ -303,11 +303,13 @@ window.switchBottomTab = function(tab) {
   const newsList = document.getElementById('news-list');
   const notesList = document.getElementById('notes-list');
   const newsFavList = document.getElementById('news-fav-list');
+  const alertsList = document.getElementById('alerts-list');
   if (!newsPanel || !newsList || !notesList) return;
 
   newsPanel.style.display = 'flex';
   newsList.style.display = tab === 'news' ? 'block' : 'none';
   if (newsFavList) newsFavList.style.display = tab === 'news-fav' ? 'block' : 'none';
+  if (alertsList) alertsList.style.display = tab === 'alerts' ? 'block' : 'none';
   // для #notes-list базовый display задаёт CSS (flex — полотно растягивается)
   notesList.style.display = tab === 'notes' ? '' : 'none';
 
@@ -316,11 +318,19 @@ window.switchBottomTab = function(tab) {
   });
   const nwBtn = document.getElementById('news-refresh-btn');
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
+  // Кнопка добавления алерта (перенесена с колокольчика в строках списка
+  // тикеров) видна только на вкладке «Алерты».
+  const addAlertBtn = document.getElementById('add-alert-btn');
+  if (addAlertBtn) addAlertBtn.style.display = tab === 'alerts' ? '' : 'none';
 
   if (tab === 'notes') {
     initNotesEditor(); // вешаем автосохранение при первом открытии вкладки
     const cur = getCurrentList();
     renderNotesTab(cur ? cur.activeSymbol : '');
+  }
+  if (tab === 'alerts') {
+    const cur = getCurrentList();
+    renderAlertsTab(cur ? cur.activeSymbol : '');
   }
   if (tab === 'news-fav' && typeof renderNewsFavoritesTab === 'function') {
     // Избранное индивидуально по тикерам: при открытии вкладки перерисовываем
@@ -696,12 +706,19 @@ window.render = async function() {
     }
   }
 
-  // Панель «Новости / Заметки»: синхронизируем полотно заметок с выбранным
-  // тикером (заметки могли измениться/переехать вместе со списком).
-  if (sessionStorage.getItem('bottomTab') === 'notes' && currentList.activeSymbol) {
+  // Панель «Новости / Заметки / Алерты»: синхронизируем полотно заметок и
+  // список алертов с выбранным тикером (они могли измениться/переехать
+  // вместе со списком).
+  const bottomTab = sessionStorage.getItem('bottomTab');
+  if (bottomTab === 'notes' && currentList.activeSymbol) {
     const np = document.getElementById('news-panel');
     if (np) np.style.display = 'flex';
     renderNotesTab(currentList.activeSymbol);
+  }
+  if (bottomTab === 'alerts') {
+    const np = document.getElementById('news-panel');
+    if (np) np.style.display = 'flex';
+    renderAlertsTab(currentList.activeSymbol || '');
   }
 };
 
@@ -851,6 +868,8 @@ window.saveAlert = async function() {
     log(`Алерт сохранён в БД для ${currentAlertSymbol}: ${condition} ${target}`, 'success');
     closeAlertModal();
     await loadAlertsFromDb(); // мгновенно обновляем колокольчик по данным из БД
+    // Если открыта вкладка «Алерты» — перерисовываем её под этот тикер
+    if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsList(currentAlertSymbol);
   } catch (e) {
     log(`Ошибка сохранения алерта: ${e.message}`, 'error');
     window.alert('Не удалось сохранить алерт: ' + e.message);
@@ -872,35 +891,71 @@ window.deleteAlert = async function() {
       return;
     }
   }
+  const deletedSymbol = currentAlertSymbol;
   closeAlertModal();
   await loadAlertsFromDb();
+  if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsList(deletedSymbol);
 };
 
 window.openAlertsListModal = async function() {
+  // Кнопка «🔔 Алерты» перенесена во вкладку «Алерты» нижней панели —
+  // совместимость на случай старого вызова: просто переключаемся на вкладку.
   const symbol = getCurrentList().activeSymbol;
   if (!symbol || symbol.startsWith('SECTION:')) {
     window.alert('Сначала выберите тикер в списке!');
     return;
   }
-  document.getElementById('alerts-list-symbol').textContent = symbol;
-  document.getElementById('alerts-list-modal').classList.add('active');
-  // Список алертов берём из БД (свежие статусы, включая сработавшие сервером)
-  await loadAlertsFromDb();
-  renderAlertsList(symbol);
+  switchBottomTab('alerts');
 };
 
-window.closeAlertsListModal = function() {
-  document.getElementById('alerts-list-modal').classList.remove('active');
+// Кнопка «+ Добавить» на вкладке «Алерты» (перенесена с колокольчика из
+// строк списка тикеров): открывает модалку ценового уведомления для
+// выбранного тикера.
+window.openAddAlertForActiveSymbol = async function() {
+  const symbol = getCurrentList().activeSymbol;
+  if (!symbol || symbol.startsWith('SECTION:')) {
+    window.alert('Сначала выберите тикер в списке!');
+    return;
+  }
+  await openAlertModal(symbol);
+};
+
+// Рендер содержимого вкладки «Алерты»: список алертов ВЫБРАННОГО тикера
+// (бывшая модалка «📋 Алерты для …»). При пустом кеше алертов тянем свежие
+// данные из БД, затем рисуем список и заголовок с символом.
+window.renderAlertsTab = async function(symbol) {
+  const container = document.getElementById('alerts-list');
+  if (!container) return;
+  if (!symbol || symbol.startsWith('SECTION:')) {
+    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
+    return;
+  }
+  // Свежие статусы из БД (активные/сработавшие/отменённые)
+  if (!(window.dbAlerts || []).length) await loadAlertsFromDb();
+  // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
+  const cur = getCurrentList();
+  if ((cur && cur.activeSymbol) !== symbol) return;
+  renderAlertsList(symbol);
 };
 
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
   const symbolAlerts = alerts.filter(a => a.symbol === symbol);
-  const container = document.getElementById('alerts-list-content');
+  const container = document.getElementById('alerts-list');
+  if (!container) return;
   container.innerHTML = '';
 
+  const header = document.createElement('div');
+  header.className = 'alerts-tab-header';
+  header.innerHTML = `📋 Алерты для <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
+  container.appendChild(header);
+
+  const listWrap = document.createElement('div');
+  listWrap.className = 'alerts-tab-content';
+  container.appendChild(listWrap);
+
   if (symbolAlerts.length === 0) {
-    container.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов для этого тикера</div>';
+    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов для этого тикера</div>';
     return;
   }
 
@@ -939,7 +994,7 @@ window.renderAlertsList = function(symbol) {
         ${created ? `<span style="color:#787b86; font-size:11px;">${created}</span>` : ''}
       </div>
       ${actionBtn}`;
-    container.appendChild(div);
+    listWrap.appendChild(div);
   });
 };
 
@@ -979,6 +1034,11 @@ window.syncAlertsWithDb = async function() {
     }
     if (triggered.length > 0) {
       await loadAlertsFromDb(); // обновляем колокольчики по новым статусам из БД
+      // Если пользователь смотрит вкладку «Алерты» — мгновенно покажем новые статусы
+      if (sessionStorage.getItem('bottomTab') === 'alerts' && typeof renderAlertsList === 'function') {
+        const cur = getCurrentList();
+        if (cur && cur.activeSymbol) renderAlertsList(cur.activeSymbol);
+      }
     }
   } catch (e) {
     console.error('Ошибка синхронизации алертов с БД:', e);

@@ -120,7 +120,6 @@
                 <button id="open-news-btn" onclick="openSmartLabNews()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path><path d="M18 14h-8"></path><path d="M15 18h-5"></path><path d="M10 6h8v4h-8V6Z"></path></svg> News
                 </button>
-                <button id="open-alerts-list-btn" onclick="openAlertsListModal()" style="background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;">🔔 Алерты</button>
                 <div class="admin-dropdown">
                     <button class="admin-trigger">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> Настройки
@@ -162,10 +161,15 @@
                         <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
                         <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')">🚩 Избранные</button>
                         <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
+                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')">🔔 Алерты</button>
                     </div>
                     <div class="tab-actions">
                         <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
                         <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика">🖊 Разметка</button>
+                        <!-- Кнопка добавления алерта: перенесена с колокольчика
+                             из строк списка тикеров — открывает модалку
+                             ценового уведомления для выбранного тикера -->
+                        <button id="add-alert-btn" style="display: none;" onclick="openAddAlertForActiveSymbol()" title="Добавить ценовое уведомление для выбранного тикера">+ Добавить</button>
                     </div>
                 </div>
 
@@ -233,6 +237,16 @@
                     </div>
                     <div id="notes-editor" contenteditable="true" spellcheck="true"
                          data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
+                </div>
+                <!-- Вкладка «Алерты»: ценовые уведомления ВЫБРАННОГО тикера
+                     (перенесены из модалки, которая открывалась кнопкой
+                     «🔔 Алерты» внизу watchlist). Список относится к текущему
+                     активному символу; кнопка «+ Добавить» справа вверху
+                     открывает модалку создания алерта. -->
+                <div id="alerts-list" class="tab-pane" style="display: none;">
+                    <div style="padding: 20px; text-align: center; color: #787b86;">
+                        Выберите тикер для просмотра алертов
+                    </div>
                 </div>
             </div>
         </div>
@@ -379,15 +393,8 @@
     </div>
 </div>
 
-<div class="modal-overlay" id="alerts-list-modal">
-    <div class="modal-box alerts-list-container">
-        <div class="modal-title">📋 Алерты для <span id="alerts-list-symbol" style="color: #2962ff;"></span></div>
-        <div id="alerts-list-content" style="margin-bottom: 16px;"></div>
-        <div class="modal-buttons">
-            <button class="modal-btn modal-btn-cancel" onclick="closeAlertsListModal()">Закрыть</button>
-        </div>
-    </div>
-</div>
+<!-- Модалка «📋 Алерты для …» удалена: список алертов выбранного тикера
+     перенесён во вкладку «Алерты» нижней панели (см. #alerts-list) -->
 
 <!-- defer: скрипты выполсятся строго в этом порядке после разбора HTML,
      но не будут блокировать отрисовку страницы -->
