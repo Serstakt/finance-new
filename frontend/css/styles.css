@@ -268,6 +268,18 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .favorite-picker span svg { width: 14px; height: 14px; display: block; fill: currentColor; stroke: currentColor; }
 .favorite-picker span:hover { background: #2a2e39; transform: scale(1.2); }
 
+/* Флажок избранного новости: та же иконка bookmark, что у избранных тикеров
+   (.favorite-flag выше), прижата к левому верхнему углу карточки новости */
+.news-fav-flag {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  border: none; background: transparent; cursor: pointer; padding: 4px;
+  line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.news-fav-flag .favorite-flag svg { width: 16px; height: 16px; }
+.news-fav-flag:hover .favorite-flag { transform: scale(1.15); }
+/* Закрашенный bookmark для избранной новости (красный) — как в списке тикеров */
+.news-fav-flag .favorite-flag.favorite-filled svg { fill: currentColor; stroke: currentColor; }
+
 /* === КРУГЛЫЙ ЛОГОТИП ТИКЕРА (меньший размер) === */
 .ticker-logo-container {
   border-radius: 50%;

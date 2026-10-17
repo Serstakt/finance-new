@@ -1,6 +1,8 @@
 // Интеграционный тест избранного во вкладке «Новости» раздела WATCHLIST.
 // Прогоняет РЕАЛЬНЫЙ frontend/js/api.js через node:vm с мини-DOM и проверяет:
-//   • карточки новостей рендерятся с флажком-кнопкой слева (⚑ / 🚩);
+//   • карточки новостей рендерятся с флажком-bookmark в левом верхнем углу
+//     (та же SVG-иконка lucide «bookmark», что у избранных тикеров; красный,
+//     если избрана / серый контур — если нет);
 //   • клик по флажку ставит/снимает избранное оптимистично и отправляет
 //     POST /api/news/favorite;
 //   • GET /api/news/favorites восстанавливает красные флажки без перезагрузки;
@@ -24,6 +26,7 @@ class Node {
     this.dataset = {};
     this.style = {};
     this.attrs = {};
+    this.className = '';
     this.textContent = '';
     // синхронный «ризер» innerHTML — как в настоящем DOM: после
     // set innerHTML дочерние узлы доступны сразу, до microtask'ов
@@ -47,11 +50,15 @@ class Node {
       for (const k of n._kids) {
         if (sel === '.news-item' && k.className === 'news-item') out.push(k);
         if (sel === 'button' && k._isFlagBtn) out.push(k);
+        // span.favorite-flag внутри кнопки-флажка (bookmark-иконка)
+        if (sel === '.favorite-flag' && k._isFlagSpan) out.push(k);
+        // svg внутри флага — нужен updateNewsItemFlag для заливки избранного
+        if (sel === 'svg' && k._isFlagSvg) out.push(k);
         walk(k);
       }
     };
     walk(this);
-    // селектор вида .news-item[data-link="..."] — поддержка CSS.escape не нужна
+    // селектор вида .news-item[data-link="...\"] — поддержка CSS.escape не нужна
     const mAttr = /^\.news-item\[data-link="(.*)"\]$/.exec(sel);
     if (mAttr) return out.filter(n => n.dataset.link === mAttr[1]);
     return out;
@@ -82,7 +89,17 @@ function renderNewsItems(node, html) {
     item.dataset.link = m[1];
     const btn = new Node('button');
     btn._isFlagBtn = true;
-    btn.textContent = m[2].trim(); // ⚑ или 🚩 — как отрисовал api.js
+    // Внутри кнопки — span.favorite-flag с SVG-иконкой bookmark
+    // (тот же флажок, что у избранных тикеров в списке)
+    const span = new Node('span');
+    span._isFlagSpan = true;
+    const svg = new Node('svg');
+    svg._isFlagSvg = true;
+    span.appendChild(svg);
+    btn.appendChild(span);
+    // querySelector для updateNewsItemFlag: флаг-спан и svg внутри кнопки
+    btn.querySelector = (sel) => (sel === '.favorite-flag' ? span : (sel === 'svg' ? svg : null));
+    btn.innerHTML = m[2]; // храним сырой HTML флага для проверок цвета/иконок
     item.appendChild(btn);
     const a = new Node('a');
     item.appendChild(a);
@@ -150,8 +167,19 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   assert(items.length === 2, 'Отрисованы обе новости как .news-item');
   assert(byId['news-list'].innerHTML.includes('data-link="https://t.me/newssmartlab/111"'),
     'Ссылка канонизирована (https, без хвостового слэша) в data-link');
-  assert(byId['news-list'].innerHTML.includes('⚑') && !byId['news-list'].innerHTML.includes('🚩'),
-    'Изначально флажки серые (⚑), избранного нет');
+  // Флажок — тот же bookmark (lucide SVG), что у избранных тикеров; эмодзи-флажки убраны
+  assert(byId['news-list'].innerHTML.includes('<svg') && byId['news-list'].innerHTML.includes('m19 21-7-4-7 4V5'),
+    'Флажок новости — SVG-иконка bookmark (та же, что в списке тикеров)');
+  assert(!byId['news-list'].innerHTML.includes('⚑') && !byId['news-list'].innerHTML.includes('🚩'),
+    'Старые текстовые флажки (⚑ / 🚩) больше не используются');
+  assert(byId['news-list'].innerHTML.includes('class="news-fav-flag"')
+         && byId['news-list'].innerHTML.includes('class="favorite-flag"'),
+    'Кнопка-флажок использует классы .news-fav-flag / .favorite-flag (стиль избранного тикера)');
+  assert(/<div class="news-item"[^>]*position: relative/.test(byId['news-list'].innerHTML)
+         && /\.news-fav-flag\s*\{[^}]*position:\s*absolute/.test(fs.readFileSync(path.join(__dirname, '..', 'css', 'styles.css'), 'utf8')),
+    'Флажок перемещён в левый верхний угол карточки новости (absolute top/left)');
+  assert(byId['news-list'].innerHTML.includes('color: #787b86') && !byId['news-list'].innerHTML.includes('#ef5350"><span'),
+    'Изначально флажки серые (bookmark с серым контуром), избранного нет');
 
   // --- Клик по флажку первой новости: ставим избранное
   const firstLink = 'https://t.me/newssmartlab/111';
@@ -164,7 +192,12 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   const postCall = fetchLog.find(f => f.method === 'POST' && f.url.includes('/api/news/favorite'));
   const body = JSON.parse(postCall.body);
   assert(body.favorite === true && body.ticker === 'SBER', 'POST содержит favorite=true и тикер SBER');
-  assert(byId['news-list'].innerHTML.includes('🚩'), 'После перерисовки новость помечена красным флагом');
+  // Красный bookmark: закрашенная SVG-иконка цвета #ef5350 (как у избранных тикеров)
+  const flagSpan = btn.querySelector('.favorite-flag');
+  assert(btn.innerHTML.includes('color: #ef5350') || (flagSpan && flagSpan.style.color === '#ef5350'),
+    'После клика флажок стал красным bookmark (#ef5350)');
+  assert(!!btn.attrs.class && btn.attrs.class.includes('favorite-filled'),
+    'На флажке появился класс favorite-filled (закрашенный bookmark)');
 
   // --- Снятие флажка
   await sandbox.window.toggleNewsFavorite(encodeURIComponent(firstLink), btn);
@@ -185,7 +218,8 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   assert(!!sandbox.window.newsFavorites[secondLink], 'loadNewsFavorites подтянул избранное из БД');
   const html2 = byId['news-list'].innerHTML;
   const secondBlock = html2.split('<div class="news-item"').find(b => b.startsWith(' data-link="https://t.me/newssmartlab/222"'));
-  assert(secondBlock && secondBlock.includes('🚩'), 'Избранная новость отрисована с красным флажком слева');
+  assert(secondBlock && secondBlock.includes('favorite-filled') && secondBlock.includes('#ef5350'),
+    'Избранная новость отрисована с красным закрашенным bookmark-флажком в левом верхнем углу');
   assert(secondBlock.includes("border: 1px solid #ef5350") || secondBlock.includes('#ef5350'),
     'Карточка избранной новости подсвечена красной рамкой');
 

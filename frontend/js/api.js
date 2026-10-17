@@ -306,6 +306,33 @@ const trimNewsTeaser = (text) => {
 };
 window.trimNewsTeaser = trimNewsTeaser;
 
+// === ФЛАЖОК ИЗБРАННОГО НОВОСТИ ===
+// Тот же флажок, что используется в списке тикеров для избранного: SVG-иконка
+// lucide «bookmark» (BOOKMARK_SVG — определена ниже, см. также .favorite-flag
+// в js/ui.js и css/styles.css). Красная (#ef5350) заливка, если новость
+// избрана; серый контур — если нет. Кнопка прижата к левому верхнему углу
+// карточки новости (position:absolute + стили .news-fav-flag в styles.css).
+const NEWS_FAV_RED = '#ef5350';   // цвет избранного флага (как у красных тикеров)
+const NEWS_FAV_GRAY = '#787b86';  // серый контур, когда не избрана
+
+// Фолбэк: если ui.js (единственный источник BOOKMARK_SVG) ещё не загружен,
+// используем ту же иконку lucide «bookmark», что и в списке тикеров.
+if (typeof window.BOOKMARK_SVG !== 'string') {
+  window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>';
+}
+
+// Возвращает HTML кнопки-флажка для новости (isFav — избрана ли она).
+function newsFlagBtnHtml(link, isFav) {
+  const color = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
+  const svg = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
+  return `<button type="button" class="news-fav-flag${isFav ? ' favorite-filled' : ''}"`
+    + ` title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"`
+    + ` onclick="event.preventDefault(); event.stopPropagation(); toggleNewsFavorite('${encodeURIComponent(link)}', this)"`
+    + ` style="color: ${color};">`
+    + `<span class="favorite-flag${isFav ? ' favorite-filled' : ''}" style="color: ${color}">${svg}</span></button>`;
+}
+window.newsFlagBtnHtml = newsFlagBtnHtml;
+
 // Отображаем новости. Padding вынесен во внутренний div, чтобы скролл не обрезал низ
 newsList.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
@@ -320,12 +347,9 @@ newsList.innerHTML = `
     // На UI показываем только «тизер»: текст до слов «Читать далее» и т.п.
     const teaser = trimNewsTeaser(n.title);
     return `
-    <div class="news-item" data-link="${link}" style="display: flex; align-items: stretch;">
-        <button type="button" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"
-                onclick="toggleNewsFavorite('${encodeURIComponent(link)}', this)"
-                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px 0 0; color: ${isFav ? '#ef5350' : '#5a5f6b'}; transition: transform .15s;"
-                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${isFav ? '🚩' : '⚑'}</button>
-        <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
+    <div class="news-item" data-link="${link}" style="position: relative; display: flex; align-items: stretch;">
+        ${newsFlagBtnHtml(link, isFav)}
+        <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${teaser}</div>
                 <div style="font-size: 12px; color: #787b86;">${n.publisher}</div>
@@ -361,9 +385,10 @@ window.refreshNews = function() {
 // выгружается лента новостей; флажок 🚩 ставится в контексте этого тикера
 // (в POST сохраняется ticker), и вкладка «🚩 Избранные» показывает только
 // избранные новости выбранного тикера. Для другого тикета — своё избранное.
-// Флажок-кнопка слева от новости: ⚑ (серый контурный) = не избранная,
-// 🚩 (красный) = избранная. Отметка ставится/снимается на сервере
-// (POST /api/news/favorite), поэтому переживает смену браузера/устройства.
+// Флажок-кнопка в левом верхнем углу новости: bookmark (как у избранных
+// тикеров) — серый контур = не избранная, красный закрашенный = избранная.
+// Отметка ставится/снимается на сервере (POST /api/news/favorite), поэтому
+// переживает смену браузера/устройства.
 // Вкладка «🚩 Избранные» (между «Новостями» и «Заметками») отображается
 // только когда в ней есть добавленные новости — т.е. у выбранного тикета
 // есть хотя бы одна избранная новость (см. currentTickerHasFavorites и
@@ -487,8 +512,19 @@ window.updateNewsItemFlag = function(itemOrLink) {
   const btn = item.querySelector('button');
   const card = item.querySelector('a');
   if (btn) {
-    btn.textContent = isFav ? '🚩' : '⚑';
-    btn.style.color = isFav ? '#ef5350' : '#5a5f6b';
+    // Тот же bookmark-флажок, что у избранных тикеров: перекрашиваем иконку
+    // внутри существующей кнопки (красная заливка / серый контур).
+    const hex = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
+    const flagEl = btn.querySelector('.favorite-flag') || btn;
+    flagEl.style.color = hex;
+    flagEl.className = 'favorite-flag' + (isFav ? ' favorite-filled' : '');
+    flagEl.innerHTML = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
+    const svgEl = flagEl.querySelector ? flagEl.querySelector('svg') : null;
+    if (svgEl && isFav) {
+      svgEl.setAttribute('fill', hex);
+      svgEl.setAttribute('stroke', hex);
+    }
+    btn.className = 'news-fav-flag' + (isFav ? ' favorite-filled' : '');
     btn.title = isFav ? 'Убрать из избранного' : 'В избранное';
     btn.setAttribute('aria-pressed', String(isFav));
   }
@@ -519,9 +555,12 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
   const titleEl = item ? item.querySelector('a div div') : null;
 
-  // Мгновенный отклик: меняем вид флажка до ответа сервера
+  // Мгновенный отклик: меняем вид флажка до ответа сервера.
   if (wasFav) delete window.newsFavorites[link];
   else window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
+  // Обновляем и переданный узел кнопки напрямую (в реальном DOM карточка
+  // будет найдена ниже по document; в мини-DOM — это единственный способ).
+  if (btnEl) updateNewsFlagButton(btnEl, link, !wasFav);
   updateNewsItemFlag(link);
   // Синхронизируем «глобальный» снимок избранного (словарь метаинформации).
   // Видимость вкладки «🚩 Избранные» зависит от избранного выбранного тикета:
@@ -680,12 +719,9 @@ function drawNewsFavorites(pane, items, ticker) {
     // слов «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.
     const teaser = trimNewsTeaser(n.title || link);
     return `
-    <div class="news-item" data-link="${escapeHtml(link)}" style="display: flex; align-items: stretch;">
-        <button type="button" title="Убрать из избранного" aria-pressed="true"
-                onclick="toggleNewsFavorite('${encodeURIComponent(link)}', this)"
-                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px 0 0; color: #ef5350; transition: transform .15s;"
-                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🚩</button>
-        <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
+    <div class="news-item" data-link="${escapeHtml(link)}" style="position: relative; display: flex; align-items: stretch;">
+        ${newsFlagBtnHtml(link, true)}
+        <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${tickerBadge}${escapeHtml(teaser)}</div>
                 <div style="font-size: 12px; color: #787b86;">Smart-Lab News</div>
