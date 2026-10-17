@@ -936,66 +936,86 @@ window.openAddAlertForActiveSymbol = async function() {
   await openAlertModal(symbol);
 };
 
-// Рендер содержимого вкладки «Алерты»: список алертов ВЫБРАННОГО тикера
-// (бывшая модалка «📋 Алерты для …»). При пустом кеше алертов тянем свежие
-// данные из БД, затем рисуем список и заголовок с символом.
+// Рендер содержимого вкладки «Алерты»: ТАБЛИЦА алертов всех тикеров
+// (строки: Тикер, Цена, Статус, Время и дата; у активных справа кнопка
+// «Отменить»). Выбранный тикер используется только для подсветки порядка
+// строк. При пустом кеше алертов тянем свежие данные из БД.
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
-  if (!symbol || symbol.startsWith('SECTION:')) {
-    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
-    return;
-  }
+  // Таблица показывает алерты всех тикеров, поэтому пустой выбор тикера
+  // не мешает рендеру.
+  const sym = (!symbol || symbol.startsWith('SECTION:')) ? '' : symbol;
   // Свежие статусы из БД. Кеш пуст — тянем всё; есть алерты этого тикера —
   // рисуем сразу (иначе пересозданный/новый алерт мог «исчезать» до ответа
-  // сервера и вкладка показывала «Нет алертов для этого тикера»).
+  // сервера и вкладка показывала «Нет алертов»).
   const alerts = window.dbAlerts || [];
-  const hasCacheForSymbol = alerts.some(a => a.symbol === symbol);
-  if (!alerts.length || !hasCacheForSymbol) await loadAlertsFromDb();
+  const hasCacheForSymbol = alerts.some(a => a.symbol === sym);
+  if (!alerts.length || (sym && !hasCacheForSymbol)) await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
-  const activeSym = (cur && cur.activeSymbol) || '';
-  if (activeSym !== symbol && !(activeSym.startsWith('SECTION:') && hasCacheForSymbol)) return;
+  const activeSymRaw = (cur && cur.activeSymbol) || '';
+  const activeSym = activeSymRaw.startsWith('SECTION:') ? '' : activeSymRaw;
+  if (activeSym !== sym) return;
   renderAlertsList(symbol);
 };
 
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  const symbolAlerts = alerts.filter(a => a.symbol === symbol);
+  // Все алерты всех тикеров — таблица строками (столбцы: Тикер, Цена,
+  // Статус, Время и дата, справа кнопка «Отменить» у активных).
+  const allAlerts = alerts.slice();
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
 
   const header = document.createElement('div');
   header.className = 'alerts-tab-header';
-  header.innerHTML = `📋 Алерты для <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
+  header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
   container.appendChild(header);
 
   const listWrap = document.createElement('div');
   listWrap.className = 'alerts-tab-content';
   container.appendChild(listWrap);
 
-  if (symbolAlerts.length === 0) {
-    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов для этого тикера</div>';
+  if (allAlerts.length === 0) {
+    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов</div>';
     return;
   }
 
   const statusOrder = { 'active': 1, 'triggered': 2, 'cancelled': 3 };
-  symbolAlerts.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+  allAlerts.sort((a, b) => {
+    const byStatus = (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9);
+    if (byStatus !== 0) return byStatus;
+    // внутри статуса — выбранный тикер выше, затем новые сверху
+    const bySymbol = (a.symbol === symbol ? 0 : 1) - (b.symbol === symbol ? 0 : 1);
+    if (bySymbol !== 0) return bySymbol;
+    return (b.id || 0) - (a.id || 0);
+  });
 
   const fmtTime = (iso) => {
     if (!iso) return '';
-    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   };
 
-  symbolAlerts.forEach((alertData) => {
+  // Таблица: Тикер | Цена | Статус | Время и дата | (кнопка «Отменить»)
+  const table = document.createElement('table');
+  table.className = 'alerts-table';
+  const thead = document.createElement('thead');
+  thead.innerHTML = `<tr><th>Тикер</th><th>Цена</th><th>Статус</th><th>Время и дата</th><th></th></tr>`;
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  listWrap.appendChild(table);
+
+  allAlerts.forEach((alertData) => {
     const status = alertData.status;
-    let statusText = '', statusClass = '', actionBtn = '';
+    let statusText = '', statusClass = '', actionCell = '';
 
     if (status === 'active') {
       statusText = '🟢 В работе'; statusClass = 'status-active';
-      actionBtn = `<button class="mini-btn" onclick="cancelAlert(${alertData.id}, '${symbol}')">Отменить</button>`;
+      actionCell = `<button class="mini-btn" onclick="cancelAlert(${alertData.id}, '${escapeHtml(alertData.symbol)}')">Отменить</button>`;
     } else if (status === 'triggered') {
       statusText = '✅ Исполнено'; statusClass = 'status-triggered';
     } else {
@@ -1006,16 +1026,18 @@ window.renderAlertsList = function(symbol) {
     const created = fmtTime(alertData.created_at);
     const triggeredInfo = status === 'triggered' && alertData.triggered_price != null
       ? ` · по цене ${alertData.triggered_price}` : '';
-    const div = document.createElement('div');
-    div.className = `alert-list-item ${statusClass}`;
-    div.innerHTML = `
-      <div class="alert-item-info">
-        <span class="alert-item-condition">${conditionText} ${alertData.target}</span>
-        <span class="alert-status ${statusClass}">${statusText}${triggeredInfo}</span>
-        ${created ? `<span style="color:#787b86; font-size:11px;">${created}</span>` : ''}
-      </div>
-      ${actionBtn}`;
-    listWrap.appendChild(div);
+    const symLabel = alertData.symbol === symbol
+      ? escapeHtml(alertData.symbol)
+      : `${escapeHtml(alertData.symbol)} <span class="alerts-tab-hint">(другой)</span>`;
+    const tr = document.createElement('tr');
+    tr.className = `alert-row ${statusClass}`;
+    tr.innerHTML = `
+      <td class="alert-cell-symbol">${symLabel}</td>
+      <td class="alert-cell-price">${conditionText} ${alertData.target}</td>
+      <td class="alert-status ${statusClass}">${statusText}${triggeredInfo}</td>
+      <td class="alert-cell-time">${created}</td>
+      <td class="alert-cell-action">${actionCell}</td>`;
+    tbody.appendChild(tr);
   });
 };
 

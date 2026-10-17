@@ -490,6 +490,39 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 #alerts-list .alerts-tab-content { padding-bottom: 12px; }
 
+/* Вкладка «Алерты»: таблица строк (Тикер, Цена, Статус, Время и дата,
+   справа кнопка «Отменить» у активных алертов) */
+.alerts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.alerts-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: #787b86;
+  font-weight: 600;
+  font-size: 11px;
+  border-bottom: 1px solid #363a45;
+  position: sticky;
+  top: 0;
+  background: #1e222d;
+}
+.alerts-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #2a2f3d;
+  color: #d1d4dc;
+  vertical-align: middle;
+}
+.alert-row.status-active td { background: rgba(38, 166, 154, 0.05); }
+.alert-row.status-triggered td { opacity: 0.8; }
+.alert-row.status-cancelled td { opacity: 0.55; }
+.alert-cell-symbol { font-weight: 600; white-space: nowrap; }
+.alert-cell-price { font-weight: 600; white-space: nowrap; }
+.alert-cell-time { color: #787b86; white-space: nowrap; }
+.alert-cell-action { text-align: right; white-space: nowrap; }
+.alerts-tab-hint { color: #787b86; font-size: 10px; font-weight: 400; }
+
 #news-list {
   flex: 1;
   overflow-y: auto;
