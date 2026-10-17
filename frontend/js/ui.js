@@ -240,7 +240,6 @@ window.notesDoSave = async function() {
   st.value = html;
   if (html) appState.notes[st.key] = html;
   else delete appState.notes[st.key];
-  saveState();
   const setStatus = (text, cls) => {
     const el = document.getElementById('notes-editor-status');
     if (!el) return;
@@ -396,7 +395,7 @@ window.buildRowElement = function(sym) {
         e.target.classList.contains('alert-bell')) return;
     const cur = getCurrentList();
     cur.activeSymbol = sym;
-    saveState();
+    setActiveSymbolInDb(appState.activeListId, sym); // выбор тикера — в БД (watchlists.active_symbol)
     createChart(sym);
     document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
     div.classList.add('active');
@@ -411,8 +410,9 @@ window.buildRowElement = function(sym) {
       cur.tickers = cur.tickers.filter(s => s !== sym);
       if (cur.activeSymbol === sym) {
         cur.activeSymbol = cur.tickers.find(s => !s.startsWith('SECTION:')) || '';
+        setActiveSymbolInDb(appState.activeListId, cur.activeSymbol); // выбор живёт в БД — обновляем сразу
       }
-      saveState(); render();
+      render();
       await removeTickerFromDb(appState.activeListId, sym); // удаляем из БД
     }
   });
@@ -534,7 +534,6 @@ window.buildSectionElement = function(sym) {
     const nowCollapsed = !cur.collapsedSections.includes(sym);
     if (nowCollapsed) cur.collapsedSections.push(sym);
     else cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
-    saveState();
     // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
     // а не только в localStorage — переживает смену браузера
     setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
@@ -549,7 +548,7 @@ window.buildSectionElement = function(sym) {
       const cur = getCurrentList();
       cur.tickers = cur.tickers.filter(s => s !== sym);
       if (cur.collapsedSections) cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
-      saveState(); render();
+      render();
       await saveOrderToDb(appState.activeListId, cur.tickers); // удаляем из БД
     }
   });
@@ -565,8 +564,8 @@ window.buildSectionElement = function(sym) {
       if (cur.collapsedSections && cur.collapsedSections.includes(sym)) {
         cur.collapsedSections[cur.collapsedSections.indexOf(sym)] = newSectionSymbol;
       }
-      saveState(); render();
-      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД
+      render();
+      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД (saveState не нужен: состояние живёт в БД)
       log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
     }
   });
@@ -629,7 +628,10 @@ window.render = async function() {
 
   if (sortedList.length > 0 && !currentList.activeSymbol) {
     const firstTicker = sortedList.find(s => !s.startsWith('SECTION:'));
-    if (firstTicker) { currentList.activeSymbol = firstTicker; saveState(); }
+    if (firstTicker) {
+      currentList.activeSymbol = firstTicker;
+      setActiveSymbolInDb(appState.activeListId, firstTicker); // выбор — в БД, иначе потеряется после перезагрузки
+    }
   }
 
   // === KEYED DIFF: узлы создаются один раз, дальше только точечные правки ===

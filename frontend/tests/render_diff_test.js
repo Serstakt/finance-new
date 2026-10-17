@@ -218,6 +218,7 @@ vm.runInContext(`
   window.AUTO_REFRESH_INTERVAL = 120000;
   window.getCurrentList = () => appState.lists[appState.activeListId];
   window.saveState = () => {};
+  window.setActiveSymbolInDb = () => {};
   window.populateListSelector = () => {};
   window.setCollapsedInDb = () => {};
   window.removeTickerFromDb = () => {};

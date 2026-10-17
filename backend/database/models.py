@@ -55,11 +55,18 @@ class WatchlistItem(Base):
 
 
 class Watchlist(Base):
-    """Список watchlist: id -> название (хранится в БД, а не в localStorage)."""
+    """Список watchlist: id -> название + активный тикер (всё в БД, не в localStorage).
+
+    active_symbol — выбранная строка списка (последний открытый тикер/график).
+    Раньше она жила только в appState в localStorage ('multi_watchlists_state');
+    теперь это колонка БД, поэтому состояние переживает смену браузера и не
+    может разойтись с составом списка.
+    """
     __tablename__ = "watchlists"
 
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False, default="Основной")
+    active_symbol = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -1,4 +1,29 @@
 // === ИНИЦИАЛИЗАЦИЯ И СОБЫТИЯ ===
+
+// Одноразовый перенос устаревшего дубликата состояния из localStorage
+// ('multi_watchlists_state' / 'my_watchlist') в БД. Ключи удаляются ТОЛЬКО
+// после успешной записи на сервер — при недоступном бэкенде данные не теряются
+// и миграция повторится при следующем старте. После удаления второй источник
+// истины физически исчезает: рассинхроны «дубль в браузере vs данные в БД»
+// становятся невозможны по построению.
+window.runLegacyMigration = async function() {
+  const hasLegacy = (() => {
+    try {
+      return !!(localStorage.getItem(window.STORAGE_KEY) || localStorage.getItem('my_watchlist'));
+    } catch (e) { return false; }
+  })();
+  if (!hasLegacy) return;
+  const legacy = readLegacyState();
+  if (!legacy) { window.removeLegacyStorageKeys(); return; } // битый JSON — мигрировать нечего
+  const ok = await migrateLegacyStateToDb(legacy);
+  if (ok) {
+    window.removeLegacyStorageKeys();
+    log('Состояние из localStorage перенесено в БД — ключ multi_watchlists_state удалён', 'info');
+  } else {
+    log('Не удалось полностью перенести состояние из localStorage в БД — данные сохранены локально, миграция повторится при следующем запуске', 'error');
+  }
+};
+
 document.addEventListener('DOMContentLoaded', async () => {
   loadState();
   setupColumnHeaders();
@@ -8,6 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Алерты: сначала переносим старые клиентские алерты из localStorage
   // в таблицу price_alerts (однократно), затем загружаем актуальный снимок
   // из БД — по нему рисуются колокольчики и список алертов.
+  await runLegacyMigration(); // watchlist-дубликат localStorage -> БД (однократно)
   await migrateAlertsToDb();
   await loadAlertsFromDb();
 
@@ -90,7 +116,6 @@ window.addNewList = async function() {
   }
 
   appState.lists[id] = { name: trimmed, tickers: [], activeSymbol: '', collapsedSections: [] };
-  saveState();
   populateListSelector();
   switchList(id);
   log(`Создан список: ${trimmed} (сохранен в БД)`, 'success');
@@ -105,7 +130,6 @@ window.renameList = async function() {
   const newName = prompt('Введите новое название списка:', currentList.name);
   if (!newName || newName.trim() === '' || newName.trim() === currentList.name) return;
   currentList.name = newName.trim();
-  saveState();
   populateListSelector();
   // Сохраняем новое название в БД (watchlist.name) — при следующей загрузке
   // раздела данные будут тянуться из БД
@@ -126,7 +150,7 @@ window.deleteCurrentList = async function() {
   if (!confirm(`Удалить список "${currentName}"?`)) return;
   delete appState.lists[deletedId];
   appState.activeListId = listIds.find(id => id !== deletedId);
-  saveState();
+  try { sessionStorage.setItem(window.UI_STATE_KEY, appState.activeListId); } catch (e) {}
   populateListSelector();
   render();
   // Удаляем список и его тикеры из БД
@@ -177,7 +201,6 @@ window.setFavorite = function(symbol, color) {
     delete appState.favorites[symbol];
   }
   activePickerSymbol = null;
-  saveState();
   // Сохраняем флажок в БД (watchlist_items.flag_color): избранное живёт на
   // сервере и восстанавливается в другом браузере через loadFlagsFromDb().
   // fav_-списки — производные от флага, их флажок не храним.
@@ -199,7 +222,8 @@ window.addTicker = async function() {
   if (currentList.tickers.includes(sym)) {
     log(`Тикер ${sym} уже в списке.`, 'info');
     currentList.activeSymbol = sym;
-    saveState(); createChart(sym); render();
+    setActiveSymbolInDb(currentListId, sym); // выбор тикера — в БД
+    createChart(sym); render();
     input.value = ''; return;
   }
 
@@ -230,7 +254,8 @@ window.addTicker = async function() {
     await addTickerToDb(currentListId, sym); // сохраняем в БД
   }
   currentList.activeSymbol = sym;
-  saveState(); createChart(sym); render();
+  setActiveSymbolInDb(currentListId, sym); // выбор тикера — в БД
+  createChart(sym); render();
   log(`Добавлен: ${sym}`, 'success');
 };
 
@@ -240,7 +265,7 @@ window.addSection = async function() {
   const listId = appState.activeListId;
   const currentList = getCurrentList();
   currentList.tickers.push(`SECTION:${name.trim()}`);
-  saveState(); render();
+  render();
   // Гарантируем, что очередь записи имени списка в БД завершена ДО /order,
   // иначе гонка create-vs-order могла создать строку-заглушку «Новый список».
   await waitForListNameSaved(listId);
@@ -291,18 +316,53 @@ window.importAllData = function() {
     reader.onload = async (ev) => {
       try {
         const imported = JSON.parse(ev.target.result);
-        if (imported.appState) {
-          appState = imported.appState;
-        } else {
-          appState = imported;
+        // Источник истины — БД, поэтому импорт НЕ подменяет appState целиком
+        // (так раньше создавался второй дубликат состояния). Вместо этого
+        // каждый список из бэкапа загружается в БД через /order (состав +
+        // флажки + свёрнутость + заметки), названия — через create/rename,
+        // выбранный тикер — через /api/watchlist/active. После успешной
+        // записи UI перечитывает всё из БД.
+        const src = imported.appState || imported;
+        const lists = src.lists || {};
+        let okCount = 0, failCount = 0;
+        for (const [id, list] of Object.entries(lists)) {
+          if (!list || id.startsWith('fav_')) continue; // fav_-списки — производные от флажков
+          const name = (list.name || '').trim() || id;
+          const symbols = list.tickers || [];
+          try {
+            await window.renameListInDb(id, name);
+            const items = symbols.map(sym => ({
+              symbol: sym,
+              flag_color: (!sym.startsWith('SECTION:') && src.favorites && src.favorites[sym]) || null,
+              collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym)),
+              note: (!sym.startsWith('SECTION:') && src.notes && src.notes[noteKey(id, sym)]) || null
+            }));
+            const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ list_id: id, symbols: symbols, list_name: name, items })
+            }, 15000);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (list.activeSymbol) await setActiveSymbolInDb(id, list.activeSymbol, true);
+            okCount++;
+          } catch (err) {
+            failCount++;
+            log(`Не удалось импортировать список "${name}": ${err.message}`, 'error');
+          }
         }
-        if (!appState.favorites) appState.favorites = {};
-        for (const key in appState.lists) {
-          if (!appState.lists[key].collapsedSections) appState.lists[key].collapsedSections = [];
+        if (!okCount && failCount) {
+          window.alert('Импорт не выполнен: ни один список не удалось сохранить в БД.');
+          return;
         }
-        saveState();
         currentSort = { field: null, direction: 'asc' };
         document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
+
+        // Перечитываем состояние из БД — единственный источник истины.
+        await loadListNamesFromDb();
+        await loadFlagsFromDb();
+        await loadNotesFromDb();
+        if (!appState.lists[appState.activeListId]) appState.activeListId = 'default';
+        await syncListWithDb(appState.activeListId);
         populateListSelector(); render();
 
         // Алерты из бэкапа переносим в БД через тот же механизм миграции
@@ -316,13 +376,13 @@ window.importAllData = function() {
             }, 15000);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            log(`Импорт завершён, алертов перенесено в БД: ${data.imported} (пропущено ${data.skipped})`, 'success');
+            log(`Импорт завершён: списков в БД — ${okCount}${failCount ? ` (ошибок ${failCount})` : ''}, алертов перенесено: ${data.imported} (пропущено ${data.skipped})`, 'success');
             await loadAlertsFromDb();
           } catch (err) {
             log(`Алерты не удалось перенести в БД: ${err.message}`, 'error');
           }
         } else {
-          log('Импорт успешен', 'success');
+          log(`Импорт завершён: списков обновлено — ${okCount}${failCount ? `, ошибок ${failCount}` : ''}`, 'success');
         }
       } catch (err) {
         log('Ошибка импорта: ' + err.message, 'error');
@@ -430,8 +490,8 @@ if (typeof Sortable !== 'undefined') {
         if (btn) newList.push(btn.getAttribute('data-symbol'));
       });
       getCurrentList().tickers = newList;
-      saveState();
       // сохраняем новый порядок в БД (fav-списки внутри функции пропускаются)
+      // saveState() убран: localStorage больше не пишется, единственный источник истины — БД
       if (typeof saveOrderToDb === 'function') saveOrderToDb(appState.activeListId, newList);
       currentSort = { field: null, direction: 'asc' };
       document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });

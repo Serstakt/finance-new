@@ -98,6 +98,16 @@ class WatchlistRename(BaseModel):
     name: str
 
 
+class WatchlistActive(BaseModel):
+    """Сохранение выбранного тикера списка (watchlists.active_symbol).
+
+    Раньше activeSymbol жил в appState -> localStorage ('multi_watchlists_state');
+    теперь источник истины — БД, чтобы не было двух синхронизируемых копий.
+    """
+    list_id: str = "default"
+    symbol: Optional[str] = None
+
+
 class WatchlistRepair(BaseModel):
     """Массовая починка названий: {list_id: настоящее_название}.
 
