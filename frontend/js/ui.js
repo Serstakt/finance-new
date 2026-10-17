@@ -738,6 +738,22 @@ window.loadAlertsFromDb = async function() {
   return window.dbAlerts;
 };
 
+// Ключ кэша dbAlerts: нормализованный тикер ('SBER' и 'MOEX:SBER' — один и
+// тот же инструмент, как на бэкенде). Используется для фильтрации списка.
+const alertSymbolKey = (sym) => String(sym || '').toUpperCase().replace(/^MOEX:/, '');
+
+// Активные записи могли измениться на сервере (фоновый цикл: срабатывания),
+// а статусы во вкладке «Алерты» должны быть свежими при каждом открытии.
+// Поэтому список всегда тянем из GET /api/alerts; если данные уже в пути —
+// ждём тот же запрос, а не дублируем его.
+let alertsLoadPromise = null;
+window.ensureFreshAlerts = async function() {
+  if (!alertsLoadPromise) {
+    alertsLoadPromise = loadAlertsFromDb().finally(() => { alertsLoadPromise = null; });
+  }
+  return alertsLoadPromise;
+};
+
 // Однократная миграция старых клиентских алертов (localStorage 'price_alerts')
 // в таблицу на бэкенде. Вызывается при старте приложения; после успешного
 // переноса ключ localStorage очищается.
@@ -767,9 +783,10 @@ window.migrateAlertsToDb = async function() {
 // серверные статусы: active / triggered / cancelled.
 window.getBellStatusForSymbol = function(symbol) {
   const alerts = window.dbAlerts || [];
+  const key = alertSymbolKey(symbol); // 'SBER' == 'MOEX:SBER' — как в БД/UI
   let hasTriggered = false;
   for (const a of alerts) {
-    if (a.symbol !== symbol) continue;
+    if (alertSymbolKey(a.symbol) !== key) continue;
     if (a.status === 'active') return 'active';
     if (a.status === 'triggered') hasTriggered = true;
   }
@@ -807,7 +824,7 @@ window.openAlertModal = async function(symbol) {
   // Подтягиваем свежие данные из БД, затем показываем активный алерт (если есть)
   await loadAlertsFromDb();
   if (currentAlertSymbol !== symbol) return; // модалку успели закрыть/переключить
-  const existingAlert = (window.dbAlerts || []).find(a => a.symbol === symbol && a.status === 'active');
+  const existingAlert = (window.dbAlerts || []).find(a => alertSymbolKey(a.symbol) === alertSymbolKey(symbol) && a.status === 'active');
 
   const deleteBtn = document.getElementById('alert-delete-btn');
   if (existingAlert) {
@@ -871,7 +888,7 @@ window.saveAlert = async function() {
 // Удаляет активный алерт символа из БД (DELETE /api/alerts/{id}).
 window.deleteAlert = async function() {
   if (!currentAlertSymbol) return;
-  const active = (window.dbAlerts || []).find(a => a.symbol === currentAlertSymbol && a.status === 'active');
+  const active = (window.dbAlerts || []).find(a => alertSymbolKey(a.symbol) === alertSymbolKey(currentAlertSymbol) && a.status === 'active');
   if (active) {
     try {
       const res = await fetchWithTimeout(`${API_BASE}/api/alerts/${active.id}`, { method: 'DELETE' }, 15000);
@@ -913,8 +930,8 @@ window.openAddAlertForActiveSymbol = async function() {
 };
 
 // Рендер содержимого вкладки «Алерты»: список алертов ВЫБРАННОГО тикера
-// (бывшая модалка «📋 Алерты для …»). При пустом кеше алертов тянем свежие
-// данные из БД, затем рисуем список и заголовок с символом.
+// (бывшая модалка «📋 Алерты для …»). Всегда подтягиваем свежие данные
+// из БД, затем рисуем список и заголовок с символом.
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
@@ -922,8 +939,11 @@ window.renderAlertsTab = async function(symbol) {
     container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
     return;
   }
-  // Свежие статусы из БД (активные/сработавшие/отменённые)
-  if (!(window.dbAlerts || []).length) await loadAlertsFromDb();
+  // ВСЕГДА тянем свежие статусы из БД (активные/сработавшие/отменённые).
+  // Раньше список перечитывался только когда кеш был пуст, и вкладка
+  // могла показать устаревшее состояние («Нет алертов…», хотя GET /api/alerts
+  // возвращает данные). Если запрос уже в пути — ждём его, а не дублируем.
+  await ensureFreshAlerts();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
   if ((cur && cur.activeSymbol) !== symbol) return;
@@ -932,7 +952,11 @@ window.renderAlertsTab = async function(symbol) {
 
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  const symbolAlerts = alerts.filter(a => a.symbol === symbol);
+  // Сравнение по нормализованному ключу: в БД символ хранится как 'SBER',
+  // а в UI активный тикер может быть 'MOEX:SBER' / в другом регистре —
+  // строгое равенство теряло уже созданные алерты («Нет алертов…»).
+  const key = alertSymbolKey(symbol);
+  const symbolAlerts = alerts.filter(a => alertSymbolKey(a.symbol) === key);
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
