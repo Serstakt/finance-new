@@ -913,8 +913,10 @@ window.openAddAlertForActiveSymbol = async function() {
 };
 
 // Рендер содержимого вкладки «Алерты»: список алертов ВЫБРАННОГО тикера
-// (бывшая модалка «📋 Алерты для …»). При пустом кеше алертов тянем свежие
-// данные из БД, затем рисуем список и заголовок с символом.
+// (бывшая модалка «📋 Алерты для …»). Всегда тянем свежие данные из БД
+// (а не только при пустом кеше — иначе созданные/изменённые алерты не
+// появятся на вкладке без перезагрузки страницы), затем рисуем список
+// и заголовок с символом.
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
@@ -922,8 +924,11 @@ window.renderAlertsTab = async function(symbol) {
     container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
     return;
   }
+  // Пока грузим свежие данные из БД — показываем заглушку, чтобы пользователь
+  // не видел устаревший снимок кеша (например, без только что добавленного алерта)
+  container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Загрузка…</div>';
   // Свежие статусы из БД (активные/сработавшие/отменённые)
-  if (!(window.dbAlerts || []).length) await loadAlertsFromDb();
+  await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
   if ((cur && cur.activeSymbol) !== symbol) return;
