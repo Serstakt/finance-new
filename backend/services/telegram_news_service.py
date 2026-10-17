@@ -11,6 +11,11 @@ from ..database.models import NewsCache
 
 CACHE_DURATION_SECONDS = 300  # 5 минут
 
+# Ключ строки кэша с общим новостным потоком @newssmartlab (без фильтра по
+# тикеру): его наполняет фоновый вотчер (backend/main.py), и из него вкладка
+# «🚩 Избранные новости» берёт заголовки/время постов напрямую из БД.
+STREAM_CACHE_KEY = ""
+
 RU_NAMES = {
     'ROSN': ['Роснефть', 'Роснефти'],
     'SBER': ['Сбербанк', 'Сбер', 'Сбербанка'],
@@ -86,19 +91,24 @@ async def save_news_to_cache(ticker: str, news_data: list):
 async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_news: int = 50, force_refresh: bool = False) -> list:
     channel_username = "newssmartlab"
 
-    # 1. Проверяем кэш (если не запрошено принудительное обновление)
+    # 1. Проверяем кэш (если не запрошено принудительное обновление).
+    # Для пустого тикера строка кэша — общий новостной поток (его наполняет
+    # фоновый вотчер на сервере), для обычного — лента этого тикера.
+    cache_key = ticker if ticker else STREAM_CACHE_KEY
     if not force_refresh:
-        cached_news = await get_cached_news(ticker)
+        cached_news = await get_cached_news(cache_key)
         if cached_news is not None:
             return cached_news
 
-    search_terms = [
-        f"${ticker.upper()}",
-        f"#{ticker.upper()}",
-        ticker.upper(),
-    ]
-    if ticker.upper() in RU_NAMES:
-        search_terms.extend(RU_NAMES[ticker.upper()])
+    search_terms = []
+    if ticker:
+        search_terms = [
+            f"${ticker.upper()}",
+            f"#{ticker.upper()}",
+            ticker.upper(),
+        ]
+        if ticker.upper() in RU_NAMES:
+            search_terms.extend(RU_NAMES[ticker.upper()])
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"

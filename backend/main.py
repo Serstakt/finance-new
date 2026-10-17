@@ -29,15 +29,21 @@ async def lifespan(application: FastAPI):
     # браузера закрыта (раньше проверка шла только в JS при открытом терминале).
     stop_event = asyncio.Event()
     checker_task = asyncio.create_task(alert_service.run_background_checker(stop_event=stop_event))
+    # Поток новостей @newssmartlab обновляется в фоне: вкладка «🚩 Избранные
+    # новости» читает заголовки/время постов напрямую из news_cache и не
+    # должна зависеть от того, открывал ли кто-то вкладку «Новости».
+    news_task = asyncio.create_task(_news_stream_watcher(stop_event))
     try:
         yield
     finally:
         stop_event.set()
         checker_task.cancel()
-        try:
-            await checker_task
-        except BaseException:  # noqa: BLE001 — graceful shutdown (CancelledError и пр.)
-            pass
+        news_task.cancel()
+        for task in (checker_task, news_task):
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 — graceful shutdown (CancelledError и пр.)
+                pass
 
 
 app = FastAPI(title="Financial Terminal API", lifespan=lifespan)
@@ -450,13 +456,45 @@ async def get_news_favorites(ticker: str | None = Query(default=None)):
     return {"favorites": news_favorites_service.get_all(ticker)}
 
 
+# === ФОНОВОЕ ОБНОВЛЕНИЕ НОВОСТНОГО КЭША (для избранных новостей) ===
+# Вкладка «🚩 Избранные новости» раздела Watchlist тянет заголовки/время
+# постов напрямую из таблицы news_cache (см. news_favorites_service), НЕ
+# дожидаясь, пока пользователь откроет вкладку «Новости». Чтобы базе было
+# что отдать даже когда ленту никто не запрашивал, вотчер в фоне парсит
+# последние посты @newssmartlab в общий кэш (ticker=''). Обычные запросы
+# вкладки «Новости» при этом идут как раньше — через свой ticker-кэш.
+NEWS_STREAM_TICKER = ""            # строка кэша с общим потоком новостей
+NEWS_STREAM_REFRESH_SECONDS = 300  # 5 минут — тот же TTL, что у ticker-кэша
+
+
+async def _news_stream_watcher(stop_event: asyncio.Event) -> None:
+    """Периодически обновляет общий новостной поток в БД, пока работает сервер."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(),
+                                   timeout=NEWS_STREAM_REFRESH_SECONDS)
+            return  # сервер останавливается — выходим без лишнего парсинга
+        except asyncio.TimeoutError:
+            pass
+        try:
+            posts = await telegram_news_service.fetch_smartlab_telegram_news(
+                NEWS_STREAM_TICKER
+            )
+            if posts:
+                print(f"🛰 Фоновое обновление потока новостей: {len(posts)} постов в БД")
+        except Exception as e:  # сеть/парсер могли упасть — следующий цикл повторит
+            print(f"⚠ Фоновое обновление потока новостей не удалось: {e}")
+
+
 @app.get("/api/news/favorites/list")
 async def get_news_favorites_list(ticker: str | None = Query(default=None)):
     """Избранные новости списком для вкладки «Избранные Новости».
 
     ticker — выбранный тикер: возвращаются только его избранные новости.
-    Записи уже отсортированы (свежие сверху) и по возможности обогащены
-    заголовком/временем поста из news_cache.
+    Данные берутся НАПРЯМУЮ из БД (news_favorites + news_cache): вкладке не
+    нужно дожидаться загрузки ленты во вкладке «Новости» — заголовки и время
+    постов подтягиваются из кэша, а сам кэш дополнительно наполняется фоном
+    (_news_stream_watcher). Записи отсортированы (свежие сверху).
     """
     return {"news": news_favorites_service.list_favorites(ticker)}
 
