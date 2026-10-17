@@ -212,6 +212,13 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
   const savedTab = sessionStorage.getItem('bottomTab') || 'news';
   if (typeof switchBottomTab === 'function') switchBottomTab(savedTab);
 
+  // Вкладка «💰 Дивиденды/События»: при смене символа перерисовываем её под
+  // новый тикер, даже если она сейчас скрыта — чтобы переключение было
+  // мгновенным. Данные тянутся лениво (с кэшем) только для MOEX-тикеров.
+  if (typeof renderEventsTab === 'function' && isMoexEventsTicker(symbol)) {
+    renderEventsTab(symbol);
+  }
+
   // Раздел «🚩 Избранные новости» показываем только когда в нём реально есть
   // добавленные новости: сразу прячем вкладку для тикета, чей снимок флажков
   // ещё не загружен (актуальное состояние выставит loadNewsFavorites ниже —

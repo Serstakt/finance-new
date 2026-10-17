@@ -291,9 +291,10 @@ window.initNotesEditor = function() {
   });
 };
 
-// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки» / «Алерты».
+// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки» /
+// «Дивиденды/События» / «Алерты».
 window.switchBottomTab = function(tab) {
-  tab = (tab === 'notes' || tab === 'news-fav' || tab === 'alerts') ? tab : 'news';
+  tab = (tab === 'notes' || tab === 'news-fav' || tab === 'alerts' || tab === 'events') ? tab : 'news';
   // Вкладка «Избранные» существует только пока есть избранное — если с неё
   // сняли последний флажок, возвращаемся на «Новости».
   const favBtn = document.getElementById('news-fav-tab-btn');
@@ -304,12 +305,14 @@ window.switchBottomTab = function(tab) {
   const notesList = document.getElementById('notes-list');
   const newsFavList = document.getElementById('news-fav-list');
   const alertsList = document.getElementById('alerts-list');
+  const eventsList = document.getElementById('events-list');
   if (!newsPanel || !newsList || !notesList) return;
 
   newsPanel.style.display = 'flex';
   newsList.style.display = tab === 'news' ? 'block' : 'none';
   if (newsFavList) newsFavList.style.display = tab === 'news-fav' ? 'block' : 'none';
   if (alertsList) alertsList.style.display = tab === 'alerts' ? 'block' : 'none';
+  if (eventsList) eventsList.style.display = tab === 'events' ? 'block' : 'none';
   // для #notes-list базовый display задаёт CSS (flex — полотно растягивается)
   notesList.style.display = tab === 'notes' ? '' : 'none';
 
@@ -318,6 +321,10 @@ window.switchBottomTab = function(tab) {
   });
   const nwBtn = document.getElementById('news-refresh-btn');
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
+  // На вкладке «Дивиденды/События» кнопка «🔄 Обновить» перезагружает
+  // календарь ISS (refreshTickerEvents), а не ленту новостей.
+  const evBtn = document.getElementById('events-refresh-btn');
+  if (evBtn) evBtn.style.display = tab === 'events' ? '' : 'none';
   // Кнопка добавления алерта (перенесена с колокольчика в строках списка
   // тикеров) видна только на вкладке «Алерты».
   const addAlertBtn = document.getElementById('add-alert-btn');
@@ -331,6 +338,10 @@ window.switchBottomTab = function(tab) {
   if (tab === 'alerts') {
     const cur = getCurrentList();
     renderAlertsTab(cur ? cur.activeSymbol : '');
+  }
+  if (tab === 'events') {
+    const cur = getCurrentList();
+    renderEventsTab(cur ? cur.activeSymbol : '');
   }
   if (tab === 'news-fav' && typeof renderNewsFavoritesTab === 'function') {
     // Избранное индивидуально по тикерам: при открытии вкладки перерисовываем
@@ -703,9 +714,9 @@ window.render = async function() {
     }
   }
 
-  // Панель «Новости / Заметки / Алерты»: синхронизируем полотно заметок и
-  // список алертов с выбранным тикером (они могли измениться/переехать
-  // вместе со списком).
+  // Панель «Новости / Заметки / Дивиденды-События / Алерты»: синхронизируем
+  // полотно заметок, календарь событий и список алертов с выбранным тикером
+  // (они могли измениться/переехать вместе со списком).
   const bottomTab = sessionStorage.getItem('bottomTab');
   if (bottomTab === 'notes' && currentList.activeSymbol) {
     const np = document.getElementById('news-panel');
@@ -716,6 +727,11 @@ window.render = async function() {
     const np = document.getElementById('news-panel');
     if (np) np.style.display = 'flex';
     renderAlertsTab(currentList.activeSymbol || '');
+  }
+  if (bottomTab === 'events') {
+    const np = document.getElementById('news-panel');
+    if (np) np.style.display = 'flex';
+    renderEventsTab(currentList.activeSymbol || '');
   }
 };
 
@@ -1074,6 +1090,242 @@ window.cancelAlert = async function(alertId, symbol) {
   }
   await loadAlertsFromDb();
   renderAlertsList(symbol);
+};
+
+// ============================================================================
+// ВКЛАДКА «ДИВИДЕНДЫ/СОБЫТИЯ» (календарь корпоративных событий MOEX)
+// ----------------------------------------------------------------------------
+// Источник данных — ISS Мосбиржи: .../securities/{TICKER}/eventencalendar.json
+// (бэкенд: GET /api/moex/events/{symbol}, сервис moex_service.fetch_moex_events).
+// Вкладка актуальна только для MOEX-тикеров: у крипто и зарубежных бумаг
+// корпоративных событий в этом источнике нет — показываем заглушку.
+// Кэш ответов — window.eventsCache (символ -> {data, ts}); при смене тикера
+// активная вкладка перерисовывается (см. render()/loadTickerNews).
+// ============================================================================
+
+window.eventsCache = {};
+const EVENTS_CACHE_TTL_MS = 10 * 60 * 1000; // совпадает с TTL на бэкенде
+
+// Есть ли у символа дивиденды/события в принципе (только MOEX, не индексы/валюты)
+window.isMoexEventsTicker = function(symbol) {
+  const sym = String(symbol || '');
+  if (!sym.startsWith('MOEX:')) return false;
+  const t = sym.slice(5).toUpperCase();
+  if (!t) return false;
+  const noEvents = ['IMOEX', 'RTSI', 'RGBI', 'IRUS', 'MOEX', 'INDEX_RTS'];
+  if (noEvents.includes(t)) return false;
+  if (/^(USD000|EUR_RUB|CNYRUB|BYNRUB)/.test(t)) return false;
+  return true;
+};
+
+// Загрузка календаря событий символа (с кэшем). force=true — принудительно
+// перезапросить (кнопка «🔄 Обновить»).
+window.loadTickerEvents = async function(symbol, force = false) {
+  if (!symbol || !isMoexEventsTicker(symbol)) return null;
+  const cached = window.eventsCache[symbol];
+  if (!force && cached && (Date.now() - cached.ts) < EVENTS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/api/moex/events/${encodeURIComponent(symbol)}`, {}, 20000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    window.eventsCache[symbol] = { data, ts: Date.now() };
+    return data;
+  } catch (e) {
+    console.error(`Ошибка загрузки событий для ${symbol}:`, e);
+    return (cached && cached.data) || null; // отдаём устаревший кэш, если есть
+  }
+};
+
+// Принудительное обновление календаря выбранного MOEX-тикера (кнопка в шапке
+// вкладки). Вызывается из switchBottomTab вместо «🔄 Обновить», когда активна
+// вкладка «Дивиденды/События».
+window.refreshTickerEvents = async function() {
+  const cur = getCurrentList();
+  const symbol = cur ? cur.activeSymbol : '';
+  if (!symbol || symbol.startsWith('SECTION:')) return;
+  await loadTickerEvents(symbol, true);
+  await renderEventsTab(symbol);
+};
+
+// Форматирование даты ГГГГ-ММ-ДД → ДД.ММ.ГГГГ (без временных зон: дата из ISS).
+const fmtEventDate = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return iso ? String(iso) : '';
+  return `${m[3]}.${m[2]}.${m[1]}`;
+};
+
+// Склонение: "1 день назад" / "2 дня назад" / "5 дней назад"
+const pluralDays = (n) => {
+  const abs = Math.abs(n) % 100;
+  const d = abs % 10;
+  if (abs > 10 && abs < 20) return 'дней';
+  if (d === 1) return 'день';
+  if (d >= 2 && d <= 4) return 'дня';
+  return 'дней';
+};
+
+// Разница в днях между сегодняшним днём и датой ГГГГ-ММ-ДД (положительная —
+// в будущем). Пустая строка → null.
+const daysFromToday = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const target = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - today) / 86400000);
+};
+
+// Метка «через N дней / N дней назад / сегодня» по дате события
+const eventRelLabel = (iso) => {
+  const dd = daysFromToday(iso);
+  if (dd === null) return '';
+  if (dd === 0) return 'сегодня';
+  if (dd > 0) return `через ${dd} ${pluralDays(dd)}`;
+  return `${-dd} ${pluralDays(-dd)} назад`;
+};
+
+// Основная отрисовка вкладки «Дивиденды/События» для выбранного тикера.
+// DOM строится через createElement/textContent (как и таблица алертов) —
+// безопасно для пользовательских строк ISS и совместимо с тестовым мини-DOM.
+window.renderEventsTab = async function(symbol) {
+  const container = document.getElementById('events-list');
+  if (!container) return;
+  const sym = (!symbol || String(symbol).startsWith('SECTION:')) ? '' : symbol;
+
+  const clear = () => { while (container.firstChild) container.removeChild(container.firstChild); };
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  };
+
+  clear();
+
+  // Без выбранного тикера или для не-MOEX символа — подсказка-заглушка
+  if (!sym) {
+    container.appendChild(el('div', 'events-tab-empty',
+      'Выберите тикер для просмотра дивидендов и корпоративных событий'));
+    return;
+  }
+  const header = el('div', 'events-tab-header');
+  header.appendChild(el('span', '', '💰 Дивиденды и события '));
+  header.appendChild(el('span', 'events-tab-symbol', sym));
+  header.appendChild(el('span', 'events-tab-hint', ' · ISS Мосбиржи (eventencalendar)'));
+  container.appendChild(header);
+
+  if (!isMoexEventsTicker(sym)) {
+    container.appendChild(el('div', 'events-tab-empty',
+      'Доступно только для тикеров MOEX (акции, облигации). ' +
+      'У крипто-пар и зарубежных тикеров здесь событий нет.'));
+    return;
+  }
+
+  container.appendChild(el('div', 'events-tab-loading', 'Загрузка событий…'));
+
+  const data = await loadTickerEvents(sym);
+
+  // Пока грузили, выбранный тикер мог смениться — не рисуем устаревшее
+  const cur = getCurrentList();
+  const activeSymRaw = (cur && cur.activeSymbol) || '';
+  const activeSym = activeSymRaw.startsWith('SECTION:') ? '' : activeSymRaw;
+  if (activeSym !== sym) return;
+
+  clear();
+  container.appendChild(header);
+
+  if (!data) {
+    container.appendChild(el('div', 'events-tab-error',
+      'Не удалось загрузить данные Мосбиржи. Попробуйте обновить вкладку.'));
+    return;
+  }
+  if (data.error) {
+    container.appendChild(el('div', 'events-tab-error',
+      `Мосбиржа не вернула событий (${data.error}). Возможно, бумага не найдена или нет истории.`));
+    return;
+  }
+
+  const events = Array.isArray(data.events) ? data.events : [];
+  if (!events.length) {
+    container.appendChild(el('div', 'events-tab-empty',
+      'По этому инструменту корпоративных событий нет'));
+    return;
+  }
+
+  // Ближайшие (дата >= сегодня) — по возрастанию; прошедшие — по убыванию
+  const evDate = (e) => e.registDate || e.eventDate || '';
+  const upcoming = events.filter(e => (daysFromToday(evDate(e)) ?? 1) >= 0)
+                         .sort((a, b) => evDate(a).localeCompare(evDate(b)));
+  const past = events.filter(e => (daysFromToday(evDate(e)) ?? 1) < 0)
+                     .sort((a, b) => evDate(b).localeCompare(evDate(a)));
+
+  const buildTable = (list, isUpcoming) => {
+    const wrap = el('div', 'events-tab-content');
+    const title = el('div', 'events-section-title',
+      isUpcoming ? `📅 Ближайшие события (${list.length})`
+                 : `🕒 Прошедшие (${Math.min(list.length, 25)})`);
+    wrap.appendChild(title);
+
+    const view = isUpcoming ? list : list.slice(0, 25);
+    const table = el('table', 'events-table');
+    const thead = el('thead');
+    const hrow = el('tr');
+    ['Дата', 'До/После', 'Событие', 'Значение'].forEach(t => {
+      const th = el('th'); th.textContent = t; hrow.appendChild(th);
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+    const tbody = el('tbody');
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    for (const e of view) {
+      const dateIso = evDate(e);
+      const dd = daysFromToday(dateIso);
+      const tr = el('tr', 'event-row' + (isUpcoming ? ' event-upcoming' : ' event-past')
+                          + (e.type === 'Dividends' ? ' event-dividend' : ''));
+
+      const tdDate = el('td', 'event-cell-date', fmtEventDate(dateIso));
+      tr.appendChild(tdDate);
+
+      const tdRel = el('td', 'event-cell-rel', eventRelLabel(dateIso));
+      if (dd !== null && dd >= 0 && dd <= 14) tdRel.classList.add('event-soon');
+      tr.appendChild(tdRel);
+
+      const tdName = el('td', 'event-cell-name');
+      const label = e.typeLabel || e.type || 'Событие';
+      const nameTxt = e.name && e.name !== label ? `${label}: ${e.name}` : label;
+      tdName.textContent = (e.type === 'Dividends' ? '💵 ' : '• ') + nameTxt;
+      if (e.registDate && e.eventDate && e.registDate !== e.eventDate) {
+        tdName.appendChild(el('div', 'event-cell-sub',
+          `Дата события: ${fmtEventDate(e.eventDate)}`));
+      }
+      tr.appendChild(tdName);
+
+      const tdVal = el('td', 'event-cell-value');
+      if (e.value != null && e.value !== '') {
+        let v = String(e.value);
+        if (e.valueCurrency) v += ` ${e.valueCurrency}`;
+        tdVal.textContent = v;
+      } else {
+        tdVal.textContent = '—';
+      }
+      tr.appendChild(tdVal);
+
+      tbody.appendChild(tr);
+    }
+    return wrap;
+  };
+
+  if (upcoming.length) container.appendChild(buildTable(upcoming, true));
+  if (past.length) container.appendChild(buildTable(past, false));
+  if (!upcoming.length && past.length) {
+    container.appendChild(el('div', 'events-tab-empty',
+      'Ближайших событий нет — показана история выше'));
+  }
 };
 
 // Синхронизация статуса алертов с БД после загрузки цен. Проверка условий

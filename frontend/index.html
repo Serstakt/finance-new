@@ -161,10 +161,12 @@
                         <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')">📰 Новости</button>
                         <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')">🚩 Избранные</button>
                         <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
+                        <button class="tab-btn" data-tab="events" onclick="switchBottomTab('events')" title="Дивиденды и корпоративные события MOEX (ISS eventencalendar)">💰 Дивиденды/События</button>
                         <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')">🔔 Алерты</button>
                     </div>
                     <div class="tab-actions">
                         <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
+                        <button id="events-refresh-btn" style="display: none;" onclick="refreshTickerEvents()" title="Перезапросить календарь событий у Мосбиржи">🔄 Обновить</button>
                         <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика">🖊 Разметка</button>
                         <!-- Кнопка добавления алерта: перенесена с колокольчика
                              из строк списка тикеров — открывает модалку
@@ -246,6 +248,16 @@
                 <div id="alerts-list" class="tab-pane" style="display: none;">
                     <div style="padding: 20px; text-align: center; color: #787b86;">
                         Выберите тикер для просмотра алертов
+                    </div>
+                </div>
+                <!-- Вкладка «Дивиденды/События»: календарь корпоративных
+                     событий ВЫБРАННОГО MOEX-тикера (дивиденды, отсечки,
+                     собрания, погашения). Источник — ISS Мосбиржи
+                     (eventencalendar), endpoint GET /api/moex/events/{symbol}.
+                     Для не-MOEX тикеров (крипто, зарубежные) — заглушка. -->
+                <div id="events-list" class="tab-pane" style="display: none;">
+                    <div style="padding: 20px; text-align: center; color: #787b86;">
+                        Выберите тикер для просмотра дивидендов и событий
                     </div>
                 </div>
             </div>
