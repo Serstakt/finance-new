@@ -754,6 +754,13 @@ window.switchList = function(listId) {
     h.classList.remove('active');
     h.querySelector('.sort-icon').textContent = '↕';
   });
+  // Порядок важен: render() до syncListWithDb(). Рендер мгновенно показывает
+  // то, что уже есть в кэше appState.lists (или скелетоны при пустом кэше),
+  // а syncListWithDb сам вызовет render() когда придут свежие данные из БД.
+  // Если делать наоборот (render после запуска запроса), ранний ответ БД
+  // успевает отрисоваться ПОВЕРХ ещё не перерисованного DOM предыдущего
+  // списка — пользователь видит мигание: сначала строки старого списка
+  // (например, RUS), потом нового (CRYPTO).
   if (typeof render === 'function') render();
   // тикеры обычных списков живут в БД — подтягиваем актуальный состав
   if (typeof syncListWithDb === 'function') syncListWithDb(listId);

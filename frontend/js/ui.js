@@ -604,6 +604,39 @@ window.applySectionCollapse = function(list) {
   });
 };
 
+// Снимок DOM'а текущего списка (для отката после отменённого render):
+// порядок узлов и их привязка к символам.
+function _captureDomSnapshot(container) {
+  const order = [];
+  const parentOf = new Map();
+  for (const node of container.children) {
+    order.push(node);
+    if (node.parentElement !== container) parentOf.set(node, node.parentElement);
+  }
+  return { order, parentOf };
+}
+
+// Возвращает DOM в состояние снимка: узлы, удалённые из контейнера за время
+// отменённого render, ставятся обратно в исходном порядке. Вызывается когда
+// render решено прервать (пользователь переключил список), чтобы на экране
+// не осталось «дыр» вместо строк прежнего списка.
+function _restoreDomSnapshot(container, snap) {
+  let prev = null;
+  for (const node of snap.order) {
+    const wantParent = snap.parentOf.get(node) || container;
+    if (node.parentElement !== wantParent) {
+      if (wantParent === container) {
+        prev && prev.nextSibling
+          ? container.insertBefore(node, prev.nextSibling)
+          : container.appendChild(node);
+      } else {
+        wantParent.appendChild(node); // секционные узлы — обратно в свой div
+      }
+    }
+    if (wantParent === container) prev = node;
+  }
+}
+
 window.render = async function() {
   const currentList = getCurrentList();
   const container = document.getElementById('ticker-list');
@@ -618,6 +651,9 @@ window.render = async function() {
     container.innerHTML = '';
   }
   const cacheMap = window.__rowsCache.map;
+  // Снимок DOM до начала diff — нужен для отката, если рендер прервётся
+  // из-за переключения списка (см. проверку после await ниже).
+  const domSnapshot = _captureDomSnapshot(container);
 
   // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
   // Последовательный await для каждого тикера складывал задержки: при медленном
@@ -629,7 +665,18 @@ window.render = async function() {
 
   // Пока ждали ответа API, пользователь мог переключить список — не рисуем
   // устаревшие данные в чужой DOM (иначе цены «переехали» бы между списками).
-  if (window.__rowsCache.listId !== appState.activeListId) return;
+  // Отменять нужно ДО первого синхронного изменения DOM: сам await выше —
+  // точка, где переключение таба успевает произойти. Если бы проверка стояла
+  // после diff-цикла, этот проход уже переставил/удалил бы строки активного
+  // на тот момент списка (например, CRYPTO) под данные старого (RUS) — и DOM
+  // остался бы испорчен даже при последующем «return».
+  // Откат снимка — страховка: если DOM всё же был изменён этим прерванным
+  // проходом (будущие правки добавят await'ы внутри diff), строки вернутся
+  // на места; если изменений не было — restore это no-op.
+  if (window.__rowsCache.listId !== appState.activeListId) {
+    _restoreDomSnapshot(container, domSnapshot);
+    return;
+  }
 
   const sortedList = sortList(currentList.tickers, dataMap);
 
