@@ -131,6 +131,23 @@ _search_cache: dict[str, dict] = {}                   # symbol -> {"ts", "id"}
 _markets_cache: dict[str, dict] = {}                  # coingecko_id -> {"ts", "data"}
 _negative_cache: dict[str, float] = {}                # symbol -> ts неудачи
 
+# Блокировки на уровне процесса: без них несколько одновременных запросов
+# (watchlist автообновление, алерты, портфель) каждый раз заново тянут
+# /coins/list (~2 МБ) и один batch /coins/markets, из-за чего free-лимит
+# CoinGecko (~10-30 req/min) мгновенно исчерпывается и все символы, кроме
+# первого (к которому данные уже успели лечь в кэш), возвращают пустоту.
+_lock = asyncio.Lock()                 # общая блокировка для сетевых дозагрузок
+_list_lock = asyncio.Lock()            # одна загрузка /coins/list за раз
+_markets_locks: dict[str, asyncio.Lock] = {}   # дедупликация batch-запросов markets
+
+
+def _markets_lock(cid: str) -> asyncio.Lock:
+    lk = _markets_locks.get(cid)
+    if lk is None:
+        lk = asyncio.Lock()
+        _markets_locks[cid] = lk
+    return lk
+
 _QUOTE_SUFFIXES = ("USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "EUR", "TRY", "BTC", "ETH")
 
 
@@ -169,17 +186,29 @@ def _symbol_variants(symbol: str) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
-async def _get(session: aiohttp.ClientSession, path: str, params: dict | None = None):
+async def _get(session: aiohttp.ClientSession, path: str, params: dict | None = None,
+               retries: int = 2, retry_delay: float = 1.5):
+    """Запрос к CoinGecko с повторными попытками при 429/ошибках сети.
+
+    Free-лимит (~10-30 req/min) даёт короткие вспышки 429; без повторов один
+    неудачный batch-запрос обесценивал данные сразу для всех символов.
+    """
     url = f"{API_BASE}{path}"
-    try:
-        async with session.get(url, params=params) as resp:
-            if resp.status == 429:
-                return {"__rate_limited__": True}
-            if resp.status != 200:
-                return None
-            return await resp.json()
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        return None
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 429:
+                    last = {"__rate_limited__": True}
+                elif resp.status != 200:
+                    last = None
+                else:
+                    return await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            last = None
+        if attempt < retries:
+            await asyncio.sleep(retry_delay * (attempt + 1))
+    return last
 
 
 # ---------------------------------------------------------------------------
@@ -190,20 +219,26 @@ async def _ensure_coins_list(session: aiohttp.ClientSession) -> Optional[dict]:
     if _coins_list_cache["data"] is not None and now - _coins_list_cache["ts"] < LIST_TTL:
         return _coins_list_cache["data"]
 
-    data = await _get(session, "/coins/list")
-    if not isinstance(data, list):
-        # Не удалось загрузить — отдаём старый (возможно протухший) кэш, если он есть
-        return _coins_list_cache["data"]
+    async with _list_lock:
+        # повторная проверка: пока ждали блокировку, список мог загрузить другой запрос
+        now = time.time()
+        if _coins_list_cache["data"] is not None and now - _coins_list_cache["ts"] < LIST_TTL:
+            return _coins_list_cache["data"]
 
-    by_symbol: dict[str, list] = {}
-    for c in data:
-        # name участвует в disambiguation (см. _pick_from_candidates):
-        # у TRON id == "tron", но на бирже тикер "TRX" — имя закрывает гэп.
-        by_symbol.setdefault(c["symbol"].upper(), []).append(
-            {"id": c["id"], "name": c["name"]}
-        )
-    _coins_list_cache.update(ts=now, data=by_symbol)
-    return by_symbol
+        data = await _get(session, "/coins/list")
+        if not isinstance(data, list):
+            # Не удалось загрузить — отдаём старый (возможно протухший) кэш, если он есть
+            return _coins_list_cache["data"]
+
+        by_symbol: dict[str, list] = {}
+        for c in data:
+            # name участвует в disambiguation (см. _pick_from_candidates):
+            # у TRON id == "tron", но на бирже тикер "TRX" — имя закрывает гэп.
+            by_symbol.setdefault(c["symbol"].upper(), []).append(
+                {"id": c["id"], "name": c["name"]}
+            )
+        _coins_list_cache.update(ts=now, data=by_symbol)
+        return by_symbol
 
 
 def _is_junk_id(cid: str) -> bool:
@@ -279,61 +314,93 @@ async def resolve_coin_id(session: aiohttp.ClientSession, symbol: str) -> Option
         if coin_id:
             return coin_id
 
-    # 2. кэш /coins/list (пробуем каждый вариант символа)
-    by_symbol = await _ensure_coins_list(session)
-    if by_symbol:
+    async with _lock:
+        # 2. кэш /coins/list (пробуем каждый вариант символа)
+        by_symbol = await _ensure_coins_list(session)
+        if by_symbol:
+            for sym in variants:
+                picked = _pick_from_candidates(by_symbol.get(sym, []), sym)
+                if picked:
+                    return picked
+
+        # 3. /search
         for sym in variants:
-            picked = _pick_from_candidates(by_symbol.get(sym, []), sym)
-            if picked:
-                return picked
+            coin_id = await _resolve_via_search(session, sym)
+            if coin_id:
+                return coin_id
 
-    # 3. /search
-    for sym in variants:
-        coin_id = await _resolve_via_search(session, sym)
-        if coin_id:
-            return coin_id
+        # 4. ленивая гипотеза: id == символ, проверяем прямым запросом markets
+        guesses = list(dict.fromkeys(v.lower() for v in variants))
+        data = await _get(session, "/coins/markets", {
+            "vs_currency": "usd", "ids": ",".join(guesses),
+            "price_change_percentage": "24h,7d,30d,1y",
+        })
+        if isinstance(data, list):
+            for item in data:
+                gid = item.get("id")
+                if gid in guesses and not _is_probably_delisted(item):
+                    _markets_cache[gid] = {"ts": time.time(), "data": item}
+                    return gid
 
-    # 4. ленивая гипотеза: id == символ, проверяем прямым запросом markets
-    guesses = list(dict.fromkeys(v.lower() for v in variants))
-    data = await _get(session, "/coins/markets", {
-        "vs_currency": "usd", "ids": ",".join(guesses),
-        "price_change_percentage": "24h,7d,30d,1y",
-    })
-    if isinstance(data, list):
-        for item in data:
-            gid = item.get("id")
-            if gid in guesses and not _is_probably_delisted(item):
-                _markets_cache[gid] = {"ts": time.time(), "data": item}
-                return gid
-
-    _negative_cache[primary] = time.time()
+    # Сетевые шаги прошли, но монета не найдена нигде — фиксируем неудачу.
+    # При ошибке сети (_get вернул None/429) в негативный кэш НЕ пишем,
+    # иначе временный сбой CoinGecko «зацементирует» пустой ответ на 5 минут.
+    network_ok = (_coins_list_cache["data"] is not None
+                  or any(s in _search_cache for s in variants))
+    if network_ok:
+        _negative_cache[primary] = time.time()
     return None
 
 
 # ---------------------------------------------------------------------------
 # Получение данных рынка (batch + TTL-кэш)
 # ---------------------------------------------------------------------------
+async def _load_markets(session: aiohttp.ClientSession, ids: list[str]) -> None:
+    """Один batch-запрос /coins/markets для id; результат — в общий кэш."""
+    data = await _get(session, "/coins/markets", {
+        "vs_currency": "usd",
+        "ids": ",".join(ids),
+        "order": "market_cap_desc",
+        "price_change_percentage": "24h,7d,30d,1y",
+    })
+    if isinstance(data, list):
+        now = time.time()
+        for item in data:
+            if _is_probably_delisted(item):
+                # делистнутая/мёртвая запись — не отравляем кэш; при необходимости
+                # резолвер сможет предложить альтернативный id (например pol-token для MATIC)
+                continue
+            _markets_cache[item["id"]] = {"ts": now, "data": item}
+
+
 async def _fetch_markets(session: aiohttp.ClientSession, coin_ids: list[str]) -> dict[str, dict]:
-    """Возвращает {coin_id: market_obj}. Недостаточно свежие id докачиваются одним запросом."""
+    """Возвращает {coin_id: market_obj}. Недостаточно свежие id докачиваются одним запросом.
+
+    Синхронизация обязательна: без неё N параллельных HTTP-запросов одновременно
+    отправляли каждый свой batch и при 429 все получали пустоту (BTC «успевал»
+    первым, остальные символы — нет).
+    """
     now = time.time()
     stale = [cid for cid in coin_ids
              if cid not in _markets_cache or now - _markets_cache[cid]["ts"] >= MARKETS_TTL]
 
     if stale:
-        # один batch-запрос на все недостающие id (CoinGecko принимает сотни id за запрос)
-        data = await _get(session, "/coins/markets", {
-            "vs_currency": "usd",
-            "ids": ",".join(stale),
-            "order": "market_cap_desc",
-            "price_change_percentage": "24h,7d,30d,1y",
-        })
-        if isinstance(data, list):
-            for item in data:
-                if _is_probably_delisted(item):
-                    # делистнутая/мёртвая запись — не отравляем кэш; при необходимости
-                    # резолвер сможет предложить альтернативный id (например pol-token для MATIC)
-                    continue
-                _markets_cache[item["id"]] = {"ts": now, "data": item}
+        unique_stale = list(dict.fromkeys(stale))
+        if len(unique_stale) == 1:
+            cid = unique_stale[0]
+            async with _markets_lock(cid):
+                e = _markets_cache.get(cid)
+                if not e or time.time() - e["ts"] >= MARKETS_TTL:
+                    await _load_markets(session, [cid])
+        else:
+            async with _lock:
+                fresh_stale = [c for c in unique_stale
+                               if c not in _markets_cache
+                               or time.time() - _markets_cache[c]["ts"] >= MARKETS_TTL]
+                if fresh_stale:
+                    # один batch-запрос на все недостающие id
+                    # (CoinGecko принимает сотни id за запрос)
+                    await _load_markets(session, fresh_stale)
         # при 429/ошибке просто используем то, что уже есть в кэше (даже просроченное)
 
     result = {}
