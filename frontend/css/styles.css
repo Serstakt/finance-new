@@ -290,13 +290,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-item:hover .ticker-remove { opacity: 1; }
 .ticker-remove:hover { color: #ef5350; }
 
-/* --- Алерты и скелетоны загрузки --- */
-.alert-bell { font-size: 12px; cursor: pointer; opacity: 0.4; transition: all 0.2s; }
-.alert-bell:hover { opacity: 1; transform: scale(1.1); }
-.alert-bell.active { opacity: 1; color: #ffca28; animation: ring 2s infinite; }
-/* Сработавший алерт — НЕ активное состояние: колокольчик спокойный,
-   без анимации «звона», приглушённый (в отличие от .active) */
-.alert-bell.triggered { opacity: 0.45; color: #787b86; }
+/* --- Алерты и скелетоны загрузки ---
+   Колокольчики алертов убраны из строк тикеров в watchlist. */
 
 /* --- Заметки к тикерам (watchlist_items.note) ---
    Иконки заметок из строк watchlist убраны: редактирование доступно только

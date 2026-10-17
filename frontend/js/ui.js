@@ -394,15 +394,13 @@ window.buildRowElement = function(sym) {
     <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
     <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
     <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
-    <span class="alert-bell" data-symbol="${escapeHtml(sym)}" onclick="event.stopPropagation(); openAlertModal('${escapeHtml(sym)}')" title="Настроить ценовое уведомление">🔔</span>
     <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить">×</span>`;
 
   // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
   // жизни узла (раньше слушатель создавался при каждой перерисовке).
   div.addEventListener('click', (e) => {
     if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') ||
-        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') ||
-        e.target.classList.contains('alert-bell')) return;
+        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper')) return;
     const cur = getCurrentList();
     cur.activeSymbol = sym;
     setActiveSymbolInDb(appState.activeListId, sym); // выбор тикера — в БД (watchlists.active_symbol)
@@ -508,14 +506,8 @@ window.updateRow = function(div, sym, data, list, prev) {
   const picker = wrapper.querySelector('.favorite-picker');
   picker.classList.toggle('active', activePickerSymbol === sym);
 
-  // Колокольчик алерта
-  const bell = div.querySelector('.alert-bell');
-  const bellStatus = getBellStatusForSymbol(sym);
-  const bellCls = 'alert-bell' + (bellStatus === 'active' ? ' active' : bellStatus === 'triggered' ? ' triggered' : '');
-  if (bellCls !== prev.bellCls) {
-    bell.className = bellCls;
-    prev.bellCls = bellCls;
-  }
+  // Колокольчик алерта убран из строк тикеров — статус синхронизируется
+  // через refreshAllBells, который молча пропускает отсутствующие узлы.
 
   // Подсветка активной строки
   const isActive = sym === list.activeSymbol;
@@ -663,7 +655,7 @@ window.render = async function() {
 
     let entry = cacheMap.get(sym);
     if (!entry) {
-      entry = { el: buildRowElement(sym), state: { sig: 'INIT', logoHtml: null, flag: undefined, bellCls: null, active: null } };
+      entry = { el: buildRowElement(sym), state: { sig: 'INIT', logoHtml: null, flag: undefined, active: null } };
       cacheMap.set(sym, entry);
     }
     seen.add(sym);
