@@ -36,12 +36,25 @@ window.CACHE_DURATION = 120 * 1000;
 window.AUTO_REFRESH_INTERVAL = 120 * 1000;
 window.ALERTS_KEY = 'price_alerts';
 
+// Флажки избранного: иконка — цветной флажок 🚩 (как у тикеров в списке),
+// раньше использовались цветные кружки (🔴🔵🟡🟠🟢) — заменены по требованию UI.
 window.FLAG_COLORS = {
-  'red': { name: 'Красный', icon: '🔴', hex: '#ef5350' },
-  'blue': { name: 'Синий', icon: '🔵', hex: '#2962ff' },
-  'yellow': { name: 'Желтый', icon: '🟡', hex: '#ffca28' },
-  'orange': { name: 'Оранжевый', icon: '🟠', hex: '#ff9800' },
-  'green': { name: 'Зеленый', icon: '🟢', hex: '#26a69a' }
+  'red': { name: 'Красный', icon: '🚩', hex: '#ef5350' },
+  'blue': { name: 'Синий', icon: '🚩', hex: '#2962ff' },
+  'yellow': { name: 'Желтый', icon: '🚩', hex: '#ffca28' },
+  'orange': { name: 'Оранжевый', icon: '🚩', hex: '#ff9800' },
+  'green': { name: 'Зеленый', icon: '🚩', hex: '#26a69a' }
+};
+
+// Убираем из названия списков/разделов «круглую» иконку прошлого формата
+// (🔴🔵🟡🟠🟢) и подставляем вместо неё флажок того же цвета (🚩).
+// Используется при отображении названий списков (селектор списков): данные
+// могли быть сохранены ещё с кругами, а рендер должен показывать флажки.
+window.replaceCircleIcons = function(name) {
+  const circleToFlag = { '🔴': '🚩', '🔵': '🚩', '🟡': '🚩', '🟠': '🚩', '🟢': '🚩' };
+  let out = String(name ?? '');
+  for (const [circle, flag] of Object.entries(circleToFlag)) out = out.split(circle).join(flag);
+  return out;
 };
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
@@ -724,7 +737,10 @@ window.populateListSelector = function() {
   for (const [id, list] of Object.entries(appState.lists)) {
     const option = document.createElement('option');
     option.value = id;
-    option.textContent = list.name + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
+    // replaceCircleIcons: старые данные могли сохраниться с цветными кружками
+    // (🔴🔵…) в названиях избранных списков — на экране показываем флажки (🚩).
+    option.textContent = (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
+      + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
     if (id === appState.activeListId) option.selected = true;
     selector.appendChild(option);
   }
