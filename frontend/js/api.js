@@ -323,8 +323,8 @@ newsList.innerHTML = `
     <div class="news-item" data-link="${link}" style="display: flex; align-items: stretch;">
         <button type="button" title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"
                 onclick="toggleNewsFavorite('${encodeURIComponent(link)}', this)"
-                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px 0 0; color: ${isFav ? '#ef5350' : '#5a5f6b'}; transition: transform .15s;"
-                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${isFav ? '🚩' : '⚑'}</button>
+                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; padding: 0 4px 0 0; color: ${isFav ? '#ef5350' : '#5a5f6b'}; transition: transform .15s;"
+                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i data-lucide="flag" class="ico-sm${isFav ? ' fill-current' : ''}"></i></button>
         <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${teaser}</div>
@@ -487,7 +487,15 @@ window.updateNewsItemFlag = function(itemOrLink) {
   const btn = item.querySelector('button');
   const card = item.querySelector('a');
   if (btn) {
-    btn.textContent = isFav ? '🚩' : '⚑';
+    const icon = btn.querySelector('svg') || btn.querySelector('i[data-lucide]');
+    if (icon) {
+      // Lucide-иконка флага: закрашиваем при избранном, иначе контурная
+      icon.classList.toggle('fill-current', isFav);
+      if (icon.tagName.toLowerCase() === 'i') icon.setAttribute('data-lucide', 'flag');
+    } else {
+      btn.innerHTML = '<i data-lucide="flag" class="ico-sm' + (isFav ? ' fill-current' : '') + '"></i>';
+      refreshIcons();
+    }
     btn.style.color = isFav ? '#ef5350' : '#5a5f6b';
     btn.title = isFav ? 'Убрать из избранного' : 'В избранное';
     btn.setAttribute('aria-pressed', String(isFav));
@@ -664,7 +672,7 @@ function drawNewsFavorites(pane, items, ticker) {
   pane.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
     <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        🚩 Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong style="color: #ef5350;">${items.length}</strong>
+        <i data-lucide="flag" class="ico-sm fill-current"></i> Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong style="color: #ef5350;">${items.length}</strong>
     </div>
 </div>
 <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
@@ -683,8 +691,8 @@ function drawNewsFavorites(pane, items, ticker) {
     <div class="news-item" data-link="${escapeHtml(link)}" style="display: flex; align-items: stretch;">
         <button type="button" title="Убрать из избранного" aria-pressed="true"
                 onclick="toggleNewsFavorite('${encodeURIComponent(link)}', this)"
-                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px 0 0; color: #ef5350; transition: transform .15s;"
-                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🚩</button>
+                style="flex-shrink: 0; width: 34px; border: none; background: transparent; cursor: pointer; padding: 0 4px 0 0; color: #ef5350; transition: transform .15s;"
+                onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i data-lucide="flag" class="ico-sm fill-current"></i></button>
         <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${tickerBadge}${escapeHtml(teaser)}</div>

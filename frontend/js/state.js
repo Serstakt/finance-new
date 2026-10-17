@@ -37,11 +37,11 @@ window.AUTO_REFRESH_INTERVAL = 120 * 1000;
 window.ALERTS_KEY = 'price_alerts';
 
 window.FLAG_COLORS = {
-  'red': { name: 'Красный', icon: '🔴', hex: '#ef5350' },
-  'blue': { name: 'Синий', icon: '🔵', hex: '#2962ff' },
-  'yellow': { name: 'Желтый', icon: '🟡', hex: '#ffca28' },
-  'orange': { name: 'Оранжевый', icon: '🟠', hex: '#ff9800' },
-  'green': { name: 'Зеленый', icon: '🟢', hex: '#26a69a' }
+  'red': { name: 'Красный', icon: '●', hex: '#ef5350' },
+  'blue': { name: 'Синий', icon: '●', hex: '#2962ff' },
+  'yellow': { name: 'Желтый', icon: '●', hex: '#ffca28' },
+  'orange': { name: 'Оранжевый', icon: '●', hex: '#ff9800' },
+  'green': { name: 'Зеленый', icon: '●', hex: '#26a69a' }
 };
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===

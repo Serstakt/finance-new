@@ -355,7 +355,7 @@ window.importAllData = function() {
           return;
         }
         currentSort = { field: null, direction: 'asc' };
-        document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
+        document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); setSortIcon(h, 'none'); });
 
         // Перечитываем состояние из БД — единственный источник истины.
         await loadListNamesFromDb();
@@ -520,7 +520,7 @@ if (typeof Sortable !== 'undefined') {
         saveOrderToDb(appState.activeListId, newList);
       }
       currentSort = { field: null, direction: 'asc' };
-      document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); h.querySelector('.sort-icon').textContent = '↕'; });
+      document.querySelectorAll('.column-header').forEach(h => { h.classList.remove('active'); setSortIcon(h, 'none'); });
       log('Порядок обновлен', 'info');
     }
   });
