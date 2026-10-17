@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   syncListWithDb(appState.activeListId);
 
   // Избранные новости: подтягиваем флажки из БД (news_favorites) — и общий
-  // снимок (видимость вкладки «🚩 Избранные»), и по выбранному тикеру
+  // снимок (видимость вкладки «Избранные»), и по выбранному тикеру
   // (избранное индивидуально: у каждого тикета свой список).
   if (typeof window.loadNewsAllFavorites === 'function') {
     window.loadNewsAllFavorites().catch(() => {});
