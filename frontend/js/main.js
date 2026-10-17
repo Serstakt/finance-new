@@ -173,11 +173,13 @@ window.toggleFavoritePicker = function(symbol, event) {
   const currentColor = appState.favorites[symbol];
   if (currentColor) {
     setFavorite(symbol, null);
-  } else {
-    if (activePickerSymbol === symbol) { activePickerSymbol = null; }
-    else { activePickerSymbol = symbol; }
-    render();
+    return; // избранное снято — строки обновит setFavorite (без запроса цен)
   }
+  // Открыть/закрыть пикер цветов: меняется только состояние «открыт» у одной
+  // строки. Перерисовываем флажки точечно — БЕЗ полного render() и без
+  // запросов /api/prices для всех тикеров списка.
+  activePickerSymbol = (activePickerSymbol === symbol) ? null : symbol;
+  updateFavoriteFlagsOnly();
 };
 
 window.setFavorite = function(symbol, color) {
@@ -208,7 +210,12 @@ window.setFavorite = function(symbol, color) {
   if (!listId.startsWith('fav_')) {
     setFlagInDb(listId, symbol, color || null);
   }
-  render();
+  // Меняется только закладка в строке (и подписи в селекторе списков):
+  // обновляем флажки точечно. Полный render() здесь порождал запросы
+  // /api/prices для каждого тикера списка — при добавлении/снятии
+  // избранного цены не нужны вовсе.
+  populateListSelector();
+  updateFavoriteFlagsOnly();
 };
 
 window.addTicker = async function() {
