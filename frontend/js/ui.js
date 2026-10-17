@@ -955,9 +955,19 @@ window.renderAlertsTab = async function(symbol) {
   }
 };
 
+// Ключ вкладки: активный тикер может храниться с другим регистром/пробелами
+// (list-selector, localStorage-миграция, syncListWithDb из БД), а алерты в БД
+// всегда нормализованы (_normalize_symbol: trim+UPPER). Раньше сравнение было
+// строгим (a.symbol === symbol) — при малейшем расхождении регистра вкладка
+// показывала «Нет алертов для этого тикера», хотя GET /api/alerts возвращал
+// алерты (пользователь видел их в ответе сервера). Теперь сверяем
+// нормализованные значения.
+const normSym = (s) => String(s || '').trim().toUpperCase();
+
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  const symbolAlerts = alerts.filter(a => a.symbol === symbol);
+  const key = normSym(symbol);
+  const symbolAlerts = alerts.filter(a => normSym(a.symbol) === key);
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
