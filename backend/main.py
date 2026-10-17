@@ -4,7 +4,7 @@ import asyncio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pathlib import Path
 
 from .services import moex_service, crypto_service, telegram_news_service
@@ -355,9 +355,18 @@ async def set_watchlist_markup(payload: schemas.WatchlistMarkup):
 @app.get("/api/alerts")
 async def get_alerts(symbol: str | None = Query(default=None),
                      status: str | None = Query(default=None)):
-    """Список алертов из БД. Фильтры: ?symbol=MOEX:SBER&status=active."""
+    """Список алертов из БД. Фильтры: ?symbol=MOEX:SBER&status=active.
+
+    Ответ всегда отдаётся с «no-store»: только что созданный/изменённый алерт
+    должен появляться во вкладке «Алерты» немедленно — кэш браузера или
+    промежуточного прокси показывал старый снимок («Нет алертов для этого
+    тикера») до перезагрузки страницы.
+    """
     try:
-        return {"alerts": alert_service.list_alerts(symbol=symbol, status=status)}
+        return JSONResponse(
+            {"alerts": alert_service.list_alerts(symbol=symbol, status=status)},
+            headers={"Cache-Control": "no-store"},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

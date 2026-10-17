@@ -407,6 +407,10 @@ window.buildRowElement = function(sym) {
     createChart(sym);
     document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
     div.classList.add('active');
+    // Если открыта вкладка «Алерты» — мгновенно переключаем её на новый
+    // тикер: иначе она залипает на старом символе и показывает «Нет алертов
+    // для этого тикера» до перезагрузки страницы.
+    if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsTab(sym);
   });
 
   div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
@@ -725,17 +729,23 @@ window.render = async function() {
 window.dbAlerts = []; // актуальный снимок алертов из БД (для колокольчиков и модалок)
 
 // Загружает все алерты из БД в window.dbAlerts и перерисовывает колокольчики.
+// cache:'no-store' — запрос не должен отдаваться из HTTP-кэша браузера,
+// иначе после создания нового алерта вкладка «Алерты» показывает устаревший
+// снимок («Нет алертов для этого тикера») до перезагрузки страницы.
+// Ошибку возвращаем через null (не бросаем): функцию вызывают «в огне-and-забыли»
+// (старт приложения, синхронизация цен); список вкладки проверяет результат.
 window.loadAlertsFromDb = async function() {
   try {
-    const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, {}, 15000);
+    const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, { cache: 'no-store' }, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     window.dbAlerts = Array.isArray(data.alerts) ? data.alerts : [];
+    refreshAllBells();
+    return window.dbAlerts;
   } catch (e) {
     console.error('Ошибка загрузки алертов из БД:', e);
+    return null; // данные НЕ обнуляем — рисуем последний известный снимок
   }
-  refreshAllBells();
-  return window.dbAlerts;
 };
 
 // Однократная миграция старых клиентских алертов (localStorage 'price_alerts')
@@ -927,12 +937,22 @@ window.renderAlertsTab = async function(symbol) {
   // Пока грузим свежие данные из БД — показываем заглушку, чтобы пользователь
   // не видел устаревший снимок кеша (например, без только что добавленного алерта)
   container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Загрузка…</div>';
-  // Свежие статусы из БД (активные/сработавшие/отменённые)
-  await loadAlertsFromDb();
+  // Свежие статусы из БД (активные/сработавшие/отменённые). null — ошибка сети:
+  // не обнуляем кеш, рисуем последний известный снимок с предупреждением.
+  const loaded = await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
   if ((cur && cur.activeSymbol) !== symbol) return;
   renderAlertsList(symbol);
+  if (loaded === null) {
+    const wrap = container.querySelector('.alerts-tab-content');
+    if (wrap) {
+      const warn = document.createElement('div');
+      warn.style.cssText = 'text-align:center; color:#e0a34a; padding:8px; font-size:12px;';
+      warn.textContent = '⚠ Не удалось обновить список с сервера — показаны последние известные данные';
+      wrap.prepend(warn);
+    }
+  }
 };
 
 window.renderAlertsList = function(symbol) {
