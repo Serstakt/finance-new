@@ -518,6 +518,10 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    задан явно, чтобы не перебиваться правилом .tab-btn.active (синий). */
 .tab-fav-flag { vertical-align: -2px; margin-right: 2px; color: #ef5350 !important; }
 .tab-fav-flag svg { width: 13px; height: 13px; fill: currentColor; stroke: currentColor; }
+/* Иконка во вкладке «Новости» (вместо emoji 📰): lucide «newspaper»
+   (https://lucide.dev/icons/newspaper) — контурная, наследует цвет вкладки. */
+.tab-news-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
+.tab-news-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
 #bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
 #bottom-tabs .tab-actions button {
   background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
