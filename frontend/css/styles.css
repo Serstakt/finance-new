@@ -514,8 +514,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .tab-btn:hover { color: #d1d4dc; background: #2a2e39; }
 .tab-btn.active { color: #2962ff; background: #2a2e39; border-color: #363a45; }
 /* Флажок-закладка во вкладке «Избранные» (вместо emoji 🚩): та же иконка
-   bookmark, что отмечает избранные новости; закрашивается цветом вкладки. */
-.tab-fav-flag { vertical-align: -2px; margin-right: 2px; }
+   bookmark, что отмечает избранные новости; всегда красный — цвет
+   задан явно, чтобы не перебиваться правилом .tab-btn.active (синий). */
+.tab-fav-flag { vertical-align: -2px; margin-right: 2px; color: #ef5350 !important; }
 .tab-fav-flag svg { width: 13px; height: 13px; fill: currentColor; stroke: currentColor; }
 #bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
 #bottom-tabs .tab-actions button {
