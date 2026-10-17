@@ -150,7 +150,7 @@ async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int 
     page = 0
     last_min_id = None
 
-    print(f"🔍 Начинаем парсинг для {ticker} (force_refresh={force_refresh})")
+    print(f"🔍 Начинаем парсинг для {ticker or 'STREAM'}")
     print(f"📋 Ищем: {search_terms}")
 
     try:
