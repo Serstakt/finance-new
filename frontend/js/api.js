@@ -600,6 +600,11 @@ window.renderNewsFavoritesTab = async function(force = false) {
   } else {
     pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">Загрузка избранного...</div>`;
   }
+  // Данные тянутся НАПРЯМУЮ из БД (GET /api/news/favorites/list?ticker=...):
+  // бэкенд читает news_favorites + news_cache и отвечает сразу, не дожидаясь
+  // загрузки ленты во вкладке «Новости» и не запуская парсинг Telegram.
+  // Поэтому здесь нет ни принудительного loadTickerNews, ни ожидания её
+  // ответа — вкладка «Избранные» полностью независима от «Новостей».
   try {
     const url = `${API_BASE}/api/news/favorites/list` +
       (ticker ? `?ticker=${encodeURIComponent(ticker)}` : '');
