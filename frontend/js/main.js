@@ -168,6 +168,18 @@ window.deleteCurrentList = async function() {
 // (window.NOTE_MAX_LEN) и используется полотном заметок.
 const NOTE_MAX_LEN = window.NOTE_MAX_LEN || 500; // совпадает с backend/services/watchlist_service.py
 
+// Ищет первый обычный (не fav_) watchlist-список, содержащий тикер. Нужно
+// для setFavorite, открытого из fav_-списка («Красный», «Синий»…): флаг там
+// производный и хранится в родительском списке — запрос /api/watchlist/flag
+// должен уйти именно туда, иначе он не отправлялся вовсе (см. setFavorite).
+window.findListWithTicker = function(symbol) {
+  for (const [id, list] of Object.entries(appState.lists)) {
+    if (id.startsWith('fav_')) continue;
+    if (list && Array.isArray(list.tickers) && list.tickers.includes(symbol)) return id;
+  }
+  return null;
+};
+
 window.toggleFavoritePicker = function(symbol, event) {
   event.stopPropagation();
   const currentColor = appState.favorites[symbol];
@@ -205,9 +217,16 @@ window.setFavorite = function(symbol, color) {
   activePickerSymbol = null;
   // Сохраняем флажок в БД (watchlist_items.flag_color): избранное живёт на
   // сервере и восстанавливается в другом браузере через loadFlagsFromDb().
-  // fav_-списки — производные от флага, их флажок не храним.
+  // В fav_-списке («Красный», «Синий»…) своего флага у строк нет — он
+  // производный, поэтому снимаем/меняем флаг через родительский список:
+  // находим обычный watchlist-список, где есть этот тикер, и шлём запрос туда.
+  // Иначе /api/watchlist/flag не вызывался вовсе и снятый во fav_-списке
+  // флажок возвращался при следующей загрузке из БД.
   const listId = appState.activeListId;
-  if (!listId.startsWith('fav_')) {
+  if (listId.startsWith('fav_')) {
+    const parentListId = findListWithTicker(symbol) || 'default';
+    setFlagInDb(parentListId, symbol, color || null);
+  } else {
     setFlagInDb(listId, symbol, color || null);
   }
   // Меняется только закладка в строке (и подписи в селекторе списков):

@@ -290,6 +290,25 @@ def get_all_flags() -> dict[str, str]:
         return {f"{r.list_id}|{r.symbol}": r.flag_color for r in rows if r.flag_color}
 
 
+def _resolve_flag_list_id(symbol: str) -> str | None:
+    """Возвращает id обычного (не fav_) списка, содержащего тикер.
+
+    Первый по id — чтобы при дублях тикера в нескольких списках выбор был
+    детерминированным. None, если тикера нет ни в одном списке.
+    """
+    with get_session() as db:
+        row = (
+            db.query(WatchlistItem.list_id)
+            .filter(
+                WatchlistItem.symbol == symbol,
+                ~WatchlistItem.list_id.like("fav\\_%", escape="\\"),
+            )
+            .order_by(WatchlistItem.list_id.asc())
+            .first()
+        )
+        return row[0] if row else None
+
+
 def set_flag(list_id: str, symbol: str, color: str | None) -> dict:
     """Ставит/снимает цветной флажок у тикера (избранное) в конкретной строке.
 
@@ -299,12 +318,21 @@ def set_flag(list_id: str, symbol: str, color: str | None) -> dict:
 
     color=None/"" снимает флажок. Возвращает 404-сигнал (status=not_found),
     если такого элемента нет.
+
+    fav_-списки («Красный», «Синий»…) на фронтенде вычисляются из флажков и
+    сами в БД не хранятся, поэтому запрос с list_id='fav_...' перенаправляем
+    в обычный список, где есть этот тикер (первый по id — детерминированно
+    при дублях тикера в нескольких списках). Без этого снятие флажка из
+    fav_-списка молча пропадало: элемент не находился, и флаг возвращался
+    при следующей загрузке избранного из БД.
     """
     symbol = _normalize_symbol(symbol)
     if color is not None:
         color = str(color).strip().lower() or None
         if color and color not in VALID_FLAG_COLORS:
             raise ValueError(f"Недопустимый цвет флажка: {color}")
+    if list_id.startswith("fav_"):
+        list_id = _resolve_flag_list_id(symbol) or list_id
     with get_session() as db:
         row = (
             db.query(WatchlistItem)
