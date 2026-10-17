@@ -41,11 +41,14 @@ def _normalize_symbol(symbol: str) -> str:
 
 
 def migrate_columns() -> None:
-    """Добавляет колонки flag_color/collapsed/note в существующую таблицу watchlist_items.
+    """Добавляет недостающие колонки в существующие таблицы watchlist_items/watchlists.
 
     create_all не изменяет уже созданные таблицы, а SQLite не поддерживает
     ALTER TABLE ... ADD COLUMN IF NOT EXISTS, поэтому проверяем PRAGMA table_info
     и добавляем недостающие колонки сами. Идемпотентно, вызывается при старте.
+
+    watchlists.active_symbol — выбранный тикер списка; раньше жил только в
+    localStorage ('multi_watchlists_state'), теперь источник истины — БД.
     """
     try:
         con = sqlite3.connect(str(DB_PATH))
@@ -62,6 +65,9 @@ def migrate_columns() -> None:
                 con.execute("ALTER TABLE watchlist_items ADD COLUMN note TEXT")
             if "markup" not in cols:
                 con.execute("ALTER TABLE watchlist_items ADD COLUMN markup TEXT")
+            wl_cols = {row[1] for row in con.execute("PRAGMA table_info(watchlists)")}
+            if wl_cols and "active_symbol" not in wl_cols:
+                con.execute("ALTER TABLE watchlists ADD COLUMN active_symbol VARCHAR")
             con.commit()
         finally:
             con.close()
@@ -86,6 +92,34 @@ def get_all_names() -> dict[str, str]:
     with get_session() as db:
         rows = db.query(Watchlist).all()
         return {r.id: r.name for r in rows}
+
+
+def get_active_symbol(list_id: str) -> str | None:
+    """Выбранный тикер списка (колонка watchlists.active_symbol) или None."""
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        return row.active_symbol if row else None
+
+
+def set_active_symbol(list_id: str, symbol: str | None) -> dict:
+    """Запоминает выбранный тикер списка в БД (watchlists.active_symbol).
+
+    Символ нормализуется так же, как элементы списка; SECTION:... и пустое
+    значение очищают выбор. Список создаётся автоматически, если его ещё нет.
+    """
+    ensure_list(list_id)
+    sym = _normalize_symbol(symbol or "")
+    if not sym or sym == "SECTION:" or sym.upper().startswith("SECTION:"):
+        sym = None
+    with get_session() as db:
+        row = db.get(Watchlist, list_id)
+        if row is None:
+            row = Watchlist(id=list_id, active_symbol=sym)
+            db.add(row)
+        else:
+            row.active_symbol = sym
+        db.commit()
+        return {"status": "ok", "list_id": list_id, "active_symbol": sym}
 
 
 # Название-заглушка, которое ставится в watchlists.name, когда список
@@ -450,7 +484,10 @@ def add_symbol(list_id: str, symbol: str, list_name: str | None = None) -> dict:
 def remove_symbol(list_id: str, symbol: str) -> dict:
     """Удаляет тикер из списка и перенумеровывает позиции.
 
-    Нормализация регистра та же, что и в add_symbol.
+    Нормализация регистра та же, что и в add_symbol. Если удаляемый тикер
+    был выбранным (watchlists.active_symbol), выбор сбрасывается — иначе
+    в БД осталась бы ссылка на несуществующий символ (данные разошлись бы
+    с состоянием UI; ровно такие рассинхроны давал и localStorage).
     """
     symbol = symbol.strip()
     if not symbol.upper().startswith("SECTION:"):
@@ -477,6 +514,13 @@ def remove_symbol(list_id: str, symbol: str) -> dict:
             )
             for i, item in enumerate(remaining):
                 item.position = i
+            wl = db.get(Watchlist, list_id)
+            if wl is not None and wl.active_symbol == symbol:
+                first_ticker = next(
+                    (it.symbol for it in remaining if not it.symbol.startswith("SECTION:")),
+                    None,
+                )
+                wl.active_symbol = first_ticker
             db.commit()
             return {"status": "ok", "list_id": list_id, "symbol": symbol}
 

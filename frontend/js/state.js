@@ -1,9 +1,33 @@
 // === КОНСТАНТЫ ===
+// localStorage больше НЕ хранит данные watchlist (тикеры, названия списков,
+// флажки, заметки, выбранный тикер) — единственный источник истины для них:
+// SQLite (watchlists / watchlist_items) и REST API. Устаревший ключ
+// 'multi_watchlists_state' читается ОДИН раз (readLegacyState), конвертируется
+// в БД (migrateLegacyStateToDb) и удаляется: две копии одних данных раньше
+// расходились (баги «Новый список вместо имени», потерянные заметки).
 window.STORAGE_KEY = 'multi_watchlists_state';
 // Устаревший ключ: раньше названия пользовательских списков хранились в localStorage.
 // Теперь они живут в БД (таблица watchlists) и загружаются через /api/watchlists.
 window.DB_LISTS_KEY = 'watchlist_db_lists';
+// Устаревшие дубликаты данных: снимок appState ('multi_watchlists_state'),
+// плоский список ('my_watchlist') и кэш названий списков читаются ОДИН раз
+// при миграции (см. runLegacyMigration в main.js) и затем удаляются.
+// Пока миграция не подтверждена сервером, ключи НЕ трогаем — иначе можно
+// потерять данные при недоступном бэкенде.
 try { localStorage.removeItem(window.DB_LISTS_KEY); } catch(e) {}
+window.removeLegacyStorageKeys = function() {
+  try {
+    localStorage.removeItem(window.STORAGE_KEY);
+    localStorage.removeItem('my_watchlist');
+    localStorage.removeItem(window.DB_LISTS_KEY);
+  } catch (e) {}
+};
+// В localStorage остаются только переходящие UI-настройки: размер панели
+// отладки ('debug_panel_height'), кэш цен ('ticker_cache') и логотипов.
+// Сессионные UI-настройки: активная страница/вкладка под графиком.
+// Активный таб (выбранный список) тоже живёт в sessionStorage — это
+// настройка вида конкретной вкладки браузера, а не данные списка.
+window.UI_STATE_KEY = 'ui_active_list_id';
 // Ключ кэша цен в localStorage. Должен совпадать с ключом, который использует
 // fetchTickerData (api.js), иначе очистка кэша (ручное/авто обновление) не будет
 // удалять реальные записи и цены будут устаревать.
@@ -47,47 +71,97 @@ window.appState = {
 window.noteKey = function(listId, symbol) { return `${listId}|${symbol}`; };
 
 // === ФУНКЦИИ СОСТОЯНИЯ ===
+// appState — только кэш в памяти. В него попадают данные из БД (syncListWithDb,
+// loadListNamesFromDb, loadFlagsFromDb, loadNotesFromDb) и временные UI-состояния.
+// localStorage для этих данных больше не используется: запись в него создавала
+// второй источник истины и рассинхроны с БД.
 window.loadState = function() {
+  // Активный таб — UI-настройка конкретной вкладки браузера (sessionStorage).
+  // Название выбранного списка подтянется из БД в loadListNamesFromDb();
+  // если списка нет (например, fav_-таб ещё не собран), откатимся к 'default'.
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      appState = JSON.parse(saved);
-      if (!appState.favorites) appState.favorites = {};
-      if (!appState.notes) appState.notes = {};
-      for (const key in appState.lists) {
-        if (!appState.lists[key].collapsedSections) appState.lists[key].collapsedSections = [];
-      }
-    } else {
-      const oldList = localStorage.getItem('my_watchlist');
-      if (oldList) {
-        try {
-          const parsed = JSON.parse(oldList);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            appState.lists['default'].tickers = parsed;
-            appState.lists['default'].activeSymbol = parsed[0];
-            window.pendingLegacySync = true; // первый запуск: загрузим локальный список в БД
-          }
-        } catch(e) {}
-        localStorage.removeItem('my_watchlist');
-      }
-    }
-    // trimAlertsHistory() убран: история алертов теперь режется на бэкенде
-    // (alert_service.trim_history), localStorage 'price_alerts' больше не
-    // источник истины — из него выполняется только одноразовая миграция в БД.
-  } catch (e) { console.error('Ошибка загрузки состояния:', e); }
+    const savedTab = sessionStorage.getItem(window.UI_STATE_KEY);
+    if (savedTab && appState.lists[savedTab]) appState.activeListId = savedTab;
+  } catch (e) {}
 
-  // Пользовательские списки: названия хранятся в БД (таблица watchlists),
-  // поэтому здесь они не подтягиваются из localStorage — это делает
-  // loadListNamesFromDb() при загрузке страницы/раздела WATCHLIST.
+  // Данные watchlist сюда НЕ загружаются: единственный источник истины — БД.
+  // Одноразовый перенос старого снимка из localStorage делает
+  // runLegacyMigration() в main.js (readLegacyState -> migrateLegacyStateToDb).
 };
 
-window.saveState = function() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); }
-  catch (e) { if (typeof log === 'function') log('Ошибка записи состояния: ' + e.message, 'error'); }
+// Читает устаревший снимок appState из localStorage без применения к памяти.
+// Используется только migrateLegacyStateToDb() при первом запуске после
+// перевода состояния на БД.
+window.readLegacyState = function() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return JSON.parse(saved);
+    // Ещё более старый формат: плоский массив тикеров 'my_watchlist'.
+    const oldList = localStorage.getItem('my_watchlist');
+    if (oldList) {
+      const parsed = JSON.parse(oldList);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return { lists: { default: { name: 'Основной', tickers: parsed, activeSymbol: parsed[0] } } };
+      }
+    }
+  } catch (e) { console.error('Ошибка чтения устаревшего состояния:', e); }
+  return null;
+};
+
+// saveState() сохранён как no-op-совместимый хук: состояние watchlist теперь
+// живёт в БД, а UI-настройки пишутся напрямую в sessionStorage. Все прежние
+// вызовы saveState() остаются в коде и ничего не делают — это страховка от
+// случайного возврата второго источника истины.
+window.saveState = function() { /* состояние — в БД; localStorage больше не пишется */ };
+
+// Одноразовая миграция «localStorage -> БД»: поднимает устаревший снимок
+// multi_watchlists_state (тикеры, названия, флажки, заметки, активный тикер)
+// и загружает его в таблицы watchlists/watchlist_items через существующие
+// эндпоинты. Вызывается из main.js (runLegacyMigration) ДО загрузки списков
+// из БД; ключи localStorage удаляются только после успешного переноса.
+window.migrateLegacyStateToDb = async function(legacy) {
+  if (!legacy || !legacy.lists) return false;
+  let migrated = false;
+  for (const [id, list] of Object.entries(legacy.lists)) {
+    if (!list || id.startsWith('fav_')) continue; // fav_-списки — производные от флажков
+    const symbols = list.tickers || [];
+    const realName = (list.name || '').trim();
+    const hasName = realName && realName !== 'Новый список' && realName !== id;
+    // Пустой список без настоящего имени мигрировать нечего.
+    if (symbols.length === 0 && !hasName) continue;
+    // Название + состав (с флажками/свёрнутостью/заметками из legacy-кэша) —
+    // одним /order; syncListWithDb затем сверит результат с БД.
+    try {
+      if (hasName) await window.renameListInDb(id, realName);
+      const items = symbols.map(sym => ({
+        symbol: sym,
+        flag_color: (!sym.startsWith('SECTION:') && legacy.favorites && legacy.favorites[sym]) || null,
+        collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym)),
+        note: (!sym.startsWith('SECTION:') && legacy.notes && legacy.notes[noteKey(id, sym)]) || null
+      }));
+      if (symbols.length > 0) {
+        const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ list_id: id, symbols: symbols, list_name: hasName ? realName : null, items })
+        }, 15000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      }
+      if (list.activeSymbol) await setActiveSymbolInDb(id, list.activeSymbol, true);
+      migrated = true;
+    } catch (e) {
+      if (typeof log === 'function') log(`Не удалось мигрировать список "${realName || id}" из localStorage: ${e.message}`, 'error');
+      return false; // миграция не завершена — ключи localStorage НЕ удаляем
+    }
+  }
+  return migrated;
 };
 
 // Синхронизация состава списка с бэкендом (БД).
-// Название списка тоже берётся из БД (watchlists.name), а не из localStorage.
+// Источник истины — только БД: название, тикеры, флажки, свёрнутость разделов,
+// заметки и выбранный тикер (watchlists.active_symbol). Локальные значения
+// перезаписываются ответом сервера; исключение — известные race-случаи с
+// заглушками названий (чинятся через /repair).
 window.syncListWithDb = async function(listId) {
   if (!listId || listId.startsWith('fav_')) return;
   try {
@@ -121,29 +195,10 @@ window.syncListWithDb = async function(listId) {
       } catch (e) { /* попробуем починить при следующей загрузке */ }
     }
 
-    // Миграция: в БД пусто, а локально есть тикеры (старый watchlist) — загружаем их в БД
-    if (dbSymbols.length === 0 && list.tickers.length > 0) {
-      // Заодно сохраняем текущее название в БД, чтобы дальше оно жило на сервере
-      await window.renameListInDb(listId, list.name);
-      // Передаём флажки/свёрнутость/заметки локальных элементов (одноразовая
-      // миграция localStorage -> БД), чтобы избранное и заметки не потерялись.
-      const items = list.tickers.map(sym => ({
-        symbol: sym,
-        flag_color: (!listId.startsWith('fav_') && appState.favorites[sym]) || null,
-        collapsed: !!(list.collapsedSections && list.collapsedSections.includes(sym)),
-        note: appState.notes[noteKey(listId, sym)] || null
-      }));
-      await fetchWithTimeout(`${API_BASE}/api/watchlist/order`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list_id: listId, symbols: list.tickers, list_name: list.name, items })
-      }, 15000);
-      if (typeof log === 'function') log(`Локальный список "${list.name}" мигрирован в БД (${list.tickers.length} эл.)`, 'info');
-      saveState();
-      if (typeof populateListSelector === 'function') populateListSelector();
-      return;
-    }
-
+    // Миграция «в БД пусто, локально есть тикеры» упразднена: localStorage
+    // больше не источник данных, а одноразовый перенос старого снимка делает
+    // migrateLegacyStateToDb() на старте страницы. Пустой список в БД — это
+    // просто пустой список.
     list.tickers = dbSymbols;
 
     // Флажки, свёрнутые разделы и заметки: источник истины — колонки БД
@@ -174,7 +229,15 @@ window.syncListWithDb = async function(listId) {
       list.collapsedSections = collapsedFromDb;
     }
 
-    saveState();
+    // Выбранный тикер — колонка БД watchlists.active_symbol. Если выбор
+    // устарел (тикер удалён/пусто), берём первый тикер списка.
+    if (!listId.startsWith('fav_')) {
+      const dbActive = data.active_symbol || '';
+      list.activeSymbol = (dbActive && dbSymbols.includes(dbActive))
+        ? dbActive
+        : (dbSymbols.find(s => !s.startsWith('SECTION:')) || '');
+    }
+
     if (listId === appState.activeListId && typeof render === 'function') render();
     if (typeof populateListSelector === 'function') populateListSelector();
     if (typeof log === 'function') log(`Список "${list.name}" загружен из БД (${list.tickers.length} эл.)`, 'info');
@@ -255,7 +318,6 @@ window.loadListNamesFromDb = async function() {
       changed = true;
     }
     if (changed) {
-      saveState();
       if (typeof populateListSelector === 'function') populateListSelector();
     }
     return names;
@@ -474,6 +536,40 @@ window.setNoteInDb = async function(listId, symbol, note) {
   }
 };
 
+// Запоминает выбранный тикер списка в БД (watchlists.active_symbol).
+// Раньше activeSymbol был частью appState -> localStorage — второй источник
+// истины; теперь выбор живёт на сервере и возвращается GET /api/watchlist/{id}.
+// Огонь записью гасится дебаунсом: быстрые клики по строкам не плодят запросы.
+window.__activeSymbolTimers = window.__activeSymbolTimers || {};
+// immediate=true — записать без дебаунса (используется миграцией legacy-
+// состояния: запись должна точно завершиться до удаления ключей localStorage).
+window.setActiveSymbolInDb = async function(listId, symbol, immediate) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  const t = window.__activeSymbolTimers;
+  if (t[listId]) { clearTimeout(t[listId]); delete t[listId]; }
+  const send = async () => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/active`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ list_id: listId, symbol: symbol || null })
+      }, 15000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return true;
+    } catch (e) {
+      if (typeof log === 'function') log('Не удалось сохранить выбранный тикер в БД: ' + e.message, 'error');
+      return false;
+    }
+  };
+  if (immediate) return send();
+  return new Promise(resolve => {
+    t[listId] = setTimeout(async () => {
+      delete t[listId];
+      resolve(await send());
+    }, 400);
+  });
+};
+
 // Пересобирает служебные fav_-списки из appState.favorites (после загрузки
 // флажков из БД или их изменения).
 window.rebuildFavoriteLists = function() {
@@ -519,7 +615,6 @@ window.loadFlagsFromDb = async function() {
     }
     if (changed) {
       rebuildFavoriteLists();
-      saveState();
       if (typeof populateListSelector === 'function') populateListSelector();
       if (typeof render === 'function' && sessionStorage.getItem('activePage') === 'watchlist') render();
     }
@@ -561,7 +656,6 @@ window.loadNotesFromDb = async function() {
       }
     }
     if (changed) {
-      saveState();
       if (typeof render === 'function' && sessionStorage.getItem('activePage') === 'watchlist') render();
     }
     return notes;
@@ -576,7 +670,8 @@ window.getCurrentList = function() { return appState.lists[appState.activeListId
 window.switchList = function(listId) {
   if (!appState.lists[listId]) return;
   appState.activeListId = listId;
-  saveState();
+  // Активный таб — UI-настройка вкладки браузера: sessionStorage, не localStorage.
+  try { sessionStorage.setItem(window.UI_STATE_KEY, listId); } catch (e) {}
   populateListSelector();
   currentSort = { field: null, direction: 'asc' };
   document.querySelectorAll('.column-header').forEach(h => {

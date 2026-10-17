@@ -132,6 +132,9 @@ async def get_watchlist(list_id: str):
     return {
         "list_id": list_id,
         "name": name,
+        # выбранный тикер списка — колонка БД watchlists.active_symbol
+        # (раньше жил только в localStorage 'multi_watchlists_state')
+        "active_symbol": watchlist_service.get_active_symbol(list_id),
         "symbols": [i["symbol"] for i in items],
         # расширенные данные: флажок/свёрнутость/заметка/разметка каждого элемента —
         # источник истины для избранного, свёрнутых разделов, заметок и разметки
@@ -208,6 +211,17 @@ async def rename_watchlist(payload: schemas.WatchlistRename):
         return watchlist_service.set_name(payload.list_id, payload.name)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/watchlist/active")
+async def set_watchlist_active(payload: schemas.WatchlistActive):
+    """Запоминает выбранный тикер списка в БД (watchlists.active_symbol).
+
+    Раньше activeSymbol был частью appState в localStorage
+    ('multi_watchlists_state') — втором источнике истины. Теперь выбор
+    живёт на сервере и возвращается GET /api/watchlist/{list_id}.
+    """
+    return watchlist_service.set_active_symbol(payload.list_id, payload.symbol)
 
 
 @app.delete("/api/watchlist/{list_id}")
