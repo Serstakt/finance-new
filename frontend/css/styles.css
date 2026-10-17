@@ -290,13 +290,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-item:hover .ticker-remove { opacity: 1; }
 .ticker-remove:hover { color: #ef5350; }
 
-/* --- Алерты и скелетоны загрузки --- */
-.alert-bell { font-size: 12px; cursor: pointer; opacity: 0.4; transition: all 0.2s; }
-.alert-bell:hover { opacity: 1; transform: scale(1.1); }
-.alert-bell.active { opacity: 1; color: #ffca28; animation: ring 2s infinite; }
-/* Сработавший алерт — НЕ активное состояние: колокольчик спокойный,
-   без анимации «звона», приглушённый (в отличие от .active) */
-.alert-bell.triggered { opacity: 0.45; color: #787b86; }
+/* --- Алерты и скелетоны загрузки ---
+   Индикатор алерта (колокольчик 🔔) из строк списка тикеров убран:
+   статусы ценовых уведомлений показываются во вкладке «Алерты» под графиком. */
 
 /* --- Заметки к тикерам (watchlist_items.note) ---
    Иконки заметок из строк watchlist убраны: редактирование доступно только
@@ -692,11 +688,6 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
-}
-@keyframes ring {
-  0%, 100% { transform: rotate(0); }
-  10%, 30%, 50% { transform: rotate(10deg); }
-  20%, 40% { transform: rotate(-10deg); }
 }
 @keyframes skeleton-loading {
   0% { background-position: 100% 50%; }

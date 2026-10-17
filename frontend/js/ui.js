@@ -318,7 +318,7 @@ window.switchBottomTab = function(tab) {
   });
   const nwBtn = document.getElementById('news-refresh-btn');
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
-  // Кнопка добавления алерта (перенесена с колокольчика в строках списка
+  // Кнопка добавления алерта (вместо убранного колокольчика из строк списка
   // тикеров) видна только на вкладке «Алерты».
   const addAlertBtn = document.getElementById('add-alert-btn');
   if (addAlertBtn) addAlertBtn.style.display = tab === 'alerts' ? '' : 'none';
@@ -351,7 +351,7 @@ window.switchBottomTab = function(tab) {
 //   • терялся фокус/выделение, если пользователь взаимодействовал со списком;
 //   • лишние перекладывания DOM-узлов грузили поток рендера при больших списках.
 // Теперь строки создаются один раз и «переживают» перерисовку: обновляются
-// только изменившиеся значения (цена, изменение, флажок, колокольчик), а
+// только изменившиеся значения (цена, изменение, флажок), а
 // порядок узлов меняется через insertBefore только при реальной необходимости.
 // ==========================================================================
 
@@ -394,15 +394,13 @@ window.buildRowElement = function(sym) {
     <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
     <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
     <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
-    <span class="alert-bell" data-symbol="${escapeHtml(sym)}" onclick="event.stopPropagation(); openAlertModal('${escapeHtml(sym)}')" title="Настроить ценовое уведомление">🔔</span>
     <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить">×</span>`;
 
   // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
   // жизни узла (раньше слушатель создавался при каждой перерисовке).
   div.addEventListener('click', (e) => {
     if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') ||
-        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper') ||
-        e.target.classList.contains('alert-bell')) return;
+        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper')) return;
     const cur = getCurrentList();
     cur.activeSymbol = sym;
     setActiveSymbolInDb(appState.activeListId, sym); // выбор тикера — в БД (watchlists.active_symbol)
@@ -508,14 +506,8 @@ window.updateRow = function(div, sym, data, list, prev) {
   const picker = wrapper.querySelector('.favorite-picker');
   picker.classList.toggle('active', activePickerSymbol === sym);
 
-  // Колокольчик алерта
-  const bell = div.querySelector('.alert-bell');
-  const bellStatus = getBellStatusForSymbol(sym);
-  const bellCls = 'alert-bell' + (bellStatus === 'active' ? ' active' : bellStatus === 'triggered' ? ' triggered' : '');
-  if (bellCls !== prev.bellCls) {
-    bell.className = bellCls;
-    prev.bellCls = bellCls;
-  }
+  // Индикатор алерта (колокольчик 🔔) из строк убран: статус ценовых
+  // уведомлений виден во вкладке «Алерты» под графиком.
 
   // Подсветка активной строки
   const isActive = sym === list.activeSymbol;
@@ -663,7 +655,7 @@ window.render = async function() {
 
     let entry = cacheMap.get(sym);
     if (!entry) {
-      entry = { el: buildRowElement(sym), state: { sig: 'INIT', logoHtml: null, flag: undefined, bellCls: null, active: null } };
+      entry = { el: buildRowElement(sym), state: { sig: 'INIT', logoHtml: null, flag: undefined, active: null } };
       cacheMap.set(sym, entry);
     }
     seen.add(sym);
@@ -727,12 +719,12 @@ window.render = async function() {
 // фоновым циклом сервера — теперь они срабатывают даже при закрытой вкладке.
 // Фронтенд только: загружает список через GET /api/alerts в кеш
 // window.dbAlerts, отправляет изменения (POST/DELETE) и по кешу рисует
-// колокольчики. localStorage 'price_alerts' больше не является источником
+// вкладку «Алерты». localStorage 'price_alerts' больше не является источником
 // истины — из него выполняется одноразовая миграция в БД.
 
-window.dbAlerts = []; // актуальный снимок алертов из БД (для колокольчиков и модалок)
+window.dbAlerts = []; // актуальный снимок алертов из БД (для вкладки «Алерты» и модалок)
 
-// Загружает все алерты из БД в window.dbAlerts и перерисовывает колокольчики.
+// Загружает все алерты из БД в window.dbAlerts и обновляет индикаторы статуса.
 window.loadAlertsFromDb = async function() {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, {}, 15000);
@@ -770,41 +762,14 @@ window.migrateAlertsToDb = async function() {
   }
 };
 
-// Единая функция определения состояния колокольчика для символа.
-// Читает кеш dbAlerts (заполняется из БД), поэтому результат отражает
-// серверные статусы: active / triggered / cancelled.
-window.getBellStatusForSymbol = function(symbol) {
-  const alerts = window.dbAlerts || [];
-  let hasTriggered = false;
-  for (const a of alerts) {
-    if (a.symbol !== symbol) continue;
-    if (a.status === 'active') return 'active';
-    if (a.status === 'triggered') hasTriggered = true;
-  }
-  if (hasTriggered) return 'triggered';
-  return 'none';
-};
-
-// Мгновенно перерисовывает колокольчики всех тикеров в DOM по фактическому
-// состоянию кеша алертов — вызывается после любого изменения статуса алертов.
+// Перерисовывает индикаторы статуса алертов после обновления кеша dbAlerts.
+// Колокольчики из строк списка тикеров убраны, поэтому обновляется только
+// вкладка «Алерты» (если она открыта и в ней есть выбранный тикер).
 window.refreshAllBells = function() {
-  const items = document.querySelectorAll('.ticker-item');
-  items.forEach(item => {
-    const bell = item.querySelector('.alert-bell');
-    if (!bell) return;
-    const sym = bell.getAttribute('data-symbol');
-    if (!sym) return;
-    const st = getBellStatusForSymbol(sym);
-    bell.classList.remove('active', 'triggered');
-    if (st === 'active') bell.classList.add('active');
-    else if (st === 'triggered') bell.classList.add('triggered');
-  });
-};
-
-// Обновляет колокольчик одного символа (делегировано в refreshAllBells,
-// чтобы вся логика статуса была в одном месте).
-window.updateBellIconStatus = function(symbol, status) {
-  refreshAllBells();
+  const list = getCurrentList();
+  if (list && list.activeSymbol && sessionStorage.getItem('bottomTab') === 'alerts') {
+    renderAlertsList(list.activeSymbol);
+  }
 };
 
 window.openAlertModal = async function(symbol) {
@@ -867,7 +832,7 @@ window.saveAlert = async function() {
     }
     log(`Алерт сохранён в БД для ${currentAlertSymbol}: ${condition} ${target}`, 'success');
     closeAlertModal();
-    await loadAlertsFromDb(); // мгновенно обновляем колокольчик по данным из БД
+    await loadAlertsFromDb(); // обновляем кеш алертов из БД (индикаторы статуса)
     // Если открыта вкладка «Алерты» — перерисовываем её под этот тикер
     if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsList(currentAlertSymbol);
   } catch (e) {
@@ -908,9 +873,9 @@ window.openAlertsListModal = async function() {
   switchBottomTab('alerts');
 };
 
-// Кнопка «+ Добавить» на вкладке «Алерты» (перенесена с колокольчика из
-// строк списка тикеров): открывает модалку ценового уведомления для
-// выбранного тикера.
+// Кнопка «+ Добавить» на вкладке «Алерты» (заменила колокольчик из строк
+// списка тикеров, который полностью убран): открывает модалку ценового
+// уведомления для выбранного тикера.
 window.openAddAlertForActiveSymbol = async function() {
   const symbol = getCurrentList().activeSymbol;
   if (!symbol || symbol.startsWith('SECTION:')) {
@@ -1033,12 +998,15 @@ window.syncAlertsWithDb = async function() {
       log(`Алерт сработал (проверка бэкенда): ${msg}`, 'success');
     }
     if (triggered.length > 0) {
-      await loadAlertsFromDb(); // обновляем колокольчики по новым статусам из БД
+      await loadAlertsFromDb(); // обновляем кеш статусов из БД (вкладка «Алерты» — через refreshAllBells)
       // Если пользователь смотрит вкладку «Алерты» — мгновенно покажем новые статусы
       if (sessionStorage.getItem('bottomTab') === 'alerts' && typeof renderAlertsList === 'function') {
         const cur = getCurrentList();
         if (cur && cur.activeSymbol) renderAlertsList(cur.activeSymbol);
       }
+    } else {
+      // Проверка ничего не изменила — но индикаторы сверим с кешем на всякий случай
+      refreshAllBells();
     }
   } catch (e) {
     console.error('Ошибка синхронизации алертов с БД:', e);

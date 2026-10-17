@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Алерты: сначала переносим старые клиентские алерты из localStorage
   // в таблицу price_alerts (однократно), затем загружаем актуальный снимок
-  // из БД — по нему рисуются колокольчики и список алертов.
+  // из БД — по нему рисуется вкладка «Алерты» (индикаторов в строках нет).
   await runLegacyMigration(); // watchlist-дубликат localStorage -> БД (однократно)
   await migrateAlertsToDb();
   await loadAlertsFromDb();
