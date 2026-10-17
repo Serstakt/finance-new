@@ -223,8 +223,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .favorite-wrapper { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
 .favorite-flag { font-size: 13px; transition: color 0.2s, transform 0.2s; display: inline-block; line-height: 1; }
 .favorite-flag svg { width: 14px; height: 14px; display: block; }
-/* Закрашенный красный bookmark (lucide), когда тикер в избранном */
-.favorite-flag.favorite-filled svg { fill: #ef5350; stroke: #ef5350; }
+/* Закрашенный bookmark (lucide), когда тикер в избранном: цвет заливки
+   задаётся инлайн-атрибутами fill/stroke в ui.js (по выбранному цвету). */
 .favorite-flag.empty { color: #363a45; }
 .favorite-flag:hover { transform: scale(1.15); }
 .favorite-flag.empty:hover { color: #787b86; }
@@ -237,7 +237,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .favorite-picker span {
   cursor: pointer; font-size: 12px; padding: 1px; border-radius: 2px;
   transition: background 0.15s, transform 0.15s;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.favorite-picker span svg { width: 14px; height: 14px; display: block; fill: currentColor; stroke: currentColor; }
 .favorite-picker span:hover { background: #2a2e39; transform: scale(1.2); }
 
 /* === КРУГЛЫЙ ЛОГОТИП ТИКЕРА (меньший размер) === */

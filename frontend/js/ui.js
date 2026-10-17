@@ -382,13 +382,9 @@ window.buildRowElement = function(sym) {
   div.innerHTML = `
     <span class="drag-handle" title="Перетащить">⋮</span>
     <div class="favorite-wrapper" onclick="toggleFavoritePicker('${escapeHtml(sym)}', event)" title="Флажок избранного">
-      <span class="favorite-flag empty" style="color: #363a45"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span>
+      <span class="favorite-flag empty" style="color: #363a45">${BOOKMARK_SVG}</span>
       <div class="favorite-picker">
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'red')" style="color:#ef5350" title="Красный">🔴</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'blue')" style="color:#2962ff" title="Синий">🔵</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'yellow')" style="color:#ffca28" title="Желтый">🟡</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'orange')" style="color:#ff9800" title="Оранжевый">🟠</span>
-        <span onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', 'green')" style="color:#26a69a" title="Зеленый">🟢</span>
+        ${Object.entries(FLAG_COLORS).map(([key, c]) => `<span class="favorite-picker-item" onclick="event.stopPropagation(); setFavorite('${escapeHtml(sym)}', '${key}')" style="color:${c.hex}" title="${c.name}">${BOOKMARK_SVG}</span>`).join('')}
       </div>
     </div>
     <div class="ticker-logo-container"></div>
@@ -505,11 +501,16 @@ window.updateRow = function(div, sym, data, list, prev) {
   const flagColor = appState.favorites[sym] || null;
   const flagCls = 'favorite-flag' + (flagColor ? '' : ' empty');
   if (flagColor !== prev.flag) {
-    // Закрашенный красный bookmark (lucide): при избранном цвете — красная
-    // заливка, иначе — контурный серый.
-    flagEl.style.color = flagColor ? '#ef5350' : '#363a45';
+    // Закрашенный bookmark (lucide): при избранном цвете — заливка этим
+    // цветом (красный по умолчанию), иначе — контурный серый.
+    const hex = (window.FLAG_COLORS[flagColor] || FLAG_COLORS['red']).hex;
+    flagEl.style.color = flagColor ? hex : '#363a45';
     flagEl.innerHTML = BOOKMARK_SVG;
     flagEl.className = flagCls + (flagColor ? ' favorite-filled' : '');
+    if (flagColor) {
+      flagEl.firstChild.setAttribute('fill', hex);
+      flagEl.firstChild.setAttribute('stroke', hex);
+    }
     wrapper.title = flagColor ? 'Нажмите, чтобы убрать из избранного' : 'Нажмите, чтобы выбрать цвет';
     prev.flag = flagColor;
   }
