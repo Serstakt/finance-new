@@ -936,22 +936,21 @@ window.openAddAlertForActiveSymbol = async function() {
   await openAlertModal(symbol);
 };
 
-// Рендер содержимого вкладки «Алерты»: ТАБЛИЦА алертов всех тикеров
+// Рендер содержимого вкладки «Алерты»: ТАБЛИЦА алертов выбранного тикера
 // (строки: Тикер, Цена, Статус, Время и дата; у активных справа кнопка
-// «Отменить»). Выбранный тикер используется только для подсветки порядка
-// строк. При пустом кеше алертов тянем свежие данные из БД.
+// «Отменить»). Без выбранного тикера таблица пуста. При пустом кеше алертов
+// тянем свежие данные из БД.
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
-  // Таблица показывает алерты всех тикеров, поэтому пустой выбор тикера
-  // не мешает рендеру.
+  // На вкладке видны только алерты выбранного тикера.
   const sym = (!symbol || symbol.startsWith('SECTION:')) ? '' : symbol;
   // Свежие статусы из БД. Кеш пуст — тянем всё; есть алерты этого тикера —
   // рисуем сразу (иначе пересозданный/новый алерт мог «исчезать» до ответа
   // сервера и вкладка показывала «Нет алертов»).
   const alerts = window.dbAlerts || [];
   const hasCacheForSymbol = alerts.some(a => a.symbol === sym);
-  if (!alerts.length || (sym && !hasCacheForSymbol)) await loadAlertsFromDb();
+  if (!alerts.length || !hasCacheForSymbol) await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
   const activeSymRaw = (cur && cur.activeSymbol) || '';
@@ -962,9 +961,10 @@ window.renderAlertsTab = async function(symbol) {
 
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  // Все алерты всех тикеров — таблица строками (столбцы: Тикер, Цена,
-  // Статус, Время и дата, справа кнопка «Отменить» у активных).
-  const allAlerts = alerts.slice();
+  // Только алерты выбранного тикера — таблица строками (столбцы: Тикер,
+  // Цена, Статус, Время и дата, справа кнопка «Отменить» у активных).
+  const sym = (!symbol || String(symbol).startsWith('SECTION:')) ? '' : symbol;
+  const allAlerts = alerts.filter(a => a.symbol === sym);
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
@@ -987,9 +987,7 @@ window.renderAlertsList = function(symbol) {
   allAlerts.sort((a, b) => {
     const byStatus = (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9);
     if (byStatus !== 0) return byStatus;
-    // внутри статуса — выбранный тикер выше, затем новые сверху
-    const bySymbol = (a.symbol === symbol ? 0 : 1) - (b.symbol === symbol ? 0 : 1);
-    if (bySymbol !== 0) return bySymbol;
+    // внутри статуса — новые сверху
     return (b.id || 0) - (a.id || 0);
   });
 
@@ -1026,13 +1024,10 @@ window.renderAlertsList = function(symbol) {
     const created = fmtTime(alertData.created_at);
     const triggeredInfo = status === 'triggered' && alertData.triggered_price != null
       ? ` · по цене ${alertData.triggered_price}` : '';
-    const symLabel = alertData.symbol === symbol
-      ? escapeHtml(alertData.symbol)
-      : `${escapeHtml(alertData.symbol)} <span class="alerts-tab-hint">(другой)</span>`;
     const tr = document.createElement('tr');
     tr.className = `alert-row ${statusClass}`;
     tr.innerHTML = `
-      <td class="alert-cell-symbol">${symLabel}</td>
+      <td class="alert-cell-symbol">${escapeHtml(alertData.symbol)}</td>
       <td class="alert-cell-price">${conditionText} ${alertData.target}</td>
       <td class="alert-status ${statusClass}">${statusText}${triggeredInfo}</td>
       <td class="alert-cell-time">${created}</td>

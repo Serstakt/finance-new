@@ -250,8 +250,15 @@ const contentText = () => {
   cur.activeSymbol = 'GAZP';                  // «успели» переключиться на GAZP до saveAlert
   await sandbox.saveAlert();
   assert(dbRows.length === 2, 'Второй алерт создан в «БД»');
-  assert(contentText().includes('290') && !contentText().includes('Нет алертов'),
-    'Новый алерт ≤ 290 сразу виден в списке (не «Нет алертов»)');
+  // Вкладка относится к выбранному тикеру: после гонки выбран GAZP, а алерт
+  // создан для SBER — на вкладке (GAZP) чужой алерт не показывается.
+  assert(!contentText().includes('290') && contentText().includes('Нет алертов'),
+    'После гонки вкладка показывает только алерты выбранного тикера (GAZP — «Нет алертов»)');
+  // Тот же алерт ≤ 290 виден, когда выбран его тикер (SBER).
+  cur.activeSymbol = 'SBER';
+  await sandbox.renderAlertsTab('SBER');
+  assert(contentText().includes('290') && !contentText().includes('310'),
+    'Алерт ≤ 290 виден на вкладке своего тикера (SBER), чужой (310/GAZP) скрыт');
 
   // --- Сценарий 2б: открытие модалки для другого тикера при открытой вкладке
   // синхронизирует выбранный тикер со списком на вкладке
