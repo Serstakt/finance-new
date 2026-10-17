@@ -476,6 +476,42 @@ window.saveOrderToDb = async function(listId, symbols) {
   }
 };
 
+// Точечное сохранение результата drag&drop: в БД уходит только перемещённый
+// элемент и его новая позиция, а не весь список (как делал saveOrderToDb).
+// Сервер переставляет символ поверх актуального порядка, поэтому параллельные
+// изменения с другого устройства не затираются, а payload не растёт с размером
+// списка. В ответ приходит новый порядок — им и сверяем локальное состояние;
+// при ошибке откатываемся на снимок с сервера (syncListWithDb).
+window.moveOrderToDb = async function(listId, symbol, targetIndex) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  await window.waitForListNameSaved(listId);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, symbol: symbol, target_index: targetIndex })
+    }, 15000);
+    if (res.status === 404) {
+      // элемента нет в списке на сервере (например, удалён с другого
+      // устройства) — перечитаем состав из БД, чтобы UI не показывал лишнее
+      if (typeof syncListWithDb === 'function') await syncListWithDb(listId);
+      return false;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const list = appState.lists[listId];
+    if (list && Array.isArray(data.symbols)) {
+      list.tickers = data.symbols; // сервер — источник истины по порядку
+    }
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Ошибка сохранения порядка в БД: ' + e.message, 'error');
+    if (typeof syncListWithDb === 'function') await syncListWithDb(listId);
+    if (typeof render === 'function') render();
+    return false;
+  }
+};
+
 // Ставит/снимает цветной флажок элемента в БД (watchlist_items.flag_color).
 // Теперь избранное живёт на сервере и не теряется при смене браузера.
 window.setFlagInDb = async function(listId, symbol, color) {
