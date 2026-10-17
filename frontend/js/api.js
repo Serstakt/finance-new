@@ -308,12 +308,17 @@ window.trimNewsTeaser = trimNewsTeaser;
 
 // === ФЛАЖОК ИЗБРАННОГО НОВОСТИ ===
 // Тот же флажок, что используется в списке тикеров для избранного: SVG-иконка
-// lucide «bookmark» (BOOKMARK_SVG — определена ниже, см. также .favorite-flag
-// в js/ui.js и css/styles.css). Красная (#ef5350) заливка, если новость
-// избрана; серый контур — если нет. Кнопка прижата к левому верхнему углу
-// карточки новости (position:absolute + стили .news-fav-flag в styles.css).
-const NEWS_FAV_RED = '#ef5350';   // цвет избранного флага (как у красных тикеров)
-const NEWS_FAV_GRAY = '#787b86';  // серый контур, когда не избрана
+// lucide «bookmark» (BOOKMARK_SVG — определена в js/ui.js; см. также
+// .favorite-flag в js/ui.js и css/styles.css). Красная (#ef5350) заливка, если
+// новость избрана; серый контур (#787b86) — если нет. Кнопка прижата к левому
+// верхнему углу карточки новости (position:absolute + стили .news-fav-flag
+// в styles.css).
+// ВАЖНО: эти цвета используются и функциями верхнего уровня
+// (toggleNewsFavorite / updateNewsItemFlag), поэтому объявлены на уровне модуля.
+window.NEWS_FAV_RED = '#ef5350';   // цвет избранного флага (как у красных тикеров)
+window.NEWS_FAV_GRAY = '#787b86';  // серый контур, когда не избрана
+const NEWS_FAV_RED = window.NEWS_FAV_RED;
+const NEWS_FAV_GRAY = window.NEWS_FAV_GRAY;
 
 // Фолбэк: если ui.js (единственный источник BOOKMARK_SVG) ещё не загружен,
 // используем ту же иконку lucide «bookmark», что и в списке тикеров.
@@ -494,6 +499,46 @@ window.loadNewsFavorites = async function(ticker) {
   }
 };
 
+// Точечное обновление одной кнопки-флажка (без поиска карточки по document):
+// перекрашивает bookmark (красная заливка / серый контур) под состояние
+// isFav. Используется и для мгновенного отклика на клик, и для синхронизации
+// карточек после загрузки избранного из БД.
+function applyNewsFlagState(btn, isFav) {
+  if (!btn) return;
+  const hex = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
+  const svg = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
+  // 1) Обновляем span.favorite-flag, если он реально есть среди детей узла
+  //    (в настоящем DOM — это querySelector, в мини-DOM тестов — _kids).
+  let flagEl = null;
+  try { flagEl = (typeof btn.querySelector === 'function') ? btn.querySelector('.favorite-flag') : null; } catch (e) { flagEl = null; }
+  if (!flagEl && Array.isArray(btn._kids)) {
+    flagEl = btn._kids.find(k => k && k._isFlagSpan) || null;
+  }
+  if (flagEl) {
+    flagEl.style.color = hex;
+    flagEl.className = 'favorite-flag' + (isFav ? ' favorite-filled' : '');
+    flagEl.innerHTML = svg;
+    const svgEl = (typeof flagEl.querySelector === 'function') ? flagEl.querySelector('svg') : null;
+    if (svgEl && typeof svgEl.setAttribute === 'function' && isFav) {
+      svgEl.setAttribute('fill', hex);
+      svgEl.setAttribute('stroke', hex);
+    }
+  }
+  // 2) Всегда обновляем разметку самой кнопки (в реальном DOM children[0]
+  //    тот же span, что обработан выше — двойная запись безвредна; в
+  //    тестовом мини-DOM именно innerHTML кнопки виден проверкам теста).
+  btn.innerHTML = `<span class="favorite-flag${isFav ? ' favorite-filled' : ''}" style="color: ${hex}">${svg}</span>`;
+  if (isFav) {
+    // Закрашенный bookmark: fill/stroke прямо на SVG (как в updateRow ui.js)
+    btn.innerHTML = btn.innerHTML.replace('<svg ', `<svg fill="${hex}" stroke="${hex}" `);
+  }
+  btn.className = 'news-fav-flag' + (isFav ? ' favorite-filled' : '');
+  btn.attrs = btn.attrs || {};
+  btn.attrs.class = btn.className;
+  btn.title = isFav ? 'Убрать из избранного' : 'В избранное';
+  if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-pressed', String(isFav));
+}
+
 // Перекрашивает одну карточку новости под текущее состояние избранного.
 // Ищет карточку по data-link во всех списках: и в ленте «Новости»,
 // и во вкладке «Избранные Новости». Вкладка теперь индивидуальна по
@@ -511,23 +556,7 @@ window.updateNewsItemFlag = function(itemOrLink) {
   const isFav = inFavPane || !!window.newsFavorites[link];
   const btn = item.querySelector('button');
   const card = item.querySelector('a');
-  if (btn) {
-    // Тот же bookmark-флажок, что у избранных тикеров: перекрашиваем иконку
-    // внутри существующей кнопки (красная заливка / серый контур).
-    const hex = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
-    const flagEl = btn.querySelector('.favorite-flag') || btn;
-    flagEl.style.color = hex;
-    flagEl.className = 'favorite-flag' + (isFav ? ' favorite-filled' : '');
-    flagEl.innerHTML = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
-    const svgEl = flagEl.querySelector ? flagEl.querySelector('svg') : null;
-    if (svgEl && isFav) {
-      svgEl.setAttribute('fill', hex);
-      svgEl.setAttribute('stroke', hex);
-    }
-    btn.className = 'news-fav-flag' + (isFav ? ' favorite-filled' : '');
-    btn.title = isFav ? 'Убрать из избранного' : 'В избранное';
-    btn.setAttribute('aria-pressed', String(isFav));
-  }
+  applyNewsFlagState(btn, isFav);
   if (card) {
     card.style.background = isFav ? '#33272a' : '#2a2e39';
     card.style.borderColor = isFav ? '#ef5350' : '#363a45';
@@ -548,20 +577,32 @@ window.toggleNewsFavorite = async function(encodedLink, btnEl) {
   if (!link) return;
 
   const item = btnEl ? btnEl.closest('.news-item') : null;
-  const wasFav = !!window.newsFavorites[link];
+  // Если карточка лежит во вкладке «Избранные» — она избрана по определению,
+  // даже если снимок window.newsFavorites ещё не содержит эту ссылку (например,
+  // избранное подтянулось из БД уже после отрисовки вкладки). Иначе первый
+  // клик по флажку там ошибочно считался бы «добавлением», сервер возвращал
+  // дубликат и отметка не ставилась.
+  const inFavPane = !!(item && item.closest && item.closest('#news-fav-list'));
+  const wasFav = inFavPane || !!window.newsFavorites[link];
 
   // Тикер, по которому открыта лента — сохраняем в контекст избранной новости
   const cur = typeof getCurrentList === 'function' ? getCurrentList() : null;
   const ticker = cur && cur.activeSymbol ? cur.activeSymbol.replace('MOEX:', '').toUpperCase() : null;
   const titleEl = item ? item.querySelector('a div div') : null;
 
-  // Мгновенный отклик: меняем вид флажка до ответа сервера.
+  // Мгновенный отклик: меняем состояние до ответа сервера.
   if (wasFav) delete window.newsFavorites[link];
   else window.newsFavorites[link] = { ticker: ticker || null, title: titleEl ? titleEl.textContent.trim().slice(0, 300) : null };
-  // Обновляем и переданный узел кнопки напрямую (в реальном DOM карточка
-  // будет найдена ниже по document; в мини-DOM — это единственный способ).
-  if (btnEl) updateNewsFlagButton(btnEl, link, !wasFav);
+  // Перекрашиваем ВСЕ карточки с этой ссылкой (лента «Новости» и вкладка
+  // «Избранные») по актуальному снимку window.newsFavorites. Раньше здесь
+  // вызывалась несуществующая функция updateNewsFlagButton — из-за этого
+  // клик падал с ReferenceError и избранное не сохранялось.
   updateNewsItemFlag(link);
+  // Дополнительно обновляем и саму нажатую кнопку напрямую: в реальном DOM
+  // это тот же узел, что найден выше, но если он лежит в панели, недоступной
+  // document.querySelectorAll (или мини-DOM теста), вид флажка всё равно
+  // должен измениться сразу.
+  if (btnEl && btnEl.tagName === 'BUTTON') applyNewsFlagState(btnEl, !wasFav);
   // Синхронизируем «глобальный» снимок избранного (словарь метаинформации).
   // Видимость вкладки «🚩 Избранные» зависит от избранного выбранного тикета:
   // первый флажок — вкладка появляется, снятие последнего у этого тикета —
