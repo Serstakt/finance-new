@@ -112,17 +112,23 @@ async def save_news_to_cache(ticker: str, news_data: list):
     except Exception as e:
         print(f"❌ Ошибка сохранения в кэш: {e}")
 
-async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_news: int = 50, force_refresh: bool = False) -> list:
-    channel_username = "newssmartlab"
+async def _refresh_cache_in_background(cache_key: str):
+    """Фоновое переобновление кэша (stale-while-revalidate).
 
-    # 1. Проверяем кэш (если не запрошено принудительное обновление).
-    # Для пустого тикера строка кэша — общий новостной поток (его наполняет
-    # фоновый вотчер на сервере), для обычного — лента этого тикера.
+    Запускается через asyncio.create_task после того, как пользователю уже
+    отдали устаревшую ленту. Ошибку гасим сами: задачу никто не джойнит, и
+    непойманное исключение породило бы шум в логах event loop.
+    """
+    try:
+        await parse_and_save_news(cache_key)
+    except Exception as e:
+        print(f"❌ Фоновое обновление кэша '{cache_key or 'STREAM'}' не удалось: {e}")
+
+
+async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int = 50) -> list:
+    """Парсит t.me/s/newssmartlab и сохраняет результат в кэш. Ядро SWR-логики."""
+    channel_username = "newssmartlab"
     cache_key = ticker if ticker else STREAM_CACHE_KEY
-    if not force_refresh:
-        cached_news = await get_cached_news(cache_key)
-        if cached_news is not None:
-            return cached_news
 
     search_terms = []
     if ticker:
@@ -238,7 +244,7 @@ async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_n
 
         print(f"\n✅ Завершено. Проверено: {total_checked}, найдено: {len(news_list)}")
 
-        # 2. Сохраняем результат в кэш перед возвратом
+        # Сохраняем результат в кэш перед возвратом (перезаписывает stale-строку)
         await save_news_to_cache(ticker, news_list)
         return news_list
 
@@ -252,3 +258,32 @@ async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_n
         if stale is not None:
             return stale
         return news_list
+
+
+async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_news: int = 50, force_refresh: bool = False) -> list:
+    """Точка входа для API: кэш + stale-while-revalidate поверх парсера."""
+    # Для пустого тикера строка кэша — общий новостной поток (его наполняет
+    # фоновый вотчер на сервере), для обычного — лента этого тикера.
+    cache_key = ticker if ticker else STREAM_CACHE_KEY
+
+    # 1. Принудительное обновление («кнопка Обновить») — всегда тяжёлый путь.
+    if force_refresh:
+        return await parse_and_save_news(ticker, max_posts, max_news)
+
+    # 2. Свежий кэш (в пределах TTL) — мгновенный ответ без сети.
+    cached_news = await get_cached_news(cache_key)
+    if cached_news is not None:
+        return cached_news
+
+    # 3. Stale-while-revalidate: если в БД лежит устаревшая запись, сразу
+    # отдаём её пользователю, а переобновление запускаем в фоне. Лента
+    # отображается мгновенно даже при возрасте кэша в часы; следующий запрос
+    # (после завершения фона) получит уже свежие данные.
+    stale_news = await get_stale_cached_news(cache_key)
+    if stale_news is not None:
+        asyncio.create_task(_refresh_cache_in_background(cache_key))
+        return stale_news
+
+    # 4. Полнейший промах кэша (первый запрос после чистого старта) —
+    # синхронный парсинг, делать нечего: показывать пока нечего.
+    return await parse_and_save_news(ticker, max_posts, max_news)
