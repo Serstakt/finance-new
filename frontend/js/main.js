@@ -192,7 +192,7 @@ window.setFavorite = function(symbol, color) {
     appState.favorites[symbol] = color;
     const newListId = `fav_${color}`;
     if (!appState.lists[newListId]) {
-      appState.lists[newListId] = { name: `${FLAG_COLORS[color].icon} ${FLAG_COLORS[color].name}`, tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true };
+      appState.lists[newListId] = { name: window.favoriteListName(color), tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true };
     }
     if (!appState.lists[newListId].tickers.includes(symbol)) {
       appState.lists[newListId].tickers.push(symbol);
@@ -545,7 +545,39 @@ document.getElementById('show-watchlist-btn').addEventListener('click', () => {
   if (widget && widgetReady) setTimeout(() => widget.resize(), 150);
 });
 
-document.getElementById('list-selector').addEventListener('change', (e) => switchList(e.target.value));
+// Кастомный селектор списков (#list-selector, div вместо <select> — см.
+// populateListSelector в state.js): клик по кнопке открывает меню, клик по
+// пункту переключает список (switchList сам обновляет подпись кнопки).
+(function initListSelector() {
+  const wrap = document.getElementById('list-selector');
+  if (!wrap) return;
+  const toggle = document.getElementById('list-selector-toggle');
+  const menu = document.getElementById('list-selector-menu');
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !menu.classList.contains('open');
+    menu.classList.toggle('open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+
+  menu.addEventListener('click', (e) => {
+    const opt = e.target.closest('.list-option');
+    if (!opt) return;
+    e.stopPropagation();
+    window.closeListSelector();
+    const id = opt.dataset.listId;
+    if (id && id !== appState.activeListId) switchList(id);
+    else populateListSelector();
+  });
+
+  // закрытие по клику вне и по Escape
+  document.addEventListener('click', () => window.closeListSelector());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.closeListSelector();
+  });
+})();
+
 document.getElementById('add-list-btn').addEventListener('click', addNewList);
 document.getElementById('rename-list-btn').addEventListener('click', renameList);
 document.getElementById('delete-list-btn').addEventListener('click', deleteCurrentList);
