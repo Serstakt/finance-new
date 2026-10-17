@@ -524,6 +524,65 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .alert-cell-action { text-align: right; white-space: nowrap; }
 .alerts-tab-hint { color: #787b86; font-size: 10px; font-weight: 400; }
 
+/* Вкладка «Дивиденды/События»: календарь корпоративных событий MOEX
+   (ISS eventencalendar) — заголовок, таблицы ближайших/прошедших событий */
+.events-tab-header {
+  padding: 12px 14px 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #d1d4dc;
+}
+.events-tab-symbol { color: #2962ff; }
+.events-tab-hint { color: #787b86; font-size: 10px; font-weight: 400; }
+.events-tab-empty,
+.events-tab-loading {
+  text-align: center;
+  color: #787b86;
+  padding: 20px;
+}
+.events-tab-error {
+  text-align: center;
+  color: #ef5350;
+  padding: 20px;
+}
+.events-section-title {
+  padding: 10px 14px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #9aa0ab;
+}
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.events-table th {
+  text-align: left;
+  padding: 8px 14px;
+  color: #9aa0ab;
+  font-weight: 700;
+  font-size: 13px;
+  border-bottom: 1px solid #363a45;
+  position: sticky;
+  top: 0;
+  background: #1e222d;
+}
+.events-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a2f3d;
+  color: #d1d4dc;
+  vertical-align: middle;
+}
+.event-cell-date { font-weight: 600; white-space: nowrap; }
+.event-cell-rel { color: #787b86; white-space: nowrap; font-size: 12px; }
+.event-cell-rel.event-soon { color: #ffca28; font-weight: 600; }
+.event-cell-value { font-weight: 600; white-space: nowrap; }
+.event-cell-name { }
+.event-cell-sub { color: #787b86; font-size: 11px; margin-top: 2px; }
+.event-upcoming td { background: rgba(38, 166, 154, 0.05); }
+.event-dividend td { background: rgba(255, 202, 40, 0.06); }
+.event-past td { opacity: 0.65; }
+
 #news-list {
   flex: 1;
   overflow-y: auto;

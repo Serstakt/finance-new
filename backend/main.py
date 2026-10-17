@@ -425,6 +425,27 @@ async def migrate_alerts_endpoint(payload: schemas.AlertMigrate):
 
 
 # =============================================================================
+# ДИВИДЕНДЫ / КОРПОРАТИВНЫЕ СОБЫТИЯ (вкладка «Дивиденды/События» в Watchlist)
+# Источник — ISS Мосбиржи: .../securities/{TICKER}/eventencalendar.json.
+# Данные есть только для MOEX-тикеров; для прочих бирж возвращаем пустой
+# календарь с пометкой moex_only.
+# =============================================================================
+
+@app.get("/api/moex/events/{symbol}")
+async def get_moex_events(symbol: str):
+    """Календарь дивидендов и корпоративных событий MOEX-тикера (ISS eventencalendar)."""
+    upper = symbol.upper()
+    if not upper.startswith("MOEX:"):
+        return {"symbol": upper, "events": [], "upcoming": [], "past": [],
+                "source": "moex_iss_eventencalendar", "moex_only": True}
+    ticker = upper.replace("MOEX:", "")
+    try:
+        return await moex_service.fetch_moex_events(ticker)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # НОВОСТИ (Telegram @newssmartlab)
 # =============================================================================
 
