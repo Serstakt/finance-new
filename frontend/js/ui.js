@@ -407,6 +407,11 @@ window.buildRowElement = function(sym) {
     createChart(sym);
     document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
     div.classList.add('active');
+    // Вкладка «Алерты» показывает алерты выбранного тикера — при смене
+    // выбора она тоже должна обновиться (раньше оставался список старого).
+    if (sessionStorage.getItem('bottomTab') === 'alerts') {
+      renderAlertsList(sym);
+    }
   });
 
   div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
@@ -819,6 +824,19 @@ window.openAlertModal = async function(symbol) {
     document.getElementById('alert-target-price').value = '';
     deleteBtn.style.display = 'none';
   }
+
+  // Если открыта вкладка «Алерты» — синхронизируем её с модалкой: список
+  // должен отражать алерты именно того тикера, для которого она открыта
+  // (раньше при создании алерта через колокольчик другого тикера вкладка
+  // продолжала рисовать пустой список выбранного тикера).
+  if (sessionStorage.getItem('bottomTab') === 'alerts') {
+    const cur = getCurrentList();
+    if (cur && !symbol.startsWith('SECTION:')) {
+      cur.activeSymbol = symbol;
+      setActiveSymbolInDb(appState.activeListId, symbol);
+      renderAlertsList(symbol);
+    }
+  }
 };
 
 window.closeAlertModal = function() {
@@ -857,11 +875,17 @@ window.saveAlert = async function() {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
-    log(`Алерт сохранён в БД для ${currentAlertSymbol}: ${condition} ${target}`, 'success');
+    const savedSymbol = currentAlertSymbol;
+    log(`Алерт сохранён в БД для ${savedSymbol}: ${condition} ${target}`, 'success');
     closeAlertModal();
     await loadAlertsFromDb(); // мгновенно обновляем колокольчик по данным из БД
-    // Если открыта вкладка «Алерты» — перерисовываем её под этот тикер
-    if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsList(currentAlertSymbol);
+    // Если открыта вкладка «Алерты» — перерисовываем её под ЭТОТ тикер.
+    // Важно: closeAlertModal() сбрасывает currentAlertSymbol, а при смене
+    // выбранного тикера во время сетевой записи вкладки список иначе показывал
+    // «Нет алертов для этого тикера», хотя алерт уже был создан и лежал в кеше.
+    if (sessionStorage.getItem('bottomTab') === 'alerts' && savedSymbol) {
+      renderAlertsTab(savedSymbol);
+    }
   } catch (e) {
     log(`Ошибка сохранения алерта: ${e.message}`, 'error');
     window.alert('Не удалось сохранить алерт: ' + e.message);
@@ -922,11 +946,16 @@ window.renderAlertsTab = async function(symbol) {
     container.innerHTML = '<div style="padding: 20px; text-align: center; color: #787b86;">Выберите тикер для просмотра алертов</div>';
     return;
   }
-  // Свежие статусы из БД (активные/сработавшие/отменённые)
-  if (!(window.dbAlerts || []).length) await loadAlertsFromDb();
+  // Свежие статусы из БД. Кеш пуст — тянем всё; есть алерты этого тикера —
+  // рисуем сразу (иначе пересозданный/новый алерт мог «исчезать» до ответа
+  // сервера и вкладка показывала «Нет алертов для этого тикера»).
+  const alerts = window.dbAlerts || [];
+  const hasCacheForSymbol = alerts.some(a => a.symbol === symbol);
+  if (!alerts.length || !hasCacheForSymbol) await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
-  if ((cur && cur.activeSymbol) !== symbol) return;
+  const activeSym = (cur && cur.activeSymbol) || '';
+  if (activeSym !== symbol && !(activeSym.startsWith('SECTION:') && hasCacheForSymbol)) return;
   renderAlertsList(symbol);
 };
 
