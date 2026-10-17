@@ -342,7 +342,7 @@ window.newsFlagBtnHtml = newsFlagBtnHtml;
 newsList.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
     <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        📊 Найдено <strong style="color: #2962ff;">${news.length}</strong> новостей
+        Найдено <strong style="color: #2962ff;">${news.length}</strong> новостей
     </div>
 </div>
 <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
