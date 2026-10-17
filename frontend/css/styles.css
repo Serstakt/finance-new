@@ -485,6 +485,16 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Контейнеры вкладок: показываем только активную (display задаёт JS) */
 .tab-pane { flex: 1; overflow-y: auto; min-height: 0; }
 
+/* Вкладка «Алерты»: заголовок со списком ценовых уведомлений выбранного
+   тикера (перенесена из модалки «📋 Алерты для …») */
+.alerts-tab-header {
+  padding: 12px 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d1d4dc;
+}
+#alerts-list .alerts-tab-content { padding-bottom: 12px; }
+
 #news-list {
   flex: 1;
   overflow-y: auto;
