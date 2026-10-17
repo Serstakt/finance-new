@@ -52,7 +52,13 @@ RU_NAMES = {
 }
 
 async def get_cached_news(ticker: str) -> list | None:
-    """Получает новости из БД, если кэш еще действителен."""
+    """Получает свежие новости из БД (в пределах TTL).
+
+    Устаревшая запись НЕ удаляется: она остаётся в таблице как «stale»-резерв
+    и возвращается через get_stale_cached_news, пока идёт переобновление.
+    Так первый ответ всегда мгновенный, а при сбое парсинга t.me лента не
+    «испаряется».
+    """
     try:
         with get_session() as db:
             cache = db.query(NewsCache).filter(NewsCache.ticker == ticker).first()
@@ -62,12 +68,30 @@ async def get_cached_news(ticker: str) -> list | None:
                     print(f"✅ Возвращаем новости из SQLite кэша для {ticker} (осталось {int(CACHE_DURATION_SECONDS - age)} сек)")
                     return json.loads(cache.news_data)
                 else:
-                    print(f"⏳ Кэш устарел для {ticker}, удаляем из БД...")
-                    db.delete(cache)
-                    db.commit()
+                    print(f"⏳ Кэш устарел для {ticker} (возраст {int(age)} сек), "
+                          f"запись оставлена в БД для обновления")
             return None
     except Exception as e:
         print(f"❌ Ошибка чтения кэша: {e}")
+        return None
+
+
+async def get_stale_cached_news(ticker: str) -> list | None:
+    """Возвращает данные кэша независимо от его возраста (stale-while-revalidate).
+
+    Используется как аварийный резерв: если свежей строки нет и парсинг t.me
+    завершился ошибкой, отдаём последнюю известную ленту вместо пустого ответа.
+    """
+    try:
+        with get_session() as db:
+            cache = db.query(NewsCache).filter(NewsCache.ticker == ticker).first()
+            if cache:
+                age = (datetime.utcnow() - cache.timestamp).total_seconds()
+                print(f"🗄️ Возвращаем устаревший кэш для {ticker} (возраст {int(age)} сек)")
+                return json.loads(cache.news_data)
+            return None
+    except Exception as e:
+        print(f"❌ Ошибка чтения устаревшего кэша: {e}")
         return None
 
 async def save_news_to_cache(ticker: str, news_data: list):
@@ -220,4 +244,11 @@ async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_n
 
     except Exception as e:
         print(f"❌ Ошибка парсинга: {e}")
+        # SWR-резерв: если в БД осталась устаревшая (но не удалённая) запись,
+        # отдаём её вместо пустого/неполного ответа — пользователю лучше
+        # показать ленту пяти минут назад, чем пустой экран. Неполный результат
+        # прерванного парсинга в кэш НЕ сохраняем, чтобы не затирать stale-строку.
+        stale = await get_stale_cached_news(cache_key)
+        if stale is not None:
+            return stale
         return news_list
