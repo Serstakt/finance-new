@@ -24,3 +24,5 @@ Thumbs.db
 
 # Bundles
 *.bundle
+# Telegram-бот: секреты (токен/chat_id) не коммитим; шаблон .env.example — наоборот
+.env.local

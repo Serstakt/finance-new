@@ -89,3 +89,19 @@ class PriceAlert(Base):
     triggered_price = Column(Float, nullable=True)     # цена срабатывания
     created_at = Column(DateTime, default=datetime.utcnow)
     triggered_at = Column(DateTime, nullable=True)
+
+
+class AlertNotificationLog(Base):
+    """Журнал push-уведомлений о сработавших алертах (Telegram-бот).
+
+    Фоновый цикл alert_service при срабатывании алерта шлёт сообщение в
+    Telegram; чтобы не спамить повторами (например, если сеть дрогнула и
+    отправка будет переиграна), факт успешной доставки фиксируется здесь:
+    на один alert_id приходится максимум одна строка (уникальный ключ).
+    """
+    __tablename__ = "alert_notification_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(Integer, nullable=False, unique=True, index=True)
+    chat_id = Column(String, nullable=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)

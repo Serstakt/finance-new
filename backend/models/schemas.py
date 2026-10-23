@@ -168,3 +168,10 @@ class AlertMigrate(BaseModel):
     """
     alerts: List[Dict[str, Any]]
 
+
+# === PUSH-УВЕДОМЛЕНИЯ О СРАБОТАВШИХ АЛЕРТАХ (Telegram-бот) ===
+
+class NotificationTest(BaseModel):
+    """Необязательное тело для POST /api/notifications/test — свой текст."""
+    text: Optional[str] = None
+

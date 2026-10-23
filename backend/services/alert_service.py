@@ -21,6 +21,7 @@ from datetime import datetime
 from backend.database.database import get_session, safe_create_all
 from backend.database.models import PriceAlert
 from backend.services import moex_service, crypto_service
+from backend.services import notification_service
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,14 @@ async def check_all_active() -> list[dict]:
             logger.info("Алерт сработал: %s (%s %s), цена %s",
                         t["symbol"], t["condition"], t["target"], t["triggered_price"])
         trim_history()
+        # Push-уведомления (Telegram-бот): алерт мог сработать в фоновом цикле
+        # при закрытом браузере — без рассылки пользователь узнал бы о нём только
+        # при следующем открытии вкладки. Ошибки доставки не роняют цикл:
+        # notify_alerts_triggered сама перехватывает сбои сети/Telegram.
+        try:
+            await notification_service.notify_alerts_triggered(triggered)
+        except Exception:  # noqa: BLE001
+            logger.exception("Ошибка при отправке push-уведомлений об алертах")
     return triggered
 
 
