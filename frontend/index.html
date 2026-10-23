@@ -72,18 +72,18 @@
         <h2 style="font-size: 18px; margin-bottom: 15px; color: #d1d4dc;">Быстрые действия</h2>
         <div class="quick-actions">
             <div class="action-card" onclick="navigateTo('watchlist')">
-                <div class="action-icon">📋</div>
+                <div class="action-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></div>
                 <div class="action-info"><h3>Watchlist</h3><p>Списки наблюдения с ценами</p></div>
             </div>
             <div class="action-card" onclick="navigateTo('portfolio')">
-                <div class="action-icon">💼</div>
+                <div class="action-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-2a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 6v5"/><path d="M16 20a2 2 0 0 0 2-2v-2a2 2 0 0 1 2-2V9a2 2 0 0 0-2-2"/><path d="M6 20a2 2 0 0 1-2-2v-2a2 2 0 0 0-2-2V9a2 2 0 0 1 2-2"/></svg></div>
                 <div class="action-info"><h3>Портфель</h3><p>Управление активами</p></div>
             </div>
         </div>
     </div>
 
     <div id="watchlist-page" class="page">
-        <button id="show-watchlist-btn" title="Показать Watchlist">◀ Списки</button>
+        <button id="show-watchlist-btn" title="Показать Watchlist"><span class="btn-icon btn-icon-vertical" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>Списки</button>
         <div id="watchlist">
             <div id="watchlist-header">
                 <div id="list-controls">
@@ -132,10 +132,10 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> Настройки
                     </button>
                     <div class="admin-menu">
-                        <button id="refresh-btn" onclick="refreshAllPrices()">🔄 Обновить</button>
-                        <button onclick="exportAllData()">📤 Экспорт</button>
-                        <button onclick="importAllData()">📥 Импорт</button>
-                        <button onclick="toggleDebug()">🐞 Debug</button>
+                        <button id="refresh-btn" onclick="refreshAllPrices()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></span>Обновить</button>
+                        <button onclick="exportAllData()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M2 15h2a19 19 0 0 1 2 2c1 2 1 3 2 5h10c1-2 1-3 2-5a19 19 0 0 1 2-2h2"/></svg></span>Экспорт</button>
+                        <button onclick="importAllData()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m17 8-5 5-5-5"/><path d="M2 15h2a19 19 0 0 1 2 2c1 2 1 3 2 5h10c1-2 1-3 2-5a19 19 0 0 1 2-2h2"/></svg></span>Импорт</button>
+                        <button onclick="toggleDebug()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></span>Debug</button>
                     </div>
                 </div>
             </div>
@@ -146,11 +146,11 @@
                  TradingView-виджет не позволяет рисовать внутри iframe, поэтому
                  разметка лежит на canvas-оверлее над контейнером графика. -->
             <div id="markup-toolbar" style="display: none;">
-                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене">➖ Уровень</button>
-                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате">↕️ Дата</button>
-                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика">🅰 Текст</button>
-                <button onclick="undoLastMarkup()" title="Удалить последний объект">↩️</button>
-                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера">🧹</button>
+                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/></svg></span>Уровень</button>
+                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате"><span class="btn-icon btn-icon-vertical" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/></svg></span>Дата</button>
+                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.5a4 4 0 0 1-4 4 4 4 0 0 1-4-4V4"/><path d="M4 4h3.5"/><path d="M10.5 4H7"/><path d="M14.5 13h5"/><path d="M17 10.5V13"/></svg></span>Текст</button>
+                <button onclick="undoLastMarkup()" title="Удалить последний объект"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg></span></button>
+                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></span></button>
                 <span id="markup-status"></span>
             </div>
             <!-- Сам график TradingView -->
@@ -169,12 +169,12 @@
                     <div class="tabs-group">
                         <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')"><span class="tab-news-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-4 0v12"/><path d="M15 7a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z"/><path d="M6 12h5"/><path d="M6 15h5"/><path d="M6 9h2"/></svg></span> Новости</button>
                         <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')"><span class="favorite-flag favorite-filled tab-fav-flag" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные</button>
-                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')">📝 Заметки</button>
-                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')">🔔 Алерты</button>
+                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12.5 3.5a2.1 2.1 0 0 1 3 3L6 16l-4 1 1-4Z"/></svg></span> Заметки</button>
+                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Алерты</button>
                     </div>
                     <div class="tab-actions">
-                        <button id="news-refresh-btn" onclick="refreshNews()">🔄 Обновить</button>
-                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика">🖊 Разметка</button>
+                        <button id="news-refresh-btn" onclick="refreshNews()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></span>Обновить</button>
+                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12.5 3.5a2.1 2.1 0 0 1 3 3L6 16l-4 1 1-4Z"/></svg></span>Разметка</button>
                         <!-- Кнопка добавления алерта: перенесена с колокольчика
                              из строк списка тикеров — открывает модалку
                              ценового уведомления для выбранного тикера -->
@@ -265,7 +265,7 @@
         <div class="portfolio-container">
             <!-- Заголовок и кнопки управления -->
             <div class="portfolio-header">
-                <h2 class="portfolio-title">💼 Мой Портфель</h2>
+                <h2 class="portfolio-title">Мой Портфель</h2>
                 <div class="portfolio-actions">
                     <button class="btn-primary" onclick="openAddPositionModal()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -388,7 +388,7 @@
 
 <div class="modal-overlay" id="alert-modal">
     <div class="modal-box">
-        <div class="modal-title">🔔 Ценовое уведомление: <span id="alert-symbol-name"></span></div>
+        <div class="modal-title"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Ценовое уведомление: <span id="alert-symbol-name"></span></div>
         <select class="modal-select" id="alert-condition">
             <option value="above">Цена станет ВЫШЕ или равна</option>
             <option value="below">Цена станет НИЖЕ или равна</option>

@@ -249,8 +249,8 @@ window.notesDoSave = async function() {
   setStatus('Сохраняю…', 'saving');
   const [listId] = st.key.split('|');
   const saved = await setNoteInDb(listId, st.symbol, html || null);
-  if (saved) setStatus(html ? '💾 Сохранено' : '🗑 Заметка очищена', 'saved');
-  else setStatus('⚠ Не удалось сохранить в БД — изменения только локально', 'error');
+  if (saved) setStatus('Сохранено', 'saved');
+  else setStatus('Не удалось сохранить в БД — изменения только локально', 'error');
   setTimeout(() => setStatus('', ''), 2500);
 };
 
