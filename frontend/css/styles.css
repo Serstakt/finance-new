@@ -522,6 +522,17 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    «Алерты»): наследует цвет вкладки, 13px как у остальных таб-иконок. */
 .tab-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
 .tab-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
+
+/* Иконки lucide внутри кнопок (меню «Настройки», панель разметки,
+   заголовки) — заменяют эмодзи; наследуют color кнопки через currentColor */
+.btn-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 5px; }
+.btn-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
+/* Вертикальная линия (инструмент «Дата») — та же иконка уровня, повёрнутая на 90° */
+.btn-icon-vertical svg { transform: rotate(90deg); }
+.title-icon { display: inline-flex; align-items: center; vertical-align: -3px; margin-right: 7px; }
+.title-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; }
+/* SVG-иконки карточек «Быстрые действия» вместо эмодзи */
+.action-icon svg { width: 32px; height: 32px; fill: none; stroke: currentColor; }
 /* Иконка во вкладке «Новости» (вместо emoji 📰): lucide «newspaper»
    (https://lucide.dev/icons/newspaper) — контурная, наследует цвет вкладки. */
 .tab-news-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
