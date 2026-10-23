@@ -220,6 +220,17 @@ window.syncListWithDb = async function(listId) {
     // больше не источник данных, а одноразовый перенос старого снимка делает
     // migrateLegacyStateToDb() на старте страницы. Пустой список в БД — это
     // просто пустой список.
+    // Если состав тикеров изменился (добавление/удаление/переупорядочивание),
+    // сбрасываем кэш последнего рендера: лёгкая перерисовка (canRenderWithoutPrices)
+    // не должна использовать данные для другого набора тикеров — иначе новый
+    // тикер мог отрисоваться скелетоном без запроса /api/prices.
+    const prevTickers = list.tickers || [];
+    const tickersChanged = prevTickers.length !== dbSymbols.length ||
+      prevTickers.some((s, i) => s !== dbSymbols[i]);
+    if (tickersChanged && typeof render === 'function') {
+      window.__lastRenderData = null;
+      window.__lastRenderAt = 0;
+    }
     list.tickers = dbSymbols;
 
     // Флажки, свёрнутые разделы и заметки: источник истины — колонки БД

@@ -648,12 +648,18 @@ window.__lastRenderData = null;
 window.__lastRenderAt = 0;
 
 // True, если можно перерисовать список из кэша цен, не обращаясь к API:
-// тот же список, данные свежие (не старше TTL кэша) и все тикеры уже известны.
+// тот же список, данные свежие (не старше TTL кэша) и для КАЖДОГО тикера
+// есть реальные данные цены. Проверка «символ существует в объекте кэша»
+// (`s in d`) недостаточна: после неудачной загрузки в кэш попадают null/
+// undefined-значения, и лёгкий рендер с таким кэшем оставлял в строках
+// скелетоны вместо запроса /api/prices. Поэтому требуем наличие price.
 window.canRenderWithoutPrices = function(list) {
   const d = window.__lastRenderData;
   if (!d || window.__rowsCache.listId !== appState.activeListId) return false;
   if (Date.now() - window.__lastRenderAt >= (window.CACHE_DURATION || 120000)) return false;
-  return list.tickers.every(s => s.startsWith('SECTION:') || (s in d));
+  return list.tickers.every(s =>
+    s.startsWith('SECTION:') || (s in d && d[s] && d[s].price != null)
+  );
 };
 
 // === ОДНА ПОЛНАЯ ЗАГРУЗКА ЦЕН ЗА РАЗ ===
