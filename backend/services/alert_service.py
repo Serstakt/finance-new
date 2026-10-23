@@ -164,20 +164,26 @@ async def _fetch_price(symbol: str) -> float | None:
         return None
 
 
-async def check_all_active() -> list[dict]:
+async def check_all_active(price_map: dict[str, float] | None = None) -> list[dict]:
     """Проверяет все активные алерты против текущих цен; возвращает сработавшие.
 
     Сработавший алерт получает status='triggered', triggered_price и
     triggered_at — то есть переход в «исполнено» происходит на сервере и
     сохраняется в таблице, даже если браузер был закрыт.
+
+    price_map — готовые цены {symbol: price} (например, снимок live-цикла SSE).
+    Если передан, внешние API не дёргаются вовсе: недоступные символы просто
+    пропускаются до следующего цикла. Без него — цены тянутся параллельно
+    через _fetch_price (прежний путь REST /api/alerts/check и checker-а).
     """
     alerts = list_alerts(status="active")
     if not alerts:
         return []
 
     symbols = sorted({a["symbol"] for a in alerts})
-    prices = await asyncio.gather(*[_fetch_price(s) for s in symbols])
-    price_map = dict(zip(symbols, prices))
+    if price_map is None:
+        prices = await asyncio.gather(*[_fetch_price(s) for s in symbols])
+        price_map = dict(zip(symbols, prices))
 
     triggered: list[dict] = []
     with get_session() as db:
@@ -259,7 +265,8 @@ def migrate_from_client(items: list[dict]) -> dict:
 
 
 async def run_background_checker(interval_seconds: int = CHECK_INTERVAL_SECONDS,
-                                 stop_event: asyncio.Event | None = None) -> None:
+                                 stop_event: asyncio.Event | None = None,
+                                 on_check=None) -> None:
     """Фоновый цикл: каждые interval_seconds проверяет активные алерты.
 
     Запускается как asyncio.Task из lifespan FastAPI-приложения. Ошибки одной
@@ -274,7 +281,15 @@ async def run_background_checker(interval_seconds: int = CHECK_INTERVAL_SECONDS,
         except asyncio.TimeoutError:
             pass
         try:
-            await check_all_active()
+            triggered = await check_all_active()
+            # уведомляем подписчиков SSE о новых статусах (звук/колокольчики
+            # приходят в браузер push-ем, без POST /api/alerts/check по таймеру)
+            if on_check:
+                try:
+                    on_check()
+                except Exception:  # noqa: BLE001 — уведомления не роняют checker
+                    logger.exception("on_check колбэк live-потока упал")
+            _ = triggered
         except Exception:  # noqa: BLE001 — цикл не должен умирать от сбоя проверки
             logger.exception("Ошибка в цикле проверки алертов")
     logger.info("Фоновый checker алертов остановлен")

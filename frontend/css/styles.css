@@ -187,6 +187,9 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 #auto-refresh-indicator { color: #787b86; font-size: 10px; font-weight: 400; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 #auto-refresh-indicator .dot { width: 6px; height: 6px; border-radius: 50%; background: #26a69a; animation: pulse 2s infinite; }
+/* SSE live-поток активен: индикатор ярче, текст подписи «LIVE·Nс» (js/live.js) */
+#auto-refresh-indicator.live { color: #26a69a; }
+#auto-refresh-indicator.live .dot { background: #26a69a; box-shadow: 0 0 6px rgba(38, 166, 154, .8); }
 
 /* ==========================================================================
    7. 📊 ЗАГОЛОВКИ КОЛОНОК ТАБЛИЦЫ

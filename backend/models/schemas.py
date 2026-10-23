@@ -168,3 +168,16 @@ class AlertMigrate(BaseModel):
     """
     alerts: List[Dict[str, Any]]
 
+
+
+# === LIVE-ПОТОК (SSE) ===
+
+class LiveSymbols(BaseModel):
+    """Обновление набора тикеров, видимых клиенту в разделе WATCHLIST.
+
+    client_id — идентификатор SSE-соединения (фронтенд генерирует его на
+    вкладку и передаёт в query потока); symbols — тикеры текущего списка.
+    Сервер опрашивает MOEX/CoinGecko только для подписанных символов.
+    """
+    client_id: Optional[str] = None
+    symbols: List[str] = []

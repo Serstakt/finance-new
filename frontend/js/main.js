@@ -27,7 +27,11 @@ window.runLegacyMigration = async function() {
 document.addEventListener('DOMContentLoaded', async () => {
   loadState();
   setupColumnHeaders();
-  startAutoRefresh();
+  // Живые данные WATCHLIST: SSE-поток вместо опроса каждые 120 с (js/live.js).
+  // Прежний polling НЕ поднимаем сразу — startLive() сам вызовет
+  // startAutoRefresh() как fallback, если EventSource недоступен или поток оборвётся.
+  if (typeof window.startLive === 'function') window.startLive();
+  else startAutoRefresh();
   requestNotificationPermission();
 
   // Алерты: сначала переносим старые клиентские алерты из localStorage
@@ -308,6 +312,28 @@ window.refreshAllPrices = function() {
   render();
   countdownValue = 120;
   updateCountdownDisplay();
+};
+
+// === SSE LIVE: ТОЧКИ СИНХРОНИЗАЦИИ СО СТАРЫМ ЦИКЛОМ ===
+// Раздел переведён на push-поток /api/live/stream (js/live.js). Прежний
+// polling остаётся только как fallback, поэтому:
+//   - при живом SSE-соединении startAutoRefresh() не поднимает таймеры —
+//     иначе каждые 120 с шла бы лишняя волна GET /api/prices;
+//   - индикатор в шапке показывает «LIVE·Nс» вместо обратного отсчёта.
+const _origStartAutoRefresh = window.startAutoRefresh;
+window.startAutoRefresh = function() {
+  const st = window.liveState;
+  if (st && st.es && !st.fallbackActive) return; // поток жив — polling не нужен
+  _origStartAutoRefresh();
+};
+const _origUpdateCountdownDisplay = window.updateCountdownDisplay;
+window.updateCountdownDisplay = function() {
+  if (typeof window.updateLiveIndicator === 'function') {
+    window.updateLiveIndicator();
+    const st = window.liveState;
+    if (st && st.connected && (Date.now() - st.lastEventAt) < 70000) return;
+  }
+  _origUpdateCountdownDisplay();
 };
 
 window.exportAllData = async function() {

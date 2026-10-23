@@ -222,6 +222,11 @@ window.syncListWithDb = async function(listId) {
     // просто пустой список.
     list.tickers = dbSymbols;
 
+    // Состав списка мог измениться (добавление/удаление тикера, другой список) —
+    // сообщаем SSE-потоку новый набор символов, чтобы сервер опрашивал MOEX/
+    // CoinGecko только для реально видимых тикеров (см. js/live.js).
+    if (typeof window.notifyLiveSymbols === 'function') window.notifyLiveSymbols();
+
     // Флажки, свёрнутые разделы и заметки: источник истины — колонки БД
     // (watchlist_items.flag_color / collapsed / note). Для fav_-списков (они
     // вычисляются из флага родительского списка) ничего не делаем.

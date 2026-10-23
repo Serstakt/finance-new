@@ -787,7 +787,10 @@ window.render = async function() {
   // делает то же самое каждые 60 с, но при открытом терминале реакция мгновенна.
   // Только на обычном рендере: лёгкая перерисовка (флажок избранного) не должна
   // порождать лишний запрос проверки алертов.
-  if (!lightweightRender && symbols.some(s => dataMap[s] && dataMap[s].price)) {
+  // При живом SSE-потоке POST /api/alerts/check НЕ шлём вовсе: сервер сам
+  // проверяет условия по своим ценам и присылает событие 'alerts' (js/live.js).
+  const liveConnected = window.liveState && window.liveState.es && !window.liveState.fallbackActive;
+  if (!lightweightRender && !liveConnected && symbols.some(s => dataMap[s] && dataMap[s].price)) {
     clearTimeout(window.__alertSyncTimer);
     window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
   }

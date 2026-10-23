@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pathlib import Path
 
 from .services import moex_service, crypto_service, telegram_news_service
@@ -12,6 +12,7 @@ from .services import portfolio_service
 from .services import watchlist_service
 from .services import news_favorites_service
 from .services import alert_service
+from .services import live_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -28,7 +29,8 @@ async def lifespan(application: FastAPI):
     # price_alerts и проверяются сервером каждые 60 с — даже когда вкладка
     # браузера закрыта (раньше проверка шла только в JS при открытом терминале).
     stop_event = asyncio.Event()
-    checker_task = asyncio.create_task(alert_service.run_background_checker(stop_event=stop_event))
+    checker_task = asyncio.create_task(alert_service.run_background_checker(
+        stop_event=stop_event, on_check=live_service.hub.publish_alerts_if_changed))
     # Поток новостей @newssmartlab обновляется в фоне: вкладка «🚩 Избранные
     # новости» читает заголовки/время постов напрямую из news_cache и не
     # должна зависеть от того, открывал ли кто-то вкладку «Новости».
@@ -37,6 +39,7 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         stop_event.set()
+        await live_service.hub.shutdown()  # SSE-поток: цикл рассылки цен
         checker_task.cancel()
         news_task.cancel()
         for task in (checker_task, news_task):
@@ -372,29 +375,37 @@ async def get_alerts(symbol: str | None = Query(default=None),
 async def create_alert_endpoint(payload: schemas.AlertCreate):
     """Создаёт алерт и сохраняет его в таблицу price_alerts."""
     try:
-        return alert_service.create_alert(
+        result = alert_service.create_alert(
             payload.symbol, payload.condition, payload.target, payload.price_at_creation
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+    # статусы алертов изменились — мгновенно обновляем колокольчики во всех
+    # открытых вкладках через SSE (без GET /api/alerts по таймеру)
+    live_service.hub.publish_alerts_if_changed()
+    return result
 
 
 @app.post("/api/alerts/{alert_id}/cancel")
 async def cancel_alert_endpoint(alert_id: int):
     """Отменяет активный алерт (запись остаётся в истории со статусом 'cancelled')."""
     try:
-        return alert_service.cancel_alert(alert_id)
+        result = alert_service.cancel_alert(alert_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Алерт не найден")
+    live_service.hub.publish_alerts_if_changed()
+    return result
 
 
 @app.delete("/api/alerts/{alert_id}")
 async def delete_alert_endpoint(alert_id: int):
     """Полностью удаляет запись алерта из БД."""
     try:
-        return alert_service.delete_alert(alert_id)
+        result = alert_service.delete_alert(alert_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Алерт не найден")
+    live_service.hub.publish_alerts_if_changed()
+    return result
 
 
 @app.post("/api/alerts/check")
@@ -406,7 +417,9 @@ async def check_alerts_endpoint():
     Возвращает список сработавших за эту итерацию алертов.
     """
     try:
-        return {"triggered": await alert_service.check_all_active()}
+        triggered = await alert_service.check_all_active()
+        live_service.hub.publish_alerts_if_changed()
+        return {"triggered": triggered}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -419,9 +432,84 @@ async def migrate_alerts_endpoint(payload: schemas.AlertMigrate):
     остались записи клиентской версии; после успешного переноса ключ очищается.
     """
     try:
-        return alert_service.migrate_from_client(payload.alerts)
+        result = alert_service.migrate_from_client(payload.alerts)
+        live_service.hub.publish_alerts_if_changed()  # колокольчики обновятся push-ем
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# LIVE-ПОТОК (SSE): цены и статусы алертов вместо опроса каждые 120 с
+# =============================================================================
+# Раздел WATCHLIST раньше каждые 120 с слал волну GET /api/prices по каждому
+# тикеру + POST /api/alerts/check. Теперь браузер открывает ОДНО долгое
+# соединение /api/live/stream: сервер сам опрашивает MOEX/CoinGecko для
+# объединённого набора символов всех подписчиков (реже — ночью/в выходные,
+# не трогает источники при пустых списках) и присылает события 'prices' и
+# 'alerts'. См. backend/services/live_service.py.
+
+@app.get("/api/live/stream")
+async def live_stream(request: Request, symbols: str | None = Query(default=None),
+                     client_id: str | None = Query(default=None)):
+    """SSE-поток живых котировок и статусов алертов для раздела WATCHLIST.
+
+    symbols — список тикеров через запятую, видимых клиенту (обновляется
+    POST /api/live/symbols). Первый ответ клиента — снимок цен из кэшей и
+    полный список алертов, дальше — периодические события 'prices'/'alerts'
+    и heartbeat-комментарии дляkeep-alive.
+    """
+    hub = live_service.hub
+    client = hub.subscribe(client_id)
+    if symbols:
+        hub.set_client_symbols(client, symbols.split(","))
+    await hub.ensure_started()
+
+    async def event_gen():
+        try:
+            for chunk in hub.build_hello(client):
+                yield chunk
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(
+                        client.queue.get(), timeout=live_service.HEARTBEAT_SECONDS)
+                    yield payload
+                except asyncio.TimeoutError:
+                    # heartbeat-событие: соединение живо, фронт по нему
+                    # считает поток здоровым; прокси не режет «молчащий» поток
+                    yield ": hb\n\n"
+                    yield hub._encode("ok", {"ts": __import__("time").time()})
+        finally:
+            hub.unsubscribe(client)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # nginx: не буферизовать поток
+        },
+    )
+
+
+@app.post("/api/live/symbols")
+async def live_symbols(payload: schemas.LiveSymbols):
+    """Клиент сообщает актуальный набор тикеров своего watchlist.
+
+    Вызывается при подключении к потоку и при каждом изменении состава
+    списков — сервер опрашивает внешние API только для реально видимых
+    символов. client_id связывает обновление с конкретным SSE-соединением.
+    Ответ: {"ok": true, "clients": N, "symbols": [...]} — видно, сколько
+    клиентов делят один цикл обновления (полезно для отладки).
+    """
+    target = live_service.hub.find(payload.client_id) if payload.client_id else None
+    if target is not None:
+        live_service.hub.set_client_symbols(target, payload.symbols)
+    return {"ok": True, "clients": live_service.hub.client_count,
+            "symbols": live_service.hub.watched_symbols()}
 
 
 # =============================================================================
