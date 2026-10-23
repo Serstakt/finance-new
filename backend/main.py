@@ -12,6 +12,7 @@ from .services import portfolio_service
 from .services import watchlist_service
 from .services import news_favorites_service
 from .services import alert_service
+from .services import notification_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -422,6 +423,42 @@ async def migrate_alerts_endpoint(payload: schemas.AlertMigrate):
         return alert_service.migrate_from_client(payload.alerts)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# PUSH-УВЕДОМЛЕНИЯ О СРАБОТАВШИХ АЛЕРТАХ (Telegram-бот)
+# =============================================================================
+
+@app.get("/api/notifications/status")
+async def notifications_status():
+    """Настроен ли Telegram-бот и сколько уведомлений уже доставлено.
+
+    Ответ не содержит токен — только факт настройки и хвост chat_id, чтобы
+    можно было проверить конфигурацию без утечки секретов во фронтенд.
+    """
+    token, chat_id = notification_service.get_credentials()
+    with_get_updates_hint = bool(token)
+    sent_count = notification_service.sent_notifications_count()
+    return {
+        "configured": notification_service.is_configured(),
+        "has_token": bool(token),
+        "chat_id_masked": (chat_id[:4] + "…") if chat_id else None,
+        "sent_notifications": sent_count,
+        "get_updates_url": (f"https://api.telegram.org/bot<TOKEN>/getUpdates"
+                            if with_get_updates_hint else None),
+        "how_to": ("Задайте TELEGRAM_BOT_TOKEN (от @BotFather) и TELEGRAM_CHAT_ID "
+                   "в файле .env или переменных окружения сервера"),
+    }
+
+
+@app.post("/api/notifications/test")
+async def notifications_test(payload: schemas.NotificationTest | None = None):
+    """Тестовая отправка сообщения в Telegram (для проверки настроек бота)."""
+    if payload and payload.text:
+        result = await notification_service.send_telegram_message(payload.text)
+    else:
+        result = await notification_service.send_test_message()
+    return result
 
 
 # =============================================================================
