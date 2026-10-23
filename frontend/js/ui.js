@@ -656,15 +656,6 @@ window.canRenderWithoutPrices = function(list) {
   return list.tickers.every(s => s.startsWith('SECTION:') || (s in d));
 };
 
-// === ОДНА ПОЛНАЯ ЗАГРУЗКА ЦЕН ЗА РАЗ ===
-// render() вызывается из многих мест (navigateTo + цепочка загрузки данных из
-// БД, loadFlagsFromDb/loadNotesFromDb при изменениях, syncListWithDb, таймер
-// автообновления). Без этого замка параллельные вызовы давали ВТОРУЮ пачку
-// /api/prices по всем тикерам списка: в сетевой хронологии видно цены ->
-// /api/watchlist/default -> цены снова. Пока идёт загрузка, повторный запрос
-// цен не нужен — достаточно лёгкой перерисовки после завершения текущей.
-window.__renderInFlight = null;
-
 window.render = async function() {
   const currentList = getCurrentList();
   const container = document.getElementById('ticker-list');
@@ -683,20 +674,7 @@ window.render = async function() {
   let dataMap = {};
   let lightweightRender = false;
 
-  // Полная загрузка цен уже идёт для этого же списка — не запускаем вторую
-  // пачку /api/prices параллельно. Дожидаемся текущей: её результат обновит
-  // __lastRenderData, и дальше сработает лёгкий рендер (или этот вызов
-  // просто завершится — DOM уже будет нарисован тем рендером).
-  const inFlight = window.__renderInFlight;
-  if (inFlight && inFlight.listId === appState.activeListId) {
-    await inFlight.promise.catch(() => {});
-    if (window.__rowsCache.listId !== appState.activeListId) return;
-    lightweightRender = window.canRenderWithoutPrices(getCurrentList());
-    if (!lightweightRender) return; // список успел смениться — новый рендер сам всё загрузит
-    currentList.tickers.forEach(sym => {
-      if (!sym.startsWith('SECTION:')) dataMap[sym] = window.__lastRenderData[sym];
-    });
-  } else if (window.canRenderWithoutPrices(currentList)) {
+if (window.canRenderWithoutPrices(currentList)) {
     // Цены уже есть в свежем in-memory-кэше последнего рендера (например, пользователь
     // просто поставил/снял флажок избранного или открыл пикер цветов) —
     // запросы /api/prices НЕ выполняются вовсе, строки обновляются точечно.
@@ -708,18 +686,7 @@ window.render = async function() {
     // Запрашиваем цены ПАРАЛЛЕЛЬНО (с таймаутом в fetchTickerData).
     // Последовательный await для каждого тикера складывал задержки: при медленном
     // внешнем API список «загружался» бесконечно долго.
-    // Пачку оборачиваем в «в полёте»-обещание: параллельные вызовы render()
-    // (см. замок __renderInFlight выше) дождутся его вместо второй пачки /api/prices.
-    const loadPromise = Promise.all(symbols.map(sym => fetchTickerData(sym)));
-    window.__renderInFlight = { listId: appState.activeListId, promise: loadPromise };
-    let results;
-    try {
-      results = await loadPromise;
-    } finally {
-      if (window.__renderInFlight && window.__renderInFlight.promise === loadPromise) {
-        window.__renderInFlight = null;
-      }
-    }
+   const results = await Promise.all(symbols.map(sym => fetchTickerData(sym)));
     symbols.forEach((sym, i) => { dataMap[sym] = results[i]; });
 
     // Пока ждали ответа API, пользователь мог переключить список — не рисуем
