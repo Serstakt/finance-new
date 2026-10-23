@@ -518,6 +518,10 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    задан явно, чтобы не перебиваться правилом .tab-btn.active (синий). */
 .tab-fav-flag { vertical-align: -2px; margin-right: 2px; color: #ef5350 !important; }
 .tab-fav-flag svg { width: 13px; height: 13px; fill: currentColor; stroke: currentColor; }
+/* Универсальная контурная иконка lucide в кнопках вкладок («Заметки»,
+   «Алерты»): наследует цвет вкладки, 13px как у остальных таб-иконок. */
+.tab-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
+.tab-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
 /* Иконка во вкладке «Новости» (вместо emoji 📰): lucide «newspaper»
    (https://lucide.dev/icons/newspaper) — контурная, наследует цвет вкладки. */
 .tab-news-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
