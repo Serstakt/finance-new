@@ -58,6 +58,24 @@ window.sortList = function(list, dataMap) {
   return result;
 };
 
+// Сброс/установка подсветки заголовков сортировки. Единая точка для всех
+// мест (switchList, импорт бэкапа, drag&drop, клик по заголовку): после
+// перехода на SVG-стрелки нельзя писать sortIcon.textContent = '↕' —
+// у .col-empty заглушек span.sort-icon вовсе нет, и такой код падал с
+// TypeError: Cannot set properties of null.
+window.resetSortHeaders = function(field, direction) {
+  document.querySelectorAll('.column-header').forEach(h => {
+    h.classList.remove('active');
+    delete h.dataset.dir;
+  });
+  if (!field) return;
+  const header = document.querySelector(`.column-header[data-sort="${field}"]`);
+  if (header) {
+    header.classList.add('active');
+    header.dataset.dir = direction || 'asc';
+  }
+};
+
 window.setupColumnHeaders = function() {
   document.querySelectorAll('.column-header').forEach(header => {
     header.addEventListener('click', () => {
@@ -66,14 +84,9 @@ window.setupColumnHeaders = function() {
       if (currentSort.field === field) currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
       else { currentSort.field = field; currentSort.direction = 'asc'; }
 
-      // Стрелки ↑/↓ — SVG-иконки из разметки; направление задаётся data-dir,
-      // видимость нужной стрелки — CSS-правилами (.sort-icon-dir-up/down).
-      document.querySelectorAll('.column-header').forEach(h => {
-        h.classList.remove('active');
-        delete h.dataset.dir;
-      });
-      header.classList.add('active');
-      header.dataset.dir = currentSort.direction;
+      // Стрелки ↑/↓ — SVG-иконки из разметки; направление задаёт общий
+      // resetSortHeaders (data-dir), видимость — CSS (.sort-icon-dir-up/down).
+      resetSortHeaders(currentSort.field, currentSort.direction);
       render();
       log(`Сортировка: ${field} (${currentSort.direction === 'asc' ? 'по возрастанию' : 'по убыванию'})`, 'info');
     });
