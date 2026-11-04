@@ -116,10 +116,14 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* ==========================================================================
    6. 📋 WATCHLIST: МАКЕТ И ЗАГОЛОВОК
    ========================================================================== */
+/* Панель котировок — справа, график слева (order меняет порядок колонок) */
 #watchlist-page { flex-direction: row; }
+#chart-container { order: 1; }
+#resizer { order: 2; }
 #watchlist {
   width: 360px; min-width: 260px; max-width: 500px; background: #1e222d;
-  border-right: 1px solid #2a2e39; display: flex; flex-direction: column; height: 100%;
+  border-left: 1px solid #2a2e39; display: flex; flex-direction: column; height: 100%;
+  order: 3;
 }
 #watchlist.hidden { display: none !important; }
 
@@ -129,12 +133,13 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   padding: 2px 4px !important; border-radius: 2px !important; transition: all 0.2s ease !important;
 }
 #hide-watchlist-btn:hover {
-  background: #2a2e39 !important; border-color: #787b86 !important; color: #d1d4dc !important; transform: translateX(-2px);
+  background: #2a2e39 !important; border-color: #787b86 !important; color: #d1d4dc !important; transform: translateX(2px);
 }
+/* Кнопка показа панели — прижата к правому краю (панель теперь справа) */
 #show-watchlist-btn {
-  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
-  background: #1e222d; border: 1px solid #2a2e39; border-left: none;
-  color: #787b86; padding: 12px 6px; cursor: pointer; border-radius: 0 6px 6px 0;
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  background: #1e222d; border: 1px solid #2a2e39; border-right: none;
+  color: #787b86; padding: 12px 6px; cursor: pointer; border-radius: 6px 0 0 6px;
   z-index: 100; display: none; writing-mode: vertical-rl; text-orientation: mixed;
   font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.2s;
 }

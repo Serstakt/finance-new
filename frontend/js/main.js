@@ -559,7 +559,13 @@ const resizer = document.getElementById('resizer');
 const watchlist = document.getElementById('watchlist');
 let isResizing = false;
 resizer.addEventListener('mousedown', (e) => { isResizing = true; resizer.classList.add('active'); document.body.style.userSelect = 'none'; });
-document.addEventListener('mousemove', (e) => { if (isResizing && e.clientX >= 260 && e.clientX <= 500) watchlist.style.width = `${e.clientX}px`; });
+document.addEventListener('mousemove', (e) => {
+  // Панель справа: ширина = расстояние от правого края окна до курсора
+  if (isResizing) {
+    const w = window.innerWidth - e.clientX;
+    if (w >= 260 && w <= 500) watchlist.style.width = `${w}px`;
+  }
+});
 document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; resizer.classList.remove('active'); document.body.style.userSelect = ''; } });
 
 document.getElementById('hide-watchlist-btn').addEventListener('click', () => {
