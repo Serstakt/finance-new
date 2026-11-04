@@ -399,6 +399,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 .ticker-item:hover .ticker-remove { opacity: 1; }
 .ticker-remove:hover { color: #d1d4dc; background: #363a45; }
+/* Иконка «⋯» вместо текстового «×» */
+.ticker-remove svg { width: 14px; height: 14px; display: block; }
 
 /* --- Контекстное меню строки/раздела (открывается по «⋯») --- */
 .wl-context-menu {
@@ -841,6 +843,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .section-header .section-title:hover { color: #d1d4dc; }
+/* Название раздела растянуто на колонки тикер+цена+изм. (сетка общая со строками) */
+.section-header .col-section-name { grid-column: 4 / span 4; }
 /* Счётчик инструментов в разделе (заполняется в updateSectionElement) */
 .section-count {
   font-size: 10px; font-weight: 500; color: #787b86; text-transform: none; letter-spacing: 0;

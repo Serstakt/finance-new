@@ -38,8 +38,11 @@ class Node {
     contains: (c) => this._classes.has(c),
   };
   get textContent() {
-    if (this._textHtml !== null) return this._textHtml.replace(/<[^>]*>/g, '');
-    if (this.children.length === 0) return this._text;
+    if (this.children.length === 0) {
+      // лист: если детей нет, но innerHTML задавался — чистим теги из HTML
+      if (this._textHtml !== null && this._text === '') return this._textHtml.replace(/<[^>]*>/g, '');
+      return this._text;
+    }
     return this.children.map(c => c.textContent).join('');
   }
   set textContent(v) {
@@ -87,7 +90,7 @@ class Node {
     const i = this.parentNode.children.indexOf(this);
     return i > 0 ? this.parentNode.children[i - 1] : null;
   }
-  setAttribute(k, v) { this._attrs[k] = String(v); if (k === 'class') this.className = v; if (k === 'id') { this.id = String(v); if (!nodesById[this.id]) nodesById[this.id] = this; } if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(v); }
+  setAttribute(k, v) { this._attrs[k] = String(v); if (k === 'class') this.className = v; if (k === 'id') { this.id = String(v); } if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(v); }
   getAttribute(k) { return this._attrs[k] ?? null; }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
   fire(type, ev = {}) { (this.listeners[type] || []).forEach(fn => { try { fn({ stopPropagation() {}, preventDefault() {}, target: this, currentTarget: this, ...ev }); } catch (e) { console.error('HANDLER ERROR:', e.message); } }); }
@@ -147,13 +150,21 @@ class Node {
   }
   _invalidate() { this._parsedCache = null; for (let p = this.parentNode; p; p = p.parentNode) p._parsedCache = null; }
   querySelector(sel) { const r = this.querySelectorAll(sel); return r[0] || null; }
+  _descendants(out) { for (const c of this.children) { out.push(c); c._descendants(out); } return out; }
   querySelectorAll(sel) {
     const sels = sel.split(',').map(x => x.trim());
     const direct = sels.some(s => s.startsWith(':scope >'));
     const out = [];
     const test = (n) => sels.some(s => n._matches(s));
     if (direct) { for (const c of this.children) if (test(c)) out.push(c); return out; }
-    for (const n of this._parsed()) if (test(n)) out.push(n);
+    // обходим ВСЕ реальные потомки (включая вложенные в innerHTML-фрагменты),
+    // затем дополняем «виртуальными» узлами из unparsed-HTML — так same-id
+    // узлы из соседних строк не подменяются глобальным id-кэшем
+    const seenN = new Set();
+    for (const n of this._descendants([])) {
+      if (!seenN.has(n)) { seenN.add(n); if (test(n)) out.push(n); }
+    }
+    for (const n of this._parsed()) if (!seenN.has(n)) { seenN.add(n); if (test(n)) out.push(n); }
     return out;
   }
 }
@@ -197,7 +208,7 @@ const sandbox = {
     getElementById: (id) => nodesById[id] || null,
     createElement: (tag) => new Node(tag),
     querySelectorAll: () => [],
-    addEventListener() {}, body: { style: {} },
+    addEventListener() {}, body: { style: {}, appendChild() {} },
     head: new Node('head'), createTextNode: (t) => { const n = new Node('#text'); n._text = String(t); return n; },
   },
   location: { protocol: 'http:', port: '8000' },
@@ -226,6 +237,10 @@ vm.runInContext(`
   window.setNoteInDb = async () => true;
   window.syncAlertsWithDb = () => {};
   window.loadTickerNews = () => {};
+  // перехват открытия контекстного меню: тест проверяет пункты без реального DOM-попа
+  window.__menu = [];
+  window.openWlContextMenu = function(anchor, x, y, items) { __menu.push({ anchor, x, y, items }); };
+  window.closeWlContextMenu = function() {};
   window.createChartCalls = [];
   window.createChart = function(sym) { createChartCalls.push(sym); document.getElementById('tradingview_chart').dataset.activeSymbol = sym; };
 `, sandbox);
@@ -278,8 +293,13 @@ sandbox.priceStore = priceStore;
   await sandbox.render();
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'При временном сбое MOEX старая цена сохранена');
 
-  // --- Удаление тикера (клик по «×» строки) -> удаление узла из DOM и кэша ---
-  gazpEntry.el.querySelector('.ticker-remove').fire('click');
+  // --- Удаление тикера через контекстное меню «⋯» -> удаление узла из DOM и кэша ---
+  sandbox.__menu = [];
+  gazpEntry.el.querySelector('.ticker-remove').fire('click', { clientX: 10, clientY: 10 });
+  assert(sandbox.__menu.length === 1 && sandbox.__menu[0].items.some(i => i.label === 'Удалить из списка'),
+    'Клик по «⋯» открывает меню с пунктом «Удалить из списка» (без мгновенного удаления)');
+  const delItem = sandbox.__menu[0].items.find(i => i.label === 'Удалить из списка');
+  await delItem.action();
   await new Promise(r => setTimeout(r, 0)); // дождаться async-обработчика
   await sandbox.render();
   assert(!container.children.includes(gazpEntry.el), 'Удалённый тикер убран из DOM');
@@ -292,13 +312,15 @@ sandbox.priceStore = priceStore;
   await sandbox.render();
   assert(container.children.length === 1 && container.children[0].dataset.symbol === 'LKOH', 'При смене списка DOM пересобран корректно');
 
-  // --- Свёрнутый раздел: применён display:none без полной перерисовки ---
+  // --- Свёрнутый раздел: применён display:none без полной перерисовки;
+  //     состояние — класс .collapsed (стрелка-шеврон поворачивает CSS) ---
   sandbox.appState.activeListId = 'default';
   list.collapsedSections = ['SECTION:Росия'];
   await sandbox.render();
   const sberEl = sandbox.__rowsCache.map.get('SBER').el;
   assert(sberEl.style.display === 'none', 'Строки свёрнутого раздела скрыты');
-  assert(secNode.querySelector('.section-collapse-btn').textContent === '\u25b6', 'Стрелка секции переключена на свёрнутую');
+  assert(secNode._classes.has('collapsed'), 'Раздел помечен классом .collapsed (SVG-шеврон поворачивает CSS)');
+  assert(secNode.querySelector('.section-count').textContent.trim() === '2', 'Счётчик инструментов раздела показывает 2');
 
   // --- График: createChart вызывается только при СМЕНЕ активного тикера ---
   const chartCallsBefore = sandbox.createChartCalls.length;
