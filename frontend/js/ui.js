@@ -62,20 +62,59 @@ window.setupColumnHeaders = function() {
   document.querySelectorAll('.column-header').forEach(header => {
     header.addEventListener('click', () => {
       const field = header.dataset.sort;
+      if (!field) return; // пустые grid-заглушки над служебными колонками не кликабельны
       if (currentSort.field === field) currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
       else { currentSort.field = field; currentSort.direction = 'asc'; }
 
+      // Стрелки ↑/↓ — SVG-иконки из разметки; направление задаётся data-dir,
+      // видимость нужной стрелки — CSS-правилами (.sort-icon-dir-up/down).
       document.querySelectorAll('.column-header').forEach(h => {
         h.classList.remove('active');
-        h.querySelector('.sort-icon').textContent = '↕';
+        delete h.dataset.dir;
       });
       header.classList.add('active');
-      header.querySelector('.sort-icon').textContent = currentSort.direction === 'asc' ? '↑' : '↓';
+      header.dataset.dir = currentSort.direction;
       render();
       log(`Сортировка: ${field} (${currentSort.direction === 'asc' ? 'по возрастанию' : 'по убыванию'})`, 'info');
     });
   });
 };
+
+// === КОНТЕКСТНОЕ МЕНЮ СТРОКИ/РАЗДЕЛА WATCHLIST ===
+// Заменяет однокликовое удаление «×»: деструктивные действия вынесены в меню
+// «⋯» (открывается по клику или правому клику на строке), с подписями пунктов.
+window.closeWlContextMenu = function() {
+  document.querySelectorAll('.wl-context-menu').forEach(m => m.remove());
+};
+
+window.openWlContextMenu = function(anchorEl, x, y, items) {
+  closeWlContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'wl-context-menu';
+  for (const it of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = it.label;
+    if (it.danger) btn.classList.add('danger');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeWlContextMenu();
+      it.action();
+    });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  // прижимаем меню к viewport, чтобы оно нелезло за край экрана
+  const rect = menu.getBoundingClientRect();
+  const px = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
+  const py = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
+  menu.style.left = `${px}px`;
+  menu.style.top = `${py}px`;
+};
+
+// закрытие меню по клику вне / Escape — один раз на документ
+document.addEventListener('click', () => closeWlContextMenu());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWlContextMenu(); });
 
 // === ВКЛАДКИ «НОВОСТИ / ЗАМЕТКИ» (панель под графиком) ===
 // Заметки перенесены из watchlist-строк в блок с новостями: теперь это
