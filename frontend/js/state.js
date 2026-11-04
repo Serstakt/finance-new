@@ -731,10 +731,7 @@ window.switchList = function(listId) {
   try { sessionStorage.setItem(window.UI_STATE_KEY, listId); } catch (e) {}
   populateListSelector();
   currentSort = { field: null, direction: 'asc' };
-  document.querySelectorAll('.column-header').forEach(h => {
-    h.classList.remove('active');
-    h.querySelector('.sort-icon').textContent = '↕';
-  });
+  if (typeof resetSortHeaders === 'function') resetSortHeaders(); // сброс SVG-стрелок без textContent-костыля
   if (typeof render === 'function') render();
   // тикеры обычных списков живут в БД — подтягиваем актуальный состав
   if (typeof syncListWithDb === 'function') syncListWithDb(listId);

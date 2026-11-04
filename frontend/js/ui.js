@@ -58,24 +58,76 @@ window.sortList = function(list, dataMap) {
   return result;
 };
 
+// Сброс/установка подсветки заголовков сортировки. Единая точка для всех
+// мест (switchList, импорт бэкапа, drag&drop, клик по заголовку): после
+// перехода на SVG-стрелки нельзя писать sortIcon.textContent = '↕' —
+// у .col-empty заглушек span.sort-icon вовсе нет, и такой код падал с
+// TypeError: Cannot set properties of null.
+window.resetSortHeaders = function(field, direction) {
+  document.querySelectorAll('.column-header').forEach(h => {
+    h.classList.remove('active');
+    delete h.dataset.dir;
+  });
+  if (!field) return;
+  const header = document.querySelector(`.column-header[data-sort="${field}"]`);
+  if (header) {
+    header.classList.add('active');
+    header.dataset.dir = direction || 'asc';
+  }
+};
+
 window.setupColumnHeaders = function() {
   document.querySelectorAll('.column-header').forEach(header => {
     header.addEventListener('click', () => {
       const field = header.dataset.sort;
+      if (!field) return; // пустые grid-заглушки над служебными колонками не кликабельны
       if (currentSort.field === field) currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
       else { currentSort.field = field; currentSort.direction = 'asc'; }
 
-      document.querySelectorAll('.column-header').forEach(h => {
-        h.classList.remove('active');
-        h.querySelector('.sort-icon').textContent = '↕';
-      });
-      header.classList.add('active');
-      header.querySelector('.sort-icon').textContent = currentSort.direction === 'asc' ? '↑' : '↓';
+      // Стрелки ↑/↓ — SVG-иконки из разметки; направление задаёт общий
+      // resetSortHeaders (data-dir), видимость — CSS (.sort-icon-dir-up/down).
+      resetSortHeaders(currentSort.field, currentSort.direction);
       render();
       log(`Сортировка: ${field} (${currentSort.direction === 'asc' ? 'по возрастанию' : 'по убыванию'})`, 'info');
     });
   });
 };
+
+// === КОНТЕКСТНОЕ МЕНЮ СТРОКИ/РАЗДЕЛА WATCHLIST ===
+// Заменяет однокликовое удаление «×»: деструктивные действия вынесены в меню
+// «⋯» (открывается по клику или правому клику на строке), с подписями пунктов.
+window.closeWlContextMenu = function() {
+  document.querySelectorAll('.wl-context-menu').forEach(m => m.remove());
+};
+
+window.openWlContextMenu = function(anchorEl, x, y, items) {
+  closeWlContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'wl-context-menu';
+  for (const it of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = it.label;
+    if (it.danger) btn.classList.add('danger');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeWlContextMenu();
+      it.action();
+    });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  // прижимаем меню к viewport, чтобы оно нелезло за край экрана
+  const rect = menu.getBoundingClientRect();
+  const px = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
+  const py = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
+  menu.style.left = `${px}px`;
+  menu.style.top = `${py}px`;
+};
+
+// закрытие меню по клику вне / Escape — один раз на документ
+document.addEventListener('click', () => closeWlContextMenu());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWlContextMenu(); });
 
 // === ВКЛАДКИ «НОВОСТИ / ЗАМЕТКИ» (панель под графиком) ===
 // Заметки перенесены из watchlist-строк в блок с новостями: теперь это
@@ -370,9 +422,46 @@ window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 2
 
 // Создание каркаса строки тикера (структура строится один раз; дальше —
 // только точечное обновление текстов/классов в updateRow).
+// SVG-иконка «⋯» (горизонтальные точки) для кнопки контекстного меню строки.
+window.MORE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+
+// Пункты контекстного меню строки тикера (клик по «⋯» или правый клик на строке).
+// Удаление больше не выполняется одним кликом по «×»: деструктивное действие
+// требует второго подтверждения в подписанном пункте меню.
+window.rowMenuItems = function(sym) {
+  const baseTicker = sym.split(':').length > 1 ? sym.split(':')[1] : sym;
+  return [
+    { label: `Открыть ${baseTicker} на Smart-Lab`, action: () => window.open(`https://smart-lab.ru/forum/${baseTicker}/`, '_blank', 'noopener') },
+    { label: 'Перейти в заметки', action: () => {
+        sessionStorage.setItem('bottomTab', 'notes');
+        const np = document.getElementById('news-panel');
+        if (np) np.style.display = 'flex';
+        renderNotesTab(sym);
+      } },
+    { label: 'Убрать из избранного', action: () => setFavorite(sym, null) },
+    { label: 'Удалить из списка', danger: true, action: () => removeTickerFromList(sym) },
+  ];
+};
+
+// Удаление тикера из активного списка (общий путь для «⋯» и legacy-узлов .ticker-remove).
+window.removeTickerFromList = async function(sym) {
+  const cur = getCurrentList();
+  if (appState.activeListId.startsWith('fav_')) {
+    setFavorite(sym, null);
+    return;
+  }
+  cur.tickers = cur.tickers.filter(s => s !== sym);
+  if (cur.activeSymbol === sym) {
+    cur.activeSymbol = cur.tickers.find(s => !s.startsWith('SECTION:')) || '';
+    setActiveSymbolInDb(appState.activeListId, cur.activeSymbol); // выбор живёт в БД — обновляем сразу
+  }
+  render();
+  await removeTickerFromDb(appState.activeListId, sym); // удаляем из БД
+};
+
 window.buildRowElement = function(sym) {
   const div = document.createElement('div');
-  div.className = 'ticker-item';
+  div.className = 'ticker-item wl-row-grid'; // общая сетка колонок с заголовками (A1)
   div.dataset.symbol = sym;
   const safeId = sym.replace(/[^a-zA-Z0-9]/g, '_');
   const parts = sym.split(':');
@@ -394,12 +483,18 @@ window.buildRowElement = function(sym) {
     <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
     <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
     <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить">×</span>`;
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Ещё действия" aria-label="Меню действий">${MORE_SVG}</span>`;
 
   // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
   // жизни узла (раньше слушатель создавался при каждой перерисовке).
   div.addEventListener('click', (e) => {
-    if (e.target.classList.contains('ticker-remove') || e.target.classList.contains('drag-handle') ||
+    const menuBtn = e.target.closest('.ticker-remove');
+    if (menuBtn) { // «⋯» открывает контекстное меню, а не выбирает тикер
+      e.stopPropagation();
+      openWlContextMenu(menuBtn, e.clientX ?? 0, e.clientY ?? 0, rowMenuItems(sym));
+      return;
+    }
+    if (e.target.classList.contains('drag-handle') ||
         e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper')) return;
     const cur = getCurrentList();
     cur.activeSymbol = sym;
@@ -414,20 +509,11 @@ window.buildRowElement = function(sym) {
     }
   });
 
-  div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
+  // Правый клик по строке — то же контекстное меню (без выделения тикера)
+  div.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    const cur = getCurrentList();
-    if (appState.activeListId.startsWith('fav_')) {
-      setFavorite(sym, null);
-    } else {
-      cur.tickers = cur.tickers.filter(s => s !== sym);
-      if (cur.activeSymbol === sym) {
-        cur.activeSymbol = cur.tickers.find(s => !s.startsWith('SECTION:')) || '';
-        setActiveSymbolInDb(appState.activeListId, cur.activeSymbol); // выбор живёт в БД — обновляем сразу
-      }
-      render();
-      await removeTickerFromDb(appState.activeListId, sym); // удаляем из БД
-    }
+    openWlContextMenu(div, e.clientX ?? 0, e.clientY ?? 0, rowMenuItems(sym));
   });
 
   return div;
@@ -470,7 +556,9 @@ window.updateRow = function(div, sym, data, list, prev) {
       }
       if (data.changeDay !== undefined && data.changeDay !== null) {
         changePctEl.innerHTML = formatChange(data.changeDay, true);
-        changePctEl.className = `ticker-change-percent ${data.changeDay >= 0 ? 'positive-bg' : 'negative-bg'}`;
+        // Иерархия (A3): «Изм.%» — главный акцент, насыщенный бейдж;
+        // абсолютное изменение остаётся приглушённым текстом.
+        changePctEl.className = `ticker-change-percent ${data.changeDay >= 0 ? 'positive-bg-strong' : 'negative-bg-strong'}`;
       } else {
         changePctEl.innerHTML = '<span class="error-text">—</span>';
         changePctEl.className = 'ticker-change-percent';
@@ -558,60 +646,98 @@ window.updateFavoriteFlagsOnly = function() {
   });
 };
 
+// SVG-шеврон кнопки «свернуть/развернуть» раздела (▼→▲ поворачивается CSS-ом,
+// см. .section-header.collapsed .section-collapse-btn svg в styles.css).
+window.CHEVRON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+// Пункты контекстного меню раздела («⋯» или правый клик по заголовку).
+window.sectionMenuItems = function(sym, sectionName) {
+  return [
+    { label: 'Переименовать раздел', action: () => renameSection(sym, sectionName) },
+    { label: collapsedNow(sym) ? 'Развернуть раздел' : 'Свернуть раздел', action: () => toggleSectionCollapse(sym) },
+    { label: 'Удалить раздел', danger: true, action: () => removeSection(sym, sectionName) },
+  ];
+};
+
+window.collapsedNow = function(sym) {
+  const cur = getCurrentList();
+  return !!(cur.collapsedSections && cur.collapsedSections.includes(sym));
+};
+
+// Переключение свёрнутости раздела — общий путь для шеврона и контекстного меню.
+window.toggleSectionCollapse = function(sym) {
+  const cur = getCurrentList();
+  if (!cur.collapsedSections) cur.collapsedSections = [];
+  const nowCollapsed = !cur.collapsedSections.includes(sym);
+  if (nowCollapsed) cur.collapsedSections.push(sym);
+  else cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
+  // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
+  // а не только в localStorage — переживает смену браузера
+  setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
+  // Инкрементально: меняем только стрелку и видимость строк этой секции —
+  // без полного render() и без повторного запроса цен.
+  applySectionCollapse(cur);
+};
+
+window.renameSection = async function(sym, sectionName) {
+  const newName = prompt('Введите новое название раздела:', sectionName);
+  if (!newName || !newName.trim() || newName.trim() === sectionName) return;
+  const newSectionSymbol = `SECTION:${newName.trim()}`;
+  const cur = getCurrentList();
+  const index = cur.tickers.indexOf(sym);
+  if (index !== -1) {
+    cur.tickers[index] = newSectionSymbol;
+    if (cur.collapsedSections && cur.collapsedSections.includes(sym)) {
+      cur.collapsedSections[cur.collapsedSections.indexOf(sym)] = newSectionSymbol;
+    }
+    render();
+    await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД (saveState не нужен: состояние живёт в БД)
+    log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
+  }
+};
+
+window.removeSection = async function(sym, sectionName) {
+  if (!confirm(`Удалить раздел "${sectionName}"?`)) return;
+  const cur = getCurrentList();
+  cur.tickers = cur.tickers.filter(s => s !== sym);
+  if (cur.collapsedSections) cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
+  render();
+  await saveOrderToDb(appState.activeListId, cur.tickers); // удаляем из БД
+};
+
 // Каркас секции создаётся один раз; обработчики живут на самом узле.
 window.buildSectionElement = function(sym) {
   const div = document.createElement('div');
-  div.className = 'section-header';
+  div.className = 'section-header wl-row-grid'; // общая сетка колонок (A1/A8)
   div.dataset.symbol = sym;
   const sectionName = sym.replace('SECTION:', '');
+  // Колонки сетки: drag | collapse | счётчик-заглушка | название (col-span до цены) | меню
   div.innerHTML = `
     <span class="drag-handle" title="Перетащить">⋮</span>
-    <span class="section-collapse-btn" title="Свернуть/Развернуть">▼</span>
-    <span class="section-title" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить раздел">×</span>`;
+    <span class="section-collapse-btn" title="Свернуть/Развернуть">${CHEVRON_SVG}</span>
+    <span class="section-count" title="Инструментов в разделе"></span>
+    <span class="section-title col-section-name" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Ещё действия" aria-label="Меню раздела">${MORE_SVG}</span>`;
 
   div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
     e.stopPropagation();
-    const cur = getCurrentList();
-    if (!cur.collapsedSections) cur.collapsedSections = [];
-    const nowCollapsed = !cur.collapsedSections.includes(sym);
-    if (nowCollapsed) cur.collapsedSections.push(sym);
-    else cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
-    // состояние свёрнутости раздела живёт в БД (watchlist_items.collapsed),
-    // а не только в localStorage — переживает смену браузера
-    setCollapsedInDb(appState.activeListId, sym, nowCollapsed);
-    // Инкрементально: меняем только стрелку и видимость строк этой секции —
-    // без полного render() и без повторного запроса цен.
-    applySectionCollapse(cur);
+    toggleSectionCollapse(sym);
   });
 
-  div.querySelector('.ticker-remove').addEventListener('click', async (e) => {
+  // «⋯» раздела — контекстное меню (переименовать / свернуть / удалить)
+  div.querySelector('.ticker-remove').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Удалить раздел "${sectionName}"?`)) {
-      const cur = getCurrentList();
-      cur.tickers = cur.tickers.filter(s => s !== sym);
-      if (cur.collapsedSections) cur.collapsedSections = cur.collapsedSections.filter(s => s !== sym);
-      render();
-      await saveOrderToDb(appState.activeListId, cur.tickers); // удаляем из БД
-    }
+    openWlContextMenu(e.target.closest('.ticker-remove'), e.clientX ?? 0, e.clientY ?? 0, sectionMenuItems(sym, sectionName));
   });
 
-  div.querySelector('.section-title').addEventListener('dblclick', async () => {
-    const newName = prompt('Введите новое название раздела:', sectionName);
-    if (!newName || !newName.trim() || newName.trim() === sectionName) return;
-    const newSectionSymbol = `SECTION:${newName.trim()}`;
-    const cur = getCurrentList();
-    const index = cur.tickers.indexOf(sym);
-    if (index !== -1) {
-      cur.tickers[index] = newSectionSymbol;
-      if (cur.collapsedSections && cur.collapsedSections.includes(sym)) {
-        cur.collapsedSections[cur.collapsedSections.indexOf(sym)] = newSectionSymbol;
-      }
-      render();
-      await saveOrderToDb(appState.activeListId, cur.tickers); // переименование раздела — в БД (saveState не нужен: состояние живёт в БД)
-      log(`Раздел переименован: "${sectionName}" → "${newName.trim()}"`, 'success');
-    }
+  // Правый клик по заголовку раздела — то же меню
+  div.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openWlContextMenu(div, e.clientX ?? 0, e.clientY ?? 0, sectionMenuItems(sym, sectionName));
   });
+
+  div.querySelector('.section-title').addEventListener('dblclick', () => renameSection(sym, sectionName));
 
   return div;
 };
@@ -619,9 +745,16 @@ window.buildSectionElement = function(sym) {
 window.updateSectionElement = function(div, sym, list) {
   const collapsed = !!(list.collapsedSections && list.collapsedSections.includes(sym));
   div.classList.toggle('collapsed', collapsed);
-  const btn = div.querySelector('.section-collapse-btn');
-  const arrow = collapsed ? '▶' : '▼';
-  if (btn.textContent !== arrow) btn.textContent = arrow;
+  // Счётчик инструментов раздела (A8): считаем тикеры от этого заголовка
+  // до следующего заголовка в текущем (отсортированном) порядке списка.
+  const countEl = div.querySelector('.section-count');
+  if (countEl) {
+    const idx = list.tickers.indexOf(sym);
+    let n = 0;
+    for (let i = idx + 1; i < list.tickers.length && !list.tickers[i].startsWith('SECTION:'); i++) n++;
+    const txt = String(n);
+    if (countEl.textContent !== txt) countEl.textContent = txt;
+  }
 };
 
 // Применяет свёрнутость секций к уже существующим строкам (без пересборки DOM).
