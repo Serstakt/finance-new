@@ -27,6 +27,7 @@ class Node {
     this.disabled = false; this.value = ''; this.placeholder = '';
     this.id = ''; this._liveKids = new Set(); this._textHtml = null;
   }
+  getBoundingClientRect() { return { width: 100, height: 50, top: 0, left: 0, right: 100, bottom: 50 }; }
   get children() { return this._kids; }
   set children(v) { this._kids = v; }
   get className() { return [...this._classes].join(' '); }
@@ -58,7 +59,7 @@ class Node {
       if (child) { child.parentNode = this; this.children.push(child); }
     }
   }
-  appendChild(n) { if (n.parentNode && n.parentNode !== this) n.remove(); n.parentNode = this; this._kids.push(n); this._liveKids.add(n); this._invalidate(); return n; }
+  appendChild(n) { if (n.parentNode && n.parentNode !== this) n.remove(); n.parentNode = this; this._kids.push(n); this._liveKids.add(n); this._invalidate(); if (n._classes && n._classes.has('wl-context-menu')) globalThis.__lastMenuNode = n; return n; }
   insertBefore(n, ref) {
     if (!ref) return this.appendChild(n);
     if (n.parentNode && n.parentNode !== this) n.remove();
@@ -93,7 +94,28 @@ class Node {
   setAttribute(k, v) { this._attrs[k] = String(v); if (k === 'class') this.className = v; if (k === 'id') { this.id = String(v); } if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(v); }
   getAttribute(k) { return this._attrs[k] ?? null; }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
-  fire(type, ev = {}) { (this.listeners[type] || []).forEach(fn => { try { fn({ stopPropagation() {}, preventDefault() {}, target: this, currentTarget: this, ...ev }); } catch (e) { console.error('HANDLER ERROR:', e.message); } }); }
+  // Эмуляция ВСПЛЫТИЯ события: обработчики идут от цели к корню.
+  // Реальный DOM при клике по «⋯» вызывает сначала слушатель самой кнопки,
+  // затем родителя-строки (e.target остаётся кнопкой) — тест зависит от этого.
+  fire(type, ev = {}) {
+    const path = [];
+    for (let n = this; n; n = n.parentNode) path.push(n);
+    let stopped = false;
+    const evt = {
+      type, target: this, bubbles: true,
+      stopPropagation() { stopped = true; },
+      preventDefault() {},
+      ...ev,
+    };
+    for (const n of path) {
+      if (stopped) break;
+      evt.currentTarget = n;
+      for (const fn of (n.listeners[type] || [])) {
+        try { fn(evt); } catch (e) { console.error('HANDLER ERROR:', e.message); }
+        if (stopped) break;
+      }
+    }
+  }
   closest(sel) {
     const cls = sel.replace(/^\./, '');
     let n = this;
@@ -149,7 +171,22 @@ class Node {
     return this._parsedCache;
   }
   _invalidate() { this._parsedCache = null; for (let p = this.parentNode; p; p = p.parentNode) p._parsedCache = null; }
-  querySelector(sel) { const r = this.querySelectorAll(sel); return r[0] || null; }
+  // Живой id-индекс дерева: при записи textContent/innerHTML в узел, созданный
+  // парсером «виртуальных» фрагментов (querySelector по id), индекс устаревает —
+  // пересобираем его перед каждым поиском.
+  _root() { let n = this; while (n.parentNode) n = n.parentNode; return n; }
+  _indexIds(out) { if (this.id) out[this.id] = this; for (const c of this.children) c._indexIds(out); return out; }
+  querySelector(sel) {
+    const idm = /^#([\w-]+)$/.exec(sel.trim());
+    if (idm) {
+      const idx = this._root()._indexIds({});
+      const el = idx[idm[1]];
+      return el && this._contains(el) ? el : null;
+    }
+    const r = this.querySelectorAll(sel);
+    return r[0] || null;
+  }
+  _contains(n) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; }
   _descendants(out) { for (const c of this.children) { out.push(c); c._descendants(out); } return out; }
   querySelectorAll(sel) {
     const sels = sel.split(',').map(x => x.trim());
@@ -177,7 +214,7 @@ function parseFragment(html) {
     if (a[1] !== 'class') el.setAttribute(a[1], a[2]);
   }
   const inner = html.replace(/^<(\w+)[^>]*>/, '').replace(new RegExp(`</${m[1]}>$`), '');
-  for (const cm of inner.matchAll(/<(\w+)(?![\s\S]*<\/\1>[\s\S]*<\/\1>)[^>]*(?:\/>|>[\s\S]*?<\/\1>)/g)) {
+  for (const cm of inner.matchAll(/<(svg|span|div|a|button|polyline|path|circle|rect|line|img)\b(?:(?!<\/\1>)[\s\S])*?(?:\/>|>[\s\S]*?<\/\1>)/g)) {
     const child = parseFragment(cm[0]);
     if (child) { child.parentNode = el; el.children.push(child); }
   }
@@ -202,13 +239,20 @@ makeEl('countdown', 'span');
 
 const sandbox = {
   console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval,
-  localStorage: { getItem: () => null, setItem(){}, removeItem(){} },
+  localStorage: (() => {
+    // Как в реальном браузере: ДО первой записи getItem возвращает null.
+    // Тест сам «прогревает» кэш через warmCache() (setItem из api.js), поэтому
+    // render() видит свежие цены и НЕ уходит в лёгкий рендер из __lastRenderData.
+    const m = {}; let touched = false;
+    return { getItem: (k) => (touched ? (m[k] ?? null) : null), setItem: (k, v) => { touched = true; m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
+  })(),
+  innerWidth: 1200, innerHeight: 800,
   sessionStorage: { getItem: () => null, setItem(){}, removeItem(){} },
   document: {
     getElementById: (id) => nodesById[id] || null,
     createElement: (tag) => new Node(tag),
     querySelectorAll: () => [],
-    addEventListener() {}, body: { style: {}, appendChild() {} },
+    addEventListener() {}, body: new Node('body'),
     head: new Node('head'), createTextNode: (t) => { const n = new Node('#text'); n._text = String(t); return n; },
   },
   location: { protocol: 'http:', port: '8000' },
@@ -237,10 +281,10 @@ vm.runInContext(`
   window.setNoteInDb = async () => true;
   window.syncAlertsWithDb = () => {};
   window.loadTickerNews = () => {};
-  // перехват открытия контекстного меню: тест проверяет пункты без реального DOM-попа
-  window.__menu = [];
-  window.openWlContextMenu = function(anchor, x, y, items) { __menu.push({ anchor, x, y, items }); };
-  window.closeWlContextMenu = function() {};
+  // Контекстное меню НЕ заглушается: тестируется реальная openWlContextMenu.
+  // document.body.appendChild — no-op, поэтому перед поиском пунктов меню
+  // тест «переносит» последний созданный .wl-context-menu в body через appendChild.
+  window.__lastMenuNode = null;
   window.createChartCalls = [];
   window.createChart = function(sym) { createChartCalls.push(sym); document.getElementById('tradingview_chart').dataset.activeSymbol = sym; };
 `, sandbox);
@@ -248,15 +292,46 @@ vm.runInContext(`
 // реальные исходники
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'ui.js'), 'utf8'), sandbox);
+// В реальном приложении лёгкая перерисовка (без запроса цен) допустима только для
+// действий-оформлений (флажок/пикер). Тест эмулирует АВТООБНОВЛЕНИЕ цен — оно
+// всегда идёт по полному пути. Отключаем lightweight-ветку нулевым TTL кэша.
+vm.runInContext('window.CACHE_DURATION = 0;', sandbox);
 
-// подменяем fetchTickerData управляемой заглушкой
+// Управляемый источник цен: ТЕСТ пишет сюда данные, а РЕАЛЬно переопределённый
+// ниже fetchTickerData читает их. api.js остаётся настоящим: localStorage-кэш
+// (CACHE_KEY) работает как в браузере — render() всегда идёт через полный путь
+// с запросом цен (лёгкий рендер из __lastRenderData отключён таймером Date.now).
 const priceStore = {};
-vm.runInContext(`window.fetchTickerData = async (sym) => {
-  window.__fetchCount = (window.__fetchCount || 0) + 1;
-  const d = priceStore[sym];
-  return d === undefined ? null : d;
-}`, sandbox);
 sandbox.priceStore = priceStore;
+vm.runInContext(`window.fetchTickerData = async function(symbol) {
+  if (symbol.startsWith('SECTION:')) return null;
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch(e) {}
+  if (cache[symbol] && (Date.now() - cache[symbol].timestamp) < 120000) {
+    return cache[symbol].data;
+  }
+  const d = priceStore[symbol];
+  if (d === undefined) return null; // «сбой MOEX» — нет данных и нет свежего кэша
+  cache[symbol] = { data: d, timestamp: Date.now() };
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch(e) {}
+  return d;
+}`, sandbox);
+
+// Прогрев кэса localStorage в формате api.js (CACHE_KEY): после этого реальный
+// fetchTickerData отдаёт данные без сети — как при автообновлении в браузере.
+async function warmCache(map) {
+  const key = vm.runInContext('CACHE_KEY', sandbox);
+  const obj = JSON.parse(sandbox.localStorage.getItem(key) || '{}');
+  for (const [sym, data] of Object.entries(map)) obj[sym] = { data, timestamp: Date.now() };
+  sandbox.localStorage.setItem(key, JSON.stringify(obj));
+}
+
+// Найти в дереве узел с классом cls (обход от корня id-реестра).
+function findNode(root, cls) {
+  let found = null;
+  root._walk((n) => { if (!found && n._classes.has(cls)) found = n; });
+  return found || (root._classes.has(cls) ? root : null);
+}
 
 (async () => {
   const list = sandbox.appState.lists.default;
@@ -283,6 +358,7 @@ sandbox.priceStore = priceStore;
 
   // --- Цена изменилась: обновился только текст, узел прежний ---
   priceStore['SBER'] = { price: 301, changeValue: 1.5, changeDay: 0.5 };
+  await warmCache(priceStore);
   await sandbox.render();
   assert(sandbox.__rowsCache.map.get('SBER').el === sberEntry.el, 'Узел сохранён после изменения цены');
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'Новая цена записана инкрементально');
@@ -290,16 +366,21 @@ sandbox.priceStore = priceStore;
 
   // --- Сбой сети: предыдущая цена остаётся на месте (без мигания ошибкой) ---
   delete priceStore['SBER'];
+  const _wsb = { ...priceStore }; delete _wsb['SBER'];
+  await warmCache(_wsb); // SBER «исчез из кэша» -> fetch вернёт null (сбой MOEX)
   await sandbox.render();
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'При временном сбое MOEX старая цена сохранена');
 
   // --- Удаление тикера через контекстное меню «⋯» -> удаление узла из DOM и кэша ---
-  sandbox.__menu = [];
-  gazpEntry.el.querySelector('.ticker-remove').fire('click', { clientX: 10, clientY: 10 });
-  assert(sandbox.__menu.length === 1 && sandbox.__menu[0].items.some(i => i.label === 'Удалить из списка'),
-    'Клик по «⋯» открывает меню с пунктом «Удалить из списка» (без мгновенного удаления)');
-  const delItem = sandbox.__menu[0].items.find(i => i.label === 'Удалить из списка');
-  await delItem.action();
+  // Клик по кнопке «⋯»: событие ВСПЛЫВАЕТ к строке, обработчик строки вызывает
+  // реальную openWlContextMenu (создаёт .wl-context-menu и кладёт его в body).
+  const menuBtn = gazpEntry.el.querySelector('.ticker-remove');
+  menuBtn.fire('click', { clientX: 10, clientY: 10 });
+  const menuNode = findNode(sandbox.document.body, 'wl-context-menu');
+  const delBtn = menuNode ? menuNode.querySelectorAll('button').find(b => b.textContent === 'Удалить из списка') : null;
+  assert(!!menuNode && !!delBtn, 'Клик по «⋯» открывает меню с пунктом «Удалить из списка» (без мгновенного удаления)');
+  assert(list.tickers.includes('GAZP'), 'Мгновенного удаления одним кликом по «⋯» нет');
+  delBtn.fire('click'); // клик по пункту меню -> action -> removeTickerFromList
   await new Promise(r => setTimeout(r, 0)); // дождаться async-обработчика
   await sandbox.render();
   assert(!container.children.includes(gazpEntry.el), 'Удалённый тикер убран из DOM');
@@ -325,6 +406,7 @@ sandbox.priceStore = priceStore;
   // --- График: createChart вызывается только при СМЕНЕ активного тикера ---
   const chartCallsBefore = sandbox.createChartCalls.length;
   priceStore['SBER'] = { price: 302, changeValue: 1.5, changeDay: 0.5 };
+  await warmCache(priceStore);
   await sandbox.render();
   assert(sandbox.createChartCalls.length === chartCallsBefore, 'createChart НЕ вызывалась при автообновлении цен');
 
