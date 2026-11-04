@@ -398,9 +398,18 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   width: 22px; height: 22px; margin: -2px 0; border-radius: 4px; user-select: none;
 }
 .ticker-item:hover .ticker-remove { opacity: 1; }
-.ticker-remove:hover { color: #d1d4dc; background: #363a45; }
-/* Иконка «⋯» вместо текстового «×» */
+.ticker-remove:hover { color: #ef5350; background: rgba(239, 83, 80, 0.12); }
+/* Иконка корзины внутри кнопки удаления */
 .ticker-remove svg { width: 14px; height: 14px; display: block; }
+
+/* Кнопка «⋯» контекстного меню раздела (переименовать/свернуть/удалить) */
+.section-menu-btn {
+  color: #787b86; cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin: -2px 0; border-radius: 4px; user-select: none;
+}
+.section-menu-btn:hover { color: #d1d4dc; background: #363a45; }
+.section-menu-btn svg { width: 14px; height: 14px; display: block; }
 
 /* --- Контекстное меню строки/раздела (открывается по «⋯») --- */
 .wl-context-menu {
@@ -862,8 +871,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .section-collapse-btn:hover { background: #363a45; color: #d1d4dc; }
 .section-header .drag-handle { cursor: grab; opacity: 0.5; font-size: 14px; }
 .section-header:hover .drag-handle { opacity: 0.85; }
-.section-header .ticker-remove { opacity: 0; transition: opacity 0.2s ease; }
-.section-header:hover .ticker-remove { opacity: 1; }
+.section-header .section-menu-btn { opacity: 0; transition: opacity 0.2s ease; }
+.section-header:hover .section-menu-btn { opacity: 1; }
 
 /* ==========================================================================
    15. 🔘 КНОПКИ ПЕРЕКЛЮЧЕНИЯ (TOGGLE)

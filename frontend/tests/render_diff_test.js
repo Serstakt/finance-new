@@ -371,20 +371,22 @@ function findNode(root, cls) {
   await sandbox.render();
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'При временном сбое MOEX старая цена сохранена');
 
-  // --- Удаление тикера через контекстное меню «⋯» -> удаление узла из DOM и кэша ---
-  // Клик по кнопке «⋯»: событие ВСПЛЫВАЕТ к строке, обработчик строки вызывает
-  // реальную openWlContextMenu (создаёт .wl-context-menu и кладёт его в body).
-  const menuBtn = gazpEntry.el.querySelector('.ticker-remove');
-  menuBtn.fire('click', { clientX: 10, clientY: 10 });
-  const menuNode = findNode(sandbox.document.body, 'wl-context-menu');
-  const delBtn = menuNode ? menuNode.querySelectorAll('button').find(b => b.textContent === 'Удалить из списка') : null;
-  assert(!!menuNode && !!delBtn, 'Клик по «⋯» открывает меню с пунктом «Удалить из списка» (без мгновенного удаления)');
-  assert(list.tickers.includes('GAZP'), 'Мгновенного удаления одним кликом по «⋯» нет');
-  delBtn.fire('click'); // клик по пункту меню -> action -> removeTickerFromList
-  await new Promise(r => setTimeout(r, 0)); // дождаться async-обработчика
+  // --- Удаление тикера одной корзиной: клик по .ticker-remove -> удаление сразу ---
+  const removeBtn = gazpEntry.el.querySelector('.ticker-remove');
+  removeBtn.fire('click', { clientX: 10, clientY: 10 });
+  await new Promise(r => setTimeout(r, 0)); // дождаться async removeTickerFromList
   await sandbox.render();
+  assert(!list.tickers.includes('GAZP'), 'Клик по корзине удаляет тикер сразу (без меню/подтверждений)');
   assert(!container.children.includes(gazpEntry.el), 'Удалённый тикер убран из DOM');
   assert(!sandbox.__rowsCache.map.has('GAZP'), 'Кэш узлов почищен (нет утечки)');
+
+  // --- Правый клик по строке — контекстное меню с дополнительными действиями ---
+  const sberEl2 = sandbox.__rowsCache.map.get('SBER').el;
+  sberEl2.fire('contextmenu', { clientX: 10, clientY: 10 });
+  const menuNode = findNode(sandbox.document.body, 'wl-context-menu');
+  const delMenuItem = menuNode ? menuNode.querySelectorAll('button').find(b => b.textContent === 'Удалить из списка') : null;
+  assert(!!menuNode && !!delMenuItem, 'Правый клик открывает меню с пунктом «Удалить из списка»');
+  closeWlContextMenu();
 
   // --- Смена списка: полный сброс кэша и контейнера ---
   sandbox.appState.lists.other = { name: 'Другой', tickers: ['LKOH'], activeSymbol: '', collapsedSections: [] };

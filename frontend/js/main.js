@@ -513,14 +513,14 @@ if (typeof Sortable !== 'undefined') {
       // Собираем новый порядок по DOM и находим перемещённый элемент.
       const newList = [];
       document.querySelectorAll('#ticker-list .ticker-item, #ticker-list .section-header').forEach(item => {
-        const btn = item.querySelector('.ticker-remove');
+        const btn = item.querySelector('[data-symbol]');
         if (btn) newList.push(btn.getAttribute('data-symbol'));
       });
       getCurrentList().tickers = newList;
       // Сохраняем в БД только перемещённый элемент (move + target position),
       // а не весь список: payload не растёт с размером списка, и параллельные
       // правки с другого устройства не затираются снимком с этого.
-      const movedBtn = evt.item ? evt.item.querySelector('.ticker-remove') : null;
+      const movedBtn = evt.item ? evt.item.querySelector('[data-symbol]') : null;
       const symbol = movedBtn ? movedBtn.getAttribute('data-symbol') : null;
       let targetIndex = -1;
       if (symbol && evt.oldIndex != null && evt.newIndex != null && evt.oldIndex !== evt.newIndex) {
@@ -531,7 +531,7 @@ if (typeof Sortable !== 'undefined') {
         const posInKids = kids.indexOf(evt.item);
         let othersBefore = 0;
         for (let i = 0; i < posInKids; i++) {
-          const btn = kids[i] ? kids[i].querySelector('.ticker-remove') : null;
+          const btn = kids[i] ? kids[i].querySelector('[data-symbol]') : null;
           const s = btn ? btn.getAttribute('data-symbol') : null;
           if (s && s !== symbol) othersBefore++;
         }

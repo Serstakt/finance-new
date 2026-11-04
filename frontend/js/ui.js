@@ -422,12 +422,19 @@ window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 2
 
 // Создание каркаса строки тикера (структура строится один раз; дальше —
 // только точечное обновление текстов/классов в updateRow).
-// SVG-иконка «⋯» (горизонтальные точки) для кнопки контекстного меню строки.
+// SVG-иконка корзины — единственная кнопка удаления в строке.
+window.TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+
+// SVG-иконка «⋯» (горизонтальные точки) — кнопка контекстного меню РАЗДЕЛА
+// (в разделе нет одной понятной деструктивной кнопки, поэтому там меню:
+// переименовать / свернуть / удалить).
 window.MORE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
 
-// Пункты контекстного меню строки тикера (клик по «⋯» или правый клик на строке).
-// Удаление больше не выполняется одним кликом по «×»: деструктивное действие
-// требует второго подтверждения в подписанном пункте меню.
+// Пункты контекстного меню строки тикера (правый клик на строке).
+// Кнопка удаления — одна корзина: удаление выполняется сразу одним кликом
+// по ней (без подтверждений и без меню «⋯»). Контекстное меню по правому
+// клику осталось только как дополнительные действия (пункт удаления там —
+// запасной путь).
 window.rowMenuItems = function(sym) {
   const baseTicker = sym.split(':').length > 1 ? sym.split(':')[1] : sym;
   return [
@@ -443,7 +450,7 @@ window.rowMenuItems = function(sym) {
   ];
 };
 
-// Удаление тикера из активного списка (общий путь для «⋯» и legacy-узлов .ticker-remove).
+// Удаление тикера из активного списка (общий путь для корзины и контекстного меню).
 window.removeTickerFromList = async function(sym) {
   const cur = getCurrentList();
   if (appState.activeListId.startsWith('fav_')) {
@@ -483,15 +490,15 @@ window.buildRowElement = function(sym) {
     <div class="ticker-price" id="price-${safeId}"><div class="skeleton skeleton-price"></div></div>
     <div class="ticker-change" id="change-val-${safeId}"><div class="skeleton skeleton-change"></div></div>
     <div class="ticker-change-percent" id="change-pct-${safeId}"><div class="skeleton skeleton-change-pct"></div></div>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Ещё действия" aria-label="Меню действий">${MORE_SVG}</span>`;
+    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Удалить из списка" aria-label="Удалить ${escapeHtml(baseTicker)} из списка">${TRASH_SVG}</span>`;
 
   // Клик по строке — выбор активного тикера. Вешается ОДИН раз на весь срок
   // жизни узла (раньше слушатель создавался при каждой перерисовке).
   div.addEventListener('click', (e) => {
-    const menuBtn = e.target.closest('.ticker-remove');
-    if (menuBtn) { // «⋯» открывает контекстное меню, а не выбирает тикер
+    const removeBtn = e.target.closest('.ticker-remove');
+    if (removeBtn) { // корзина: удаление сразу, одним кликом (без меню/подтверждений)
       e.stopPropagation();
-      openWlContextMenu(menuBtn, e.clientX ?? 0, e.clientY ?? 0, rowMenuItems(sym));
+      removeTickerFromList(sym);
       return;
     }
     if (e.target.classList.contains('drag-handle') ||
@@ -717,7 +724,7 @@ window.buildSectionElement = function(sym) {
     <span class="section-collapse-btn" title="Свернуть/Развернуть">${CHEVRON_SVG}</span>
     <span class="section-count" title="Инструментов в разделе"></span>
     <span class="section-title col-section-name" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>
-    <span class="ticker-remove" data-symbol="${escapeHtml(sym)}" title="Ещё действия" aria-label="Меню раздела">${MORE_SVG}</span>`;
+    <span class="section-menu-btn" data-symbol="${escapeHtml(sym)}" title="Ещё действия" aria-label="Меню раздела">${MORE_SVG}</span>`;
 
   div.querySelector('.section-collapse-btn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -725,9 +732,9 @@ window.buildSectionElement = function(sym) {
   });
 
   // «⋯» раздела — контекстное меню (переименовать / свернуть / удалить)
-  div.querySelector('.ticker-remove').addEventListener('click', (e) => {
+  div.querySelector('.section-menu-btn').addEventListener('click', (e) => {
     e.stopPropagation();
-    openWlContextMenu(e.target.closest('.ticker-remove'), e.clientX ?? 0, e.clientY ?? 0, sectionMenuItems(sym, sectionName));
+    openWlContextMenu(e.target.closest('.section-menu-btn'), e.clientX ?? 0, e.clientY ?? 0, sectionMenuItems(sym, sectionName));
   });
 
   // Правый клик по заголовку раздела — то же меню
