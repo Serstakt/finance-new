@@ -187,8 +187,36 @@ window.detectExchange = function(symbol) {
 // «Новости» активна по умолчанию; loadTickerNews показывает панель, но
 // НЕ переключает табы — если пользователь открыл «Заметки», новости
 // догружаются в скрытую вкладку.
+// === ДОСЛЕДКА ЛЕНТЫ ПОСЛЕ ФОНОВОГО ПЕРЕОБНОВЛЕНИЯ (stale-while-revalidate) ===
+// Бэкенд отдал устаревшую ленту с revalidating=true и парсит Telegram в фоне.
+// Long-poll GET /api/news/refresh/wait возвращает управление, как только
+// фоновый парсинг завершился, — тогда перезапрашиваем ленту (force_refresh=
+// false): кэш к этому моменту уже свежий, ответ мгновенный. Повторный вызов
+// loadTickerNews не зацикливается (revalidating=false) и не мелькает
+// скелетоном (список уже не пуст). Если пользователь ушёл на другой тикер —
+// _newsActiveSymbol изменился и доследка просто не перерисовывает чужую ленту.
+window.scheduleNewsRefetch = function(symbol, tickerNorm) {
+  (async () => {
+    try {
+      // Таймаут больше серверного (90 с), чтобы сервер успел ответить сам
+      await window.fetchWithTimeout(
+        `/api/news/refresh/wait?ticker=${encodeURIComponent(tickerNorm || '')}`, {}, 100000);
+    } catch (e) {
+      return; // сеть/таймаут — следующее обновление придёт при следующем визите
+    }
+    // Пользователь мог уйти на другой тикер, пока мы ждали сигнал
+    if (window._newsActiveSymbol !== symbol) return;
+    console.log("🔄 [DEBUG] Фоновый парсинг завершён — перезапрашиваем ленту:", symbol);
+    window.loadTickerNews(symbol, false);
+  })();
+};
+
 window.loadTickerNews = async function(symbol, forceRefresh = false) {
   console.log("🚀 [DEBUG] loadTickerNews вызвана для:", symbol, "Force:", forceRefresh);
+
+  // Активная лента: доследка после фонового переобновления (см. ниже)
+  // перерисовывает список, только если пользователь всё ещё на этом тикере.
+  window._newsActiveSymbol = symbol || null;
 
   if (!symbol || symbol.startsWith('SECTION:')) {
     const panel = document.getElementById('news-panel');
@@ -274,6 +302,11 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       if (response.ok) {
         const data = await response.json();
         news = data.news || [];
+        // Stale-while-revalidate: бэкенд отдал устаревшую ленту и парсит
+        // Telegram в фоне (revalidating=true). Дожидаемся сигнала о
+        // завершении и перезапрашиваем ленту — новые посты появляются
+        // сами, без перезагрузки страницы.
+        if (data.revalidating && !forceRefresh) scheduleNewsRefetch(symbol, tickerNorm);
       }
     }
 
@@ -307,6 +340,22 @@ const trimNewsTeaser = (text) => {
   return s.slice(0, m.index).replace(/[\s….,:;«»"'\-\u2013\u2014]+$/g, '').trim();
 };
 window.trimNewsTeaser = trimNewsTeaser;
+
+// Разделение тизера на заголовок и основной текст для карточки новости.
+// Короткая первая строка поста читается как заголовок (жирный), остальное —
+// обычным текстом с переносами строк (white-space:pre-line на отрисовке).
+// Однострочный пост: короткий показываем целиком жирным, длинный — обычным
+// текстом без «заголовка».
+const splitNewsTeaser = (teaser) => {
+  const t = String(teaser || '').trim();
+  if (!t) return { heading: '', body: '' };
+  const nl = t.indexOf('\n');
+  const firstLine = (nl === -1 ? t : t.slice(0, nl)).trim();
+  const rest = nl === -1 ? '' : t.slice(nl + 1).trim();
+  if (firstLine.length <= 120 && rest) return { heading: firstLine, body: rest };
+  if (nl === -1 && firstLine.length <= 120) return { heading: firstLine, body: '' };
+  return { heading: '', body: t };
+};
 
 // === ФЛАЖОК ИЗБРАННОГО НОВОСТИ ===
 // Тот же флажок, что используется в списке тикеров для избранного: SVG-иконка
@@ -351,15 +400,19 @@ newsList.innerHTML = `
     ${news.map(n => {
     const link = normLink(n.link);
     const isFav = !!window.newsFavorites[link];
-    // На UI показываем только «тизер»: текст до слов «Читать далее» и т.п.
-    const teaser = trimNewsTeaser(n.title);
+    // На UI показываем весь текст поста до слов «Читать далее» и т.п.
+    // Источник — full_text (полный текст из Telegram): title бэкенд режет
+    // до 200 символов, из-за чего маркер «Читать далее» часто не был виден.
+    const teaser = trimNewsTeaser(n.full_text || n.title);
+    const parts = splitNewsTeaser(teaser);
     return `
     <div class="news-item" data-link="${link}" style="position: relative; display: flex; align-items: stretch;">
         ${newsFlagBtnHtml(link, isFav)}
         <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${teaser}</div>
-                <div style="font-size: 12px; color: #787b86;">${n.publisher}</div>
+                ${parts.heading ? `<div style="font-size: 15px; font-weight: 600; line-height: 1.4; margin-bottom: ${parts.body ? '8px' : '0'};">${escapeHtml(parts.heading)}</div>` : ''}
+                ${parts.body ? `<div style="font-size: 14px; font-weight: 400; color: #b2b5be; line-height: 1.55; white-space: pre-line;">${escapeHtml(parts.body)}</div>` : ''}
+                <div style="font-size: 12px; color: #787b86; margin-top: 8px;">${n.publisher}</div>
             </div>
             <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
                 ${n.time || ''}
@@ -758,16 +811,20 @@ function drawNewsFavorites(pane, items, ticker) {
     const tickerBadge = (itemTicker && itemTicker !== String(ticker || '').toUpperCase())
       ? `<span style="display:inline-block; margin-right:8px; padding:2px 8px; background:#363a45; border-radius:4px; font-size:11px; color:#2962ff; font-weight:600;">${escapeHtml(itemTicker)}</span>`
       : '';
-    // Как и на вкладке «Новости»: на UI показываем только «тизер» — текст до
-    // слов «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.
-    const teaser = trimNewsTeaser(n.title || link);
+    // Как и на вкладке «Новости»: показываем весь текст поста до слов
+    // «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.
+    // full_text (из news_cache / GET /api/news/favorites/list) не обрезан,
+    // title — резерв (например, когда поста ещё нет ни в одном кэше).
+    const teaser = trimNewsTeaser(n.full_text || n.title || link);
+    const parts = splitNewsTeaser(teaser);
     return `
     <div class="news-item" data-link="${escapeHtml(link)}" style="position: relative; display: flex; align-items: stretch;">
         ${newsFlagBtnHtml(link, true)}
         <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
             <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.4;">${tickerBadge}${escapeHtml(teaser)}</div>
-                <div style="font-size: 12px; color: #787b86;">Smart-Lab News</div>
+                ${parts.heading ? `<div style="font-size: 15px; font-weight: 600; line-height: 1.4; margin-bottom: ${parts.body ? '8px' : '0'};">${tickerBadge}${escapeHtml(parts.heading)}</div>` : ''}
+                ${parts.body ? `<div style="font-size: 14px; font-weight: 400; color: #b2b5be; line-height: 1.55; white-space: pre-line;">${escapeHtml(parts.body)}</div>` : ''}
+                <div style="font-size: 12px; color: #787b86; margin-top: 8px;">Smart-Lab News</div>
             </div>
             <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
                 ${escapeHtml(n.time || '')}

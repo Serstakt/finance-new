@@ -211,6 +211,10 @@ def list_favorites(ticker: str | None = None) -> list[dict]:
             "link": link,
             "ticker": item_ticker,
             "title": str(title)[:TITLE_MAX_LEN],
+            # Полный текст поста без обрезки: фронт показывает «тизер» — всё
+            # до слов «Читать далее» и т.п. (title обрезан до TITLE_MAX_LEN
+            # и может срезать маркер у длинных постов).
+            "full_text": (post or {}).get("full_text") or "",
             "time": (post or {}).get("time") or "",
         })
 
