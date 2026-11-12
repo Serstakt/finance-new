@@ -476,14 +476,34 @@ async def notifications_test(payload: schemas.NotificationTest | None = None):
 
 @app.get("/api/news/telegram/{ticker}")
 async def get_telegram_news(ticker: str, force_refresh: bool = Query(default=False)):
-    """Новости из @newssmartlab по тикеру"""
+    """Новости из @newssmartlab по тикеру
+
+    revalidating=True — отдана устаревшая лента и парсинг уже идёт в фоне:
+    фронт дожидается его через GET /api/news/refresh/wait и перезапрашивает
+    ленту (force_refresh=false), не дожидаясь перезагрузки страницы.
+    """
     clean_ticker = ticker.replace("MOEX:", "").upper()
 
-    news = await telegram_news_service.fetch_smartlab_telegram_news(
+    news, revalidating = await telegram_news_service.fetch_smartlab_telegram_news(
         clean_ticker,
         force_refresh=force_refresh
     )
-    return {"symbol": f"MOEX:{clean_ticker}", "news": news}
+    return {"symbol": f"MOEX:{clean_ticker}", "news": news, "revalidating": revalidating}
+
+
+@app.get("/api/news/refresh/wait")
+async def wait_news_refresh(ticker: str | None = Query(default=None)):
+    """Long-poll: ждёт завершения фонового переобновления кэша новостей.
+
+    ticker — тикер, чью ленту переобновляет фон (пустой/отсутствующий —
+    общий новостной поток ''). Возвращает {"refreshed": bool}: True —
+    парсинг завершился (фронт перезапрашивает ленту), False — фоновое
+    обновление не запускалось или не уложилось в таймаут.
+    """
+    refreshed = await telegram_news_service.wait_for_background_refresh(
+        (ticker or "").replace("MOEX:", "").upper(), timeout=90.0
+    )
+    return {"refreshed": refreshed}
 
 
 # === ИЗБРАННЫЕ НОВОСТИ (вкладка «Новости» раздела WATCHLIST) ===
@@ -523,7 +543,7 @@ async def _news_stream_watcher(stop_event: asyncio.Event) -> None:
         except asyncio.TimeoutError:
             pass
         try:
-            posts = await telegram_news_service.fetch_smartlab_telegram_news(
+            posts, _ = await telegram_news_service.fetch_smartlab_telegram_news(
                 NEWS_STREAM_TICKER
             )
             if posts:

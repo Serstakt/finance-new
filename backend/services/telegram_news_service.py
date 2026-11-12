@@ -11,6 +11,11 @@ from ..database.models import NewsCache
 
 CACHE_DURATION_SECONDS = 300  # 5 минут
 
+# Сколько новостей по тикеру накапливается в БД: новый парсинг НЕ затирает
+# предыдущую ленту, а сливается с ней (см. save_news_to_cache) — свежие посты
+# в начале, самые старые вытесняются за пределом лимита.
+NEWS_HISTORY_LIMIT = 100
+
 # Ключ строки кэша с общим новостным потоком @newssmartlab (без фильтра по
 # тикеру): его наполняет фоновый вотчер (backend/main.py), и из него вкладка
 # «🚩 Избранные новости» берёт заголовки/время постов напрямую из БД.
@@ -94,35 +99,123 @@ async def get_stale_cached_news(ticker: str) -> list | None:
         print(f"❌ Ошибка чтения устаревшего кэша: {e}")
         return None
 
+def _normalize_link(link: str) -> str:
+    """Приводит ссылку на пост к каноничному виду для дедупликации и PK.
+
+    Ссылки из Telegram-парсера могут отличаться хвостовым слэшем или схемой
+    (http/https), из-за чего одна новость могла бы сохраниться дважды.
+    (Используется и news_favorites_service — импортирует отсюда.)
+    """
+    s = (link or "").strip()
+    if not s:
+        return ""
+    if s.startswith("http://"):
+        s = "https://" + s[len("http://"):]
+    return s.rstrip("/")
+
+
+def _post_id(link: str) -> int | None:
+    """Достаёт числовой id поста Telegram из ссылки вида t.me/<channel>/<id>.
+
+    id в канале монотонный, поэтому служит надёжным ключом сортировки при
+    слиянии накопленной истории со свежим парсом. Используется и
+    news_favorites_service (импортирует отсюда).
+    """
+    tail = (link or "").rstrip("/").rsplit("/", 1)[-1]
+    # у закреп/форвардов бывают хвосты вида /123?single — отрезаем не-цифры
+    digits = ""
+    for ch in reversed(tail):
+        if ch.isdigit():
+            digits = ch + digits
+        else:
+            break
+    return int(digits) if digits else None
+
+
 async def save_news_to_cache(ticker: str, news_data: list):
-    """Сохраняет или обновляет кэш новостей в БД."""
+    """Сливает свежий парсинг с накопленной историей тикера и сохраняет в БД.
+
+    Раньше здесь был upsert через delete+insert: каждый парсинг затирал
+    предыдущую ленту целиком. Теперь новые посты добавляются В НАЧАЛО списка,
+    дубли (по нормализованной ссылке на пост) убираются, записи сортируются
+    по id поста (свежие сверху) и обрезаются до NEWS_HISTORY_LIMIT — так
+    история по тикеру накапливается, а не пересоздаётся заново.
+    """
+    cache_key = ticker if ticker else STREAM_CACHE_KEY
     try:
         with get_session() as db:
+            cache = db.query(NewsCache).filter(NewsCache.ticker == cache_key).first()
+            old_posts = []
+            if cache:
+                try:
+                    loaded = json.loads(cache.news_data or "[]")
+                    if isinstance(loaded, list):
+                        old_posts = [p for p in loaded if isinstance(p, dict)]
+                except (ValueError, TypeError):
+                    old_posts = []
+
+            # Слияние: свежий парс первым (побеждает при дубликатах — его
+            # full_text актуальнее), затем накопленная история.
+            merged: list[dict] = []
+            seen: set[str] = set()
+            for post in list(news_data or []) + old_posts:
+                if not isinstance(post, dict):
+                    continue
+                key = _normalize_link(post.get("link", ""))
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(post)
+
+            # Свежие сверху: сортируем по числовому id поста (монотонный в
+            # канале); записи без числового id — в конец, между собой стабильно.
+            merged.sort(key=lambda p: (_post_id(p.get("link", "")) is not None,
+                                       _post_id(p.get("link", "")) or 0),
+                        reverse=True)
+
+            merged = merged[:NEWS_HISTORY_LIMIT]
+
             # Удаляем старую запись (UPSERT через delete + insert проще для SQLite)
-            db.query(NewsCache).filter(NewsCache.ticker == ticker).delete()
+            db.query(NewsCache).filter(NewsCache.ticker == cache_key).delete()
 
             new_cache = NewsCache(
-                ticker=ticker,
-                news_data=json.dumps(news_data, ensure_ascii=False),
+                ticker=cache_key,
+                news_data=json.dumps(merged, ensure_ascii=False),
                 timestamp=datetime.utcnow()
             )
             db.add(new_cache)
             db.commit()
-            print(f"💾 Новости для {ticker} сохранены в SQLite кэш")
+            print(f"💾 Новости для {cache_key or 'STREAM'} сохранены в SQLite кэш "
+                  f"(всего {len(merged)}, лимит {NEWS_HISTORY_LIMIT})")
+            return merged
     except Exception as e:
         print(f"❌ Ошибка сохранения в кэш: {e}")
+        return None
 
-async def _refresh_cache_in_background(cache_key: str):
+# === Сигнализация о фоновом переобновлении кэша (для фронтенда) ===
+# stale-while-revalidate отдаёт пользователю устаревшую ленту и парсит Telegram
+# в фоне. Чтобы фронт узнал о завершении парсинга и сам перезапросил ленту
+# (GET /api/news/refresh/wait), парсер публикует завершение через asyncio.Event,
+# а ключи с уже идущим парсингом защищены от дублирующих задач.
+_refresh_inflight: set[str] = set()            # ключи кэша, чей парсинг идёт прямо сейчас
+_refresh_done: dict[str, asyncio.Event] = {}   # ключ → событие «парсинг завершён»
+
+
+async def _refresh_cache_in_background(cache_key: str, done: asyncio.Event) -> None:
     """Фоновое переобновление кэша (stale-while-revalidate).
 
     Запускается через asyncio.create_task после того, как пользователю уже
     отдали устаревшую ленту. Ошибку гасим сами: задачу никто не джойнит, и
-    непойманное исключение породило бы шум в логах event loop.
+    непойманное исключение породило бы шум в логах event loop. Событие done
+    взводим в любом случае — ждущие фронты не должны висеть вечно.
     """
     try:
         await parse_and_save_news(cache_key)
     except Exception as e:
         print(f"❌ Фоновое обновление кэша '{cache_key or 'STREAM'}' не удалось: {e}")
+    finally:
+        _refresh_inflight.discard(cache_key)
+        done.set()
 
 
 async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int = 50) -> list:
@@ -193,7 +286,16 @@ async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int 
                 if not text_block:
                     continue
 
-                text = text_block.get_text(strip=True)
+                # Переносы строк поста: <br> → '\n' ДО get_text — иначе текст
+                # склеивается в одну строку без пробелов между абзацами.
+                for br in text_block.find_all('br'):
+                    br.replace_with('\n')
+                text = text_block.get_text()
+                # Нормализация для чтения: пробелы/неразрывные схлопываем,
+                # висячие пробелы у переносов убираем, 3+ пустые строки → 1.
+                text = re.sub(r'[ \t\u00a0]+', ' ', text)
+                text = re.sub(r' ?\n ?', '\n', text)
+                text = re.sub(r'\n{3,}', '\n\n', text).strip()
                 text_lower = text.lower()
 
                 found = False
@@ -244,9 +346,11 @@ async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int 
 
         print(f"\n✅ Завершено. Проверено: {total_checked}, найдено: {len(news_list)}")
 
-        # Сохраняем результат в кэш перед возвратом (перезаписывает stale-строку)
-        await save_news_to_cache(ticker, news_list)
-        return news_list
+        # Сливаем с накопленной историей тикера и сохраняем (запись обновляет
+        # stale-строку); возвращаем СЛИТЫЙ список, чтобы даже force_refresh
+        # показал накопленную историю, а не только свежий парс.
+        merged = await save_news_to_cache(ticker, news_list)
+        return merged if merged is not None else news_list
 
     except Exception as e:
         print(f"❌ Ошибка парсинга: {e}")
@@ -260,20 +364,26 @@ async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int 
         return news_list
 
 
-async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_news: int = 50, force_refresh: bool = False) -> list:
-    """Точка входа для API: кэш + stale-while-revalidate поверх парсера."""
+async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_news: int = 50, force_refresh: bool = False) -> tuple[list, bool]:
+    """Точка входа для API: кэш + stale-while-revalidate поверх парсера.
+
+    Возвращает (news, revalidating): revalidating=True означает, что
+    пользователю отдана устаревшая лента и фоновый парсинг уже идёт —
+    фронт может дождаться его через wait_for_background_refresh и
+    перезапросить ленту.
+    """
     # Для пустого тикера строка кэша — общий новостной поток (его наполняет
     # фоновый вотчер на сервере), для обычного — лента этого тикера.
     cache_key = ticker if ticker else STREAM_CACHE_KEY
 
     # 1. Принудительное обновление («кнопка Обновить») — всегда тяжёлый путь.
     if force_refresh:
-        return await parse_and_save_news(ticker, max_posts, max_news)
+        return await parse_and_save_news(cache_key), False
 
     # 2. Свежий кэш (в пределах TTL) — мгновенный ответ без сети.
     cached_news = await get_cached_news(cache_key)
     if cached_news is not None:
-        return cached_news
+        return cached_news, False
 
     # 3. Stale-while-revalidate: если в БД лежит устаревшая запись, сразу
     # отдаём её пользователю, а переобновление запускаем в фоне. Лента
@@ -281,9 +391,36 @@ async def fetch_smartlab_telegram_news(ticker: str, max_posts: int = 1000, max_n
     # (после завершения фона) получит уже свежие данные.
     stale_news = await get_stale_cached_news(cache_key)
     if stale_news is not None:
-        asyncio.create_task(_refresh_cache_in_background(cache_key))
-        return stale_news
+        done = _refresh_done.get(cache_key)
+        if done is None or done.is_set():
+            done = asyncio.Event()
+            _refresh_done[cache_key] = done
+        # Защита от дублей: каждый повторный запрос при устаревшем кэше не
+        # должен спавнить ещё один параллельный парсер — задача одна на ключ.
+        if cache_key not in _refresh_inflight:
+            _refresh_inflight.add(cache_key)
+            asyncio.create_task(_refresh_cache_in_background(cache_key, done))
+        return stale_news, True
 
     # 4. Полнейший промах кэша (первый запрос после чистого старта) —
     # синхронный парсинг, делать нечего: показывать пока нечего.
-    return await parse_and_save_news(ticker, max_posts, max_news)
+    return await parse_and_save_news(cache_key), False
+
+
+async def wait_for_background_refresh(cache_key: str, timeout: float = 90.0) -> bool:
+    """Ждёт завершения фонового переобновления кэша (long-poll для фронтенда).
+
+    True — парсинг завершился (можно перезапросить ленту), False — фоновое
+    обновление не запускалось или не уложилось в timeout. Событие хранится
+    по ключу до следующего stale-запроса: если фронт подключился, когда
+    парсинг уже завершился, wait вернётся мгновенно.
+    """
+    done = _refresh_done.get(cache_key)
+    if done is None:
+        return False
+    try:
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        print(f"⌛ Фронт не дождался переобновления кэша '{cache_key or 'STREAM'}' за {int(timeout)} с")
+        return False

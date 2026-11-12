@@ -23,20 +23,6 @@ safe_create_all()
 TITLE_MAX_LEN = 300
 
 
-def _normalize_link(link: str) -> str:
-    """Приводит ссылку на пост к каноничному виду для использования как PK.
-
-    Ссылки из Telegram-парсера могут отличаться хвостовым слэшем или схемой
-    (http/https), из-за чего одна новость могла бы сохраниться дважды.
-    """
-    s = (link or "").strip()
-    if not s:
-        return ""
-    if s.startswith("http://"):
-        s = "https://" + s[len("http://"):]
-    return s.rstrip("/")
-
-
 def _normalize_ticker(ticker: str | None) -> str | None:
     """Приводит тикер к каноничному виду «SBER» (без префикса биржи и регистра)."""
     t = (ticker or "").replace("MOEX:", "").strip().upper()
@@ -54,7 +40,7 @@ def _normalize_ticker(ticker: str | None) -> str | None:
 #   2) новостной поток (@newssmartlab): строки кэша, в которых лежат полные
 #      тексты спарсенных постов — по ним находим id постов из favorites и
 #      определяем принадлежность тикеру через поисковые слова парсера.
-from backend.services.telegram_news_service import RU_NAMES
+from backend.services.telegram_news_service import RU_NAMES, _normalize_link, _post_id
 
 STREAM_LIMIT = 5000  # запас строк кэша, которого хватает на любой объём избранного
 
@@ -92,19 +78,6 @@ def get_all(ticker: str | None = None) -> dict[str, dict]:
             for r in rows
             if r.link
         }
-
-
-def _post_id(link: str) -> int | None:
-    """Достаёт числовой id поста Telegram из ссылки вида t.me/<channel>/<id>."""
-    tail = (link or "").rstrip("/").rsplit("/", 1)[-1]
-    # у закреп/форвардов бывают хвосты вида /123?single — отрезаем не-цифры
-    digits = ""
-    for ch in reversed(tail):
-        if ch.isdigit():
-            digits = ch + digits
-        else:
-            break
-    return int(digits) if digits else None
 
 
 def _collect_db_posts(wanted: set[str], need_ids: set[int]) -> dict[int, tuple[dict, str | None]]:
@@ -238,6 +211,10 @@ def list_favorites(ticker: str | None = None) -> list[dict]:
             "link": link,
             "ticker": item_ticker,
             "title": str(title)[:TITLE_MAX_LEN],
+            # Полный текст поста без обрезки: фронт показывает «тизер» — всё
+            # до слов «Читать далее» и т.п. (title обрезан до TITLE_MAX_LEN
+            # и может срезать маркер у длинных постов).
+            "full_text": (post or {}).get("full_text") or "",
             "time": (post or {}).get("time") or "",
         })
 
