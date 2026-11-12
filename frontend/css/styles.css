@@ -269,8 +269,11 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    9. 📜 СПИСОК ТИКЕРОВ И ЭЛЕМЕНТЫ
    ========================================================================== */
 /* Скроллбар: тонкий, но видимый — пользователь должен понимать, что список
-   прокручивается (раньше был полностью скрыт) */
-#ticker-list { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #363a45 transparent; }
+   прокручивается (раньше был полностью скрыт). Горизонтальный скроллбар скрыт:
+   при узкой панели grid-колонки могут не помещаться, но скролл по горизонтали
+   не нужен — излишек просто обрезается (по умолчанию overflow-x вычислялся
+   как auto и показывал полосу прокрутки внизу) */
+#ticker-list { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #363a45 transparent; }
 #ticker-list::-webkit-scrollbar { width: 8px; }
 #ticker-list::-webkit-scrollbar-track { background: transparent; }
 #ticker-list::-webkit-scrollbar-thumb { background: #363a45; border-radius: 4px; border: 2px solid #1e222d; }
