@@ -412,9 +412,15 @@ def set_note(list_id: str, symbol: str, note: str | None) -> dict:
     Заметка хранится в колонке watchlist_items.note (TEXT) — тезис «почему
     слежу за тикером» живёт в БД и не теряется при смене браузера.
     note=None/"" очищает заметку. Возвращает status=not_found, если элемента нет.
+
+    fav_-списки в БД не хранятся: запрос с list_id='fav_...' перенаправляем
+    в обычный список, где есть этот тикер (та же подстраховка, что в set_flag —
+    заметка редактируется и из цветовых списков «Красный», «Синий»…).
     """
     symbol = _normalize_symbol(symbol)
     cleaned = normalize_note(note)
+    if list_id.startswith("fav_"):
+        list_id = _resolve_flag_list_id(symbol) or list_id
     with get_session() as db:
         row = (
             db.query(WatchlistItem)
