@@ -517,6 +517,13 @@ if (typeof Sortable !== 'undefined') {
         if (btn) newList.push(btn.getAttribute('data-symbol'));
       });
       getCurrentList().tickers = newList;
+      // Счётчики разделов должны обновиться в моменте: DOM-порядок после drop
+      // уже новый, а тексты .section-count остались от последнего полного
+      // render() и обновлялись только после перезагрузки страницы.
+      // applySectionCollapse пересчитывает счётчики всех разделов из текущего
+      // состояния и заодно держит видимостью строк свёрнутых разделов
+      // консистентной (если тикер бросили в свёрнутый раздел).
+      if (typeof applySectionCollapse === 'function') applySectionCollapse(getCurrentList());
       // Сохраняем в БД только перемещённый элемент (move + target position),
       // а не весь список: payload не растёт с размером списка, и параллельные
       // правки с другого устройства не затираются снимком с этого.
