@@ -104,9 +104,10 @@ async def get_candles(symbol: str,
                       interval: int = Query(default=24, ge=1),
                       from_date: str | None = Query(default=None, alias="from"),
                       till_date: str | None = Query(default=None, alias="till")):
-    # Легальные интервалы ISS: 1, 10, 60, 24 (день), 7 (неделя), 31 (месяц)
-    if interval not in (1, 10, 60, 24, 7, 31):
-        raise HTTPException(status_code=400, detail="interval must be one of 1, 10, 60, 24, 7, 31")
+    # Разрешённые интервалы ISS для раздела «Тест график»:
+    # 60 (час), 24 (день), 7 (неделя), 31 (месяц). Минутные (1, 10) убраны.
+    if interval not in (60, 24, 7, 31):
+        raise HTTPException(status_code=400, detail="interval must be one of 60, 24, 7, 31")
     try:
         ticker = symbol.replace("MOEX:", "").upper()
         return await moex_service.fetch_moex_candles(
