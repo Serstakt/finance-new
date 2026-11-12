@@ -39,12 +39,13 @@ class Node {
     contains: (c) => this._classes.has(c),
   };
   get textContent() {
-    if (this.children.length === 0) {
-      // лист: если детей нет, но innerHTML задавался — чистим теги из HTML
-      if (this._textHtml !== null && this._text === '') return this._textHtml.replace(/<[^>]*>/g, '');
-      return this._text;
-    }
-    return this.children.map(c => c.textContent).join('');
+    // как в реальном DOM: конкатенация текстов реальных потомков; если их нет —
+    // плоский текст unparsed-фрагмента (или записанный textContent)
+    const kids = this.children.filter(c => c.tagName !== '#TEXT-DROP');
+    if (kids.length > 0) return kids.map(c => c.textContent).join('');
+    if (this._text) return this._text;
+    if (this._textHtml !== null) return this._textHtml.replace(/<[^>]*>/g, '');
+    return '';
   }
   set textContent(v) {
     // как в реальном DOM: удаляем детей, но атрибуты (class/id/data-*) сохраняются
@@ -53,6 +54,8 @@ class Node {
   }
   get innerHTML() { return this._html || ''; }
   set innerHTML(v) {
+    // как в реальном DOM: полная замена содержимого — старые дети «открепляются»
+    for (const c of this._kids) c.parentNode = null;
     this._html = v; this._textHtml = String(v); this._kids = []; this._liveKids.clear(); this._invalidate();
     for (const m of String(v).matchAll(/<(\w+)([^>]*)>(?:(?!<\/\1>)[\s\S])*?<\/\1>/g)) {
       const child = parseFragment(m[0]);
@@ -73,8 +76,11 @@ class Node {
   remove() {
     if (!this.parentNode) return;
     const p = this.parentNode;
-    const i = p._kids.indexOf(this);
-    if (i >= 0) p._kids.splice(i, 1);
+    // как в реальном DOM: удаляем из фактического массива детей, а не только
+    // из «живых» (добавленных через appendChild/insertBefore)
+    const i = p.children.indexOf(this);
+    if (i >= 0) p.children.splice(i, 1);
+    p._kids.delete?.(this);
     p._liveKids.delete(this);
     p._invalidate();
     this.parentNode = null;
