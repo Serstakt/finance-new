@@ -837,13 +837,13 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* ==========================================================================
    14. 📂 ЗАГОЛОВКИ РАЗДЕЛОВ (СЕКЦИЙ)
    ========================================================================== */
-/* Раздел — на тёмном фоне с accent-полосой слева и счётчиком инструментов;
-   сетка колонок общая со строками тикеров (.wl-row-grid) */
+/* Раздел — на тёмном фоне, счётчик инструментов; сетка колонок общая
+   со строками тикеров (.wl-row-grid). Без accent-полосы слева: подсвечивается
+   только выбранный тикер (.ticker-item.active) */
 .section-header {
   padding: 5px 8px; background: #252a36; color: #a3a7b2; font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.5px;
   border-bottom: 1px solid #2a2e39; border-top: 1px solid #2a2e39;
-  box-shadow: inset 3px 0 0 #2962ff; /* accent-полоса без сдвига контента */
   margin-top: 6px; cursor: default; min-height: 28px;
 }
 .section-header .section-title {
