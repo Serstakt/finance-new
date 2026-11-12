@@ -20,10 +20,11 @@ function assert(cond, msg) {
   else { failures++; console.error('FAIL:', msg); }
 }
 
-// Вырезает из исходника блок window.<name> = function(...) {...}; до строки '};'
-// на нулевом отступе (так объявлены все нужные функции в main.js/state.js).
+// Вырезает из исходника блок window.<name> = [async] function(...) {...}; до
+// строки '};' на нулевом отступе (так объявлены все нужные функции в main.js/state.js).
+// async нужен: setFlagInDb объявлен как async function.
 function extractFn(src, name) {
-  const start = src.indexOf(`window.${name} = function`);
+  const start = src.indexOf(`window.${name} =`);
   if (start === -1) throw new Error(`Не найден ${name}`);
   const end = src.indexOf('\n};', start);
   if (end === -1) throw new Error(`Не найден конец ${name}`);
@@ -46,6 +47,14 @@ const sandbox = {
   console, setTimeout, clearTimeout, Promise, JSON, Object, Array, String, fetch,
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   log: () => {},
+  // Заглушка сети объявлена в Node-скоупе: замыкание на flagRequests из vm-
+  // контекста не работает (там свободные переменные резолвятся глобалом).
+  fetchWithTimeout: async (url, opts) => {
+    if (String(url).includes('/api/watchlist/flag')) {
+      flagRequests.push({ url: String(url), body: JSON.parse(opts.body) });
+    }
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  },
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -70,12 +79,6 @@ vm.runInContext(`
   window.populateListSelector = () => {};
   window.updateFavoriteFlagsOnly = () => {};
   window.activePickerSymbol = 'SBER';
-  window.fetchWithTimeout = async (url, opts) => {
-    if (String(url).includes('/api/watchlist/flag')) {
-      flagRequests.push({ url: String(url), body: JSON.parse(opts.body) });
-    }
-    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
-  };
 `, sandbox);
 vm.runInContext(code, sandbox);
 

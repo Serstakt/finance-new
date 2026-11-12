@@ -149,8 +149,17 @@ window.renderNotesTab = function(symbol) {
   if (!editor) return;
 
   const valid = !!symbol && !symbol.startsWith('SECTION:');
-  const key = valid ? noteKey(appState.activeListId, symbol) : '';
-  const editable = valid && !String(appState.activeListId || '').startsWith('fav_');
+  // Заметка привязана к паре (список, тикер) и хранится в колонке
+  // watchlist_items.note родительского списка. В цветовых списках
+  // («Красный», «Синий»…) строки производные — резолвим родительский список,
+  // где реально лежит тикер с флажком (тот же приём, что у setFavorite —
+  // findListWithTicker в main.js).
+  const activeId = String(appState.activeListId || '');
+  const noteListId = activeId.startsWith('fav_')
+    ? (findListWithTicker(symbol) || 'default')
+    : activeId;
+  const key = valid ? noteKey(noteListId, symbol) : '';
+  const editable = valid;
 
   const raw = valid ? (appState.notes[key] || '') : '';
   // Старые заметки хранились как обычный текст (без тегов) — переводим
@@ -161,8 +170,7 @@ window.renderNotesTab = function(symbol) {
   editor.classList.toggle('disabled', !editable);
   editor.dataset.placeholder = !valid
     ? 'Выберите тикер в списке, чтобы вести заметки'
-    : (editable ? 'Здесь можно вести заметки по выбранному тикеру…'
-                : 'В цветовых списках заметки не редактируются — откройте обычный список');
+    : 'Здесь можно вести заметки по выбранному тикеру…';
   if (statusEl) statusEl.textContent = '';
   // data-empty нужен для плейсхолдера в contenteditable (там нет :placeholder)
   editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
