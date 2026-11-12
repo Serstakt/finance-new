@@ -13,6 +13,8 @@ import json
 import re
 import sqlite3
 
+from sqlalchemy import func
+
 from backend.database.database import Base, DB_PATH, engine, get_session, safe_create_all
 from backend.database.models import Watchlist, WatchlistItem
 
@@ -92,6 +94,23 @@ def get_all_names() -> dict[str, str]:
     with get_session() as db:
         rows = db.query(Watchlist).all()
         return {r.id: r.name for r in rows}
+
+
+def get_ticker_counts() -> dict[str, int]:
+    """Количество тикеров в каждом списке {list_id: n} (SECTION-заголовки не считаются).
+
+    Фронтенд показывает счётчик в селекторе списков, но полный состав (symbols)
+    подтягивает из БД только для активного списка. Для остальных списков счётчик
+    берётся из этого словаря (обновляется при каждой загрузке /api/watchlists).
+    """
+    with get_session() as db:
+        rows = (
+            db.query(WatchlistItem.list_id, func.count(WatchlistItem.id))
+            .filter(~WatchlistItem.symbol.like("SECTION:%"))
+            .group_by(WatchlistItem.list_id)
+            .all()
+        )
+        return {list_id: n for list_id, n in rows}
 
 
 def get_active_symbol(list_id: str) -> str | None:

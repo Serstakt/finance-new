@@ -221,6 +221,9 @@ window.syncListWithDb = async function(listId) {
     // migrateLegacyStateToDb() на старте страницы. Пустой список в БД — это
     // просто пустой список.
     list.tickers = dbSymbols;
+    // Состав списка загружен из БД — дальше счётчик в селекторе списков
+    // считается по tickers (см. populateListSelector), а не по tickerCount.
+    list.synced = true;
 
     // Флажки, свёрнутые разделы и заметки: источник истины — колонки БД
     // (watchlist_items.flag_color / collapsed / note). Для fav_-списков (они
@@ -275,16 +278,26 @@ window.loadListNamesFromDb = async function() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const names = data.lists || {};
+    // Счётчики тикеров по спискам из БД: состав (symbols) подтягивается только
+    // для активного списка, поэтому для остальных списков счётчик в селекторе
+    // берётся отсюда (см. populateListSelector).
+    const counts = data.ticker_counts || {};
     let changed = false;
     for (const [id, name] of Object.entries(names)) {
       if (id.startsWith('fav_')) continue;
       if (!appState.lists[id]) {
-        appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [] };
+        appState.lists[id] = { name: name, tickers: [], activeSymbol: '', collapsedSections: [], tickerCount: counts[id] || 0 };
         changed = true;
-      } else if (name && appState.lists[id].name !== name) {
-        // источник истины — БД, а не localStorage
-        appState.lists[id].name = name;
-        changed = true;
+      } else {
+        if (name && appState.lists[id].name !== name) {
+          // источник истины — БД, а не localStorage
+          appState.lists[id].name = name;
+          changed = true;
+        }
+        if (appState.lists[id].tickerCount !== (counts[id] || 0)) {
+          appState.lists[id].tickerCount = counts[id] || 0;
+          changed = true;
+        }
       }
     }
     // Обратная синхронизация: список есть локально (например, создан на другом
@@ -329,10 +342,14 @@ window.loadListNamesFromDb = async function() {
       const refreshed = await fetchWithTimeout(`${API_BASE}/api/watchlists`, {}, 15000);
       if (refreshed.ok) {
         const rdata = await refreshed.json();
+        const rcounts = rdata.ticker_counts || {};
         for (const [id, name] of Object.entries(rdata.lists || {})) {
           if (id.startsWith('fav_')) continue;
           if (appState.lists[id] && name && appState.lists[id].name !== name) {
             appState.lists[id].name = name;
+          }
+          if (appState.lists[id] && appState.lists[id].tickerCount !== (rcounts[id] || 0)) {
+            appState.lists[id].tickerCount = rcounts[id] || 0;
           }
         }
       }
@@ -639,7 +656,10 @@ window.rebuildFavoriteLists = function() {
     if (!appState.lists[favId]) {
       appState.lists[favId] = {
         name: window.favoriteListName(color),
-        tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true
+        tickers: [], activeSymbol: '', collapsedSections: [], isFavoriteList: true,
+        // fav_-списки вычисляются из флажков, их состав всегда актуален —
+        // счётчик в селекторе считается по tickers (см. populateListSelector)
+        synced: true
       };
     }
     if (!appState.lists[favId].tickers.includes(sym)) {
@@ -751,6 +771,14 @@ window.populateListSelector = function() {
   if (!wrap) return;
   // значение выбранного списка храним в data-атрибуте (аналог select.value)
   wrap.dataset.value = appState.activeListId;
+  // Счётчик тикеров списка (SECTION-заголовки не считаются). Если состав списка
+  // загружен (synced: активный список после syncListWithDb, fav_-списки) —
+  // считаем по tickers; для остальных списков состав не подтягивается целиком
+  // (tickers === []), поэтому берём счётчик из БД (/api/watchlists → tickerCount).
+  const tickerCountOf = (list) => {
+    if (list.synced) return (list.tickers || []).filter(s => !String(s).startsWith('SECTION:')).length;
+    return typeof list.tickerCount === 'number' ? list.tickerCount : 0;
+  };
   // кастомный селектор (div + SVG-флажки): элементы есть только в index.html;
   // если их нет (например, в тестовой DOM-заглушке), откатываемся к простому
   // заполнению элемента текстом названий — без иконок.
@@ -759,16 +787,18 @@ window.populateListSelector = function() {
   if (!toggle || !menu) {
     let text = '';
     for (const [id, list] of Object.entries(appState.lists)) {
+      const n = tickerCountOf(list);
       text += (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
-        + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '') + '; ';
+        + (n > 0 ? ` (${n})` : '') + '; ';
     }
     wrap.textContent = text;
     return;
   }
 
   const renderEntry = (id, list, inMenu) => {
+    const n = tickerCountOf(list);
     const name = (typeof replaceCircleIcons === 'function' ? replaceCircleIcons(list.name) : list.name)
-      + (list.tickers.length > 0 ? ` (${list.tickers.length})` : '');
+      + (n > 0 ? ` (${n})` : '');
     const color = id.startsWith('fav_') ? id.slice(4) : null;
     const hex = (color && window.FLAG_COLORS[color]) ? FLAG_COLORS[color].hex : null;
     // Флажок-закладка своего цвета — только у избранных списков (fav_*).
