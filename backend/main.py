@@ -161,8 +161,17 @@ async def get_watchlist(list_id: str):
 
 @app.get("/api/watchlists")
 async def get_watchlists():
-    """Возвращает все списки (id -> name) с названиями из БД."""
-    return {"lists": watchlist_service.get_all_names()}
+    """Возвращает все списки (id -> name) с названиями из БД + счётчики тикеров.
+
+    ticker_counts нужен фронтенду для счётчика в селекторе списков: полный
+    состав (symbols) подтягивается только для активного списка, поэтому для
+    остальных списков счётчик тикеров приходит отдельно (SECTION-заголовки
+    не считаются).
+    """
+    return {
+        "lists": watchlist_service.get_all_names(),
+        "ticker_counts": watchlist_service.get_ticker_counts(),
+    }
 
 
 @app.get("/api/watchlist-flags")
