@@ -7,16 +7,6 @@
   let chartInstance = null;
   let lastTicker = null; // последний успешно введённый тикер (для смены ТФ)
 
-  // Сколько дней истории запрашивать под каждый интервал ISS
-  const INTERVAL_DAYS_BACK = {
-    1: 5,     // 1 минута
-    10: 30,   // 10 минут
-    60: 180,  // 1 час
-    24: 1095, // 1 день — 3 года
-    7: 1825,  // 1 неделя — 5 лет
-    31: 3650, // 1 месяц — 10 лет
-  };
-
   const setStatus = (text, isError = false) => {
     const el = document.getElementById('test-chart-status');
     if (el) {
@@ -76,14 +66,13 @@
     if (!instance) return;
 
     setStatus(`Загрузка свечей ${ticker}…`);
-    const daysBack = INTERVAL_DAYS_BACK[interval] || 365;
-    const from = new Date(Date.now() - daysBack * 24 * 3600 * 1000)
-      .toISOString().slice(0, 10);
 
     try {
+      // Без from бэкенд собирает пагинацией всю доступную историю ISS
+      // (максимум свечей), а не только последние 500.
       const url = `${API_BASE}/api/candles/${encodeURIComponent(ticker)}`
-        + `?interval=${interval}&from=${from}`;
-      const response = await window.fetchWithTimeout(url, {}, 30000);
+        + `?interval=${interval}`;
+      const response = await window.fetchWithTimeout(url, {}, 60000);
       const data = await response.json();
 
       if (data.error) {
