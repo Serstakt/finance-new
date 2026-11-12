@@ -107,9 +107,8 @@
                     </button>
                     <!-- Индикатор автообновления кликабел: клик = обновление цен -->
                     <span id="auto-refresh-indicator" title="Автообновление цен · клик — обновить сейчас" role="button" onclick="refreshAllPrices()"><span class="dot"></span><span id="countdown">120с</span></span>
-                    <button class="toggle-watchlist-btn" id="hide-watchlist-btn" title="Скрыть панель">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
-                    </button>
+                    <!-- Кнопки «Скрыть панель» больше нет: панель скрывается сама,
+                         когда её тянут ресайзером уже порога (см. main.js) -->
                 </div>
             </div>
             <div id="add-form">

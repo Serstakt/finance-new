@@ -127,14 +127,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 #watchlist.hidden { display: none !important; }
 
-/* Кнопки скрытия/показа панели */
-#hide-watchlist-btn {
-  background: transparent; border: 1px solid #363a45; color: #787b86;
-  padding: 2px 4px; border-radius: 2px; transition: all 0.2s ease;
-}
-#hide-watchlist-btn:hover {
-  background: #2a2e39; border-color: #787b86; color: #d1d4dc; transform: translateX(2px);
-}
+/* Панель скрывается автоматически, когда её тянут ресайзером уже порога
+   (WATCHLIST_HIDE_WIDTH в main.js). Кнопки «Скрыть панель» больше нет. */
 /* Кнопка показа панели — прижата к правому краю (панель теперь справа) */
 #show-watchlist-btn {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
