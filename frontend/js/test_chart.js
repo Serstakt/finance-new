@@ -30,7 +30,12 @@
       el.querySelectorAll('.widget-fallback').forEach(f => f.remove());
       chartInstance = klinecharts.init(el, {
         styles: {
-          grid: { horizontal: { color: '#1e222d' } },
+          // Горизонтальная сетка едва заметна, вертикальный пунктир
+          // (линии по меткам дат оси времени) отключён совсем
+          grid: {
+            horizontal: { color: '#1e222d' },
+            vertical: { show: false },
+          },
           candle: {
             bar: {
               upColor: '#26a69a', downColor: '#ef5350',
