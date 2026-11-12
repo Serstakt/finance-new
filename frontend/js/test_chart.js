@@ -7,6 +7,39 @@
   let chartInstance = null;
   let lastTicker = null; // последний успешно введённый тикер (для смены ТФ)
 
+  // Кастомный прямоугольник: в KLineChart v9.6 нет встроенного шаблона
+  // overlay «rect» (rect — только тип фигуры), поэтому регистрируем свой
+  // шаблон из двух точек с фигурой-прямоугольником между ними.
+  const registerRectOverlay = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerOverlay({
+      name: 'tc-rect',
+      totalStep: 3, // 2 точки: противоположные углы
+      needDefaultPointFigure: true,
+      needDefaultXAxisFigure: true,
+      needDefaultYAxisFigure: true,
+      createPointFigures: ({ coordinates }) => {
+        if (!coordinates || coordinates.length < 2) return [];
+        const [a, b] = coordinates;
+        return [{
+          type: 'rect',
+          attrs: {
+            x: Math.min(a.x, b.x),
+            y: Math.min(a.y, b.y),
+            width: Math.abs(b.x - a.x),
+            height: Math.abs(b.y - a.y),
+          },
+          styles: {
+            style: 'stroke_fill',
+            color: 'rgba(41, 98, 255, 0.12)',
+            borderColor: '#2962ff',
+            size: 1,
+          },
+        }];
+      },
+    });
+  };
+
   const setStatus = (text, isError = false) => {
     const el = document.getElementById('test-chart-status');
     if (el) {
@@ -23,6 +56,7 @@
       setStatus('⚠️ Библиотека KLineChart не загрузилась (CDN cdn.jsdelivr.net недоступен)', true);
       return null;
     }
+    registerRectOverlay();
     const el = document.getElementById('test-chart-kline');
     if (!el) return null;
     if (!chartInstance) {
@@ -52,6 +86,9 @@
           tooltip: { text: { color: '#d1d4dc' } },
         },
       });
+      // Доступ к instance извне замыкания — для отладки и будущей
+      // сериализации разметки (getOverlayStore → сохранение в БД по тикеру)
+      window.testChartInstance = chartInstance;
     }
     return chartInstance;
   };
@@ -108,7 +145,66 @@
     }
   };
 
+  // ---- Панель разметки: рисование нативных overlay-объектов KLineChart ----
+  // Клик по кнопке включает инструмент: следующий клик(и) по графику
+  // ставят точки фигуры. Правый клик по готовой фигуре удаляет её
+  // (стандартное поведение KLineChart).
+  window.tcDrawOverlay = function (name) {
+    const instance = getChartInstance();
+    if (!instance) return;
+    if (name === 'text') {
+      const text = window.prompt('Текст заметки на графике:');
+      if (!text) return;
+      // В 9.6 нет шаблона «text» — используем встроенную аннотацию
+      // simpleAnnotation: содержимое берётся из extendData (строка)
+      instance.createOverlay({ name: 'simpleAnnotation', extendData: text });
+      setStatus('Кликните по свече — текст привяжется к её цене');
+      return;
+    }
+    const hints = {
+      segment: 'Кликните по графику 2 раза — начало и конец отрезка',
+      horizontalRayLine: 'Кликните по графику — уровень поставится на эту цену',
+      'tc-rect': 'Кликните по графику 2 раза — противоположные углы прямоугольника',
+      fibonacciLine: 'Кликните по графику 2 раза — уровни 0.236…∞ между ценами',
+    };
+    instance.createOverlay({ name });
+    setStatus(hints[name] || 'Кликните по графику, чтобы поставить фигуру');
+  };
+
+  window.tcClearOverlays = function () {
+    if (!chartInstance) return;
+    chartInstance.removeOverlay();
+    setStatus('Разметка удалена');
+  };
+
+  // ---- Индикаторы: переключатели VOL / MA / MACD ----
+  // Состояние храним локально: у instance нет метода getIndicators(),
+  // а removeIndicator принимает имя индикатора строкой.
+  const activeIndicators = new Set();
+  window.tcToggleIndicator = function (name) {
+    const instance = getChartInstance();
+    if (!instance) return;
+    const btn = document.getElementById(`tc-ind-${name.toLowerCase()}`);
+    if (activeIndicators.has(name)) {
+      instance.removeIndicator(name);
+      activeIndicators.delete(name);
+      if (btn) btn.classList.remove('active');
+      setStatus(`Индикатор ${name} выключен`);
+      return;
+    }
+    // MA — в главном окне со свечами (id 'candle_pane'), VOL и MACD —
+    // в отдельных под-окнах. isStack в v9 означает «сложить на индикатор
+    // в том же окне», поэтому везде false.
+    if (name === 'VOL') instance.createIndicator('VOL', false, { id: 'volume', height: 90 });
+    else if (name === 'MACD') instance.createIndicator('MACD', false, { id: 'macd', height: 90 });
+    else instance.createIndicator(name, false, { id: 'candle_pane' });
+    activeIndicators.add(name);
+    if (btn) btn.classList.add('active');
+    setStatus(`Индикатор ${name} включён`);
+  };
+
   document.addEventListener('DOMContentLoaded', () => {
+    registerRectOverlay();
     const input = document.getElementById('test-chart-ticker-input');
     const btn = document.getElementById('test-chart-load-btn');
     if (btn) btn.addEventListener('click', () => window.loadTestChartCandles());

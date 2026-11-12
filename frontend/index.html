@@ -413,6 +413,24 @@
                     <option value="31">1 месяц</option>
                 </select>
             </div>
+            <!-- Панель инструментов: разметка поверх графика (нативные
+                 overlay-объекты KLineChart: клик по кнопке → следующий клик
+                 по графику ставит точки фигуры; правый клик по фигуре
+                 удаляет её) и индикаторы (переключатели). -->
+            <div class="test-chart-toolbar">
+                <span class="tc-group-label">Разметка:</span>
+                <button type="button" onclick="tcDrawOverlay('segment')" title="Отрезок — 2 точки">Линия</button>
+                <button type="button" onclick="tcDrawOverlay('horizontalRayLine')" title="Горизонтальный луч-уровень — 1 точка">Уровень</button>
+                <button type="button" onclick="tcDrawOverlay('tc-rect')" title="Прямоугольник — 2 точки">Прямоугольник</button>
+                <button type="button" onclick="tcDrawOverlay('fibonacciLine')" title="Уровни Фибоначчи — 2 точки">Фибоначчи</button>
+                <button type="button" onclick="tcDrawOverlay('text')" title="Текстовая заметка — 1 точка">Текст</button>
+                <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">Очистить</button>
+                <span class="tc-sep"></span>
+                <span class="tc-group-label">Индикаторы:</span>
+                <button type="button" id="tc-ind-vol" onclick="tcToggleIndicator('VOL')" title="Объёмы (под-окно)">VOL</button>
+                <button type="button" id="tc-ind-ma" onclick="tcToggleIndicator('MA')" title="Moving Average (на графике)">MA</button>
+                <button type="button" id="tc-ind-macd" onclick="tcToggleIndicator('MACD')" title="MACD (под-окно)">MACD</button>
+            </div>
             <div class="test-chart-status" id="test-chart-status"></div>
             <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
                  (см. defer-скрипт внизу страницы): если CDN недоступен,
