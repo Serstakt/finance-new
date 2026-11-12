@@ -129,11 +129,11 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 /* Кнопки скрытия/показа панели */
 #hide-watchlist-btn {
-  background: transparent !important; border: 1px solid #363a45 !important; color: #787b86 !important;
-  padding: 2px 4px !important; border-radius: 2px !important; transition: all 0.2s ease !important;
+  background: transparent; border: 1px solid #363a45; color: #787b86;
+  padding: 2px 4px; border-radius: 2px; transition: all 0.2s ease;
 }
 #hide-watchlist-btn:hover {
-  background: #2a2e39 !important; border-color: #787b86 !important; color: #d1d4dc !important; transform: translateX(2px);
+  background: #2a2e39; border-color: #787b86; color: #d1d4dc; transform: translateX(2px);
 }
 /* Кнопка показа панели — прижата к правому краю (панель теперь справа) */
 #show-watchlist-btn {
@@ -194,22 +194,56 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #auto-refresh-indicator .dot { width: 6px; height: 6px; border-radius: 50%; background: #26a69a; animation: pulse 2s infinite; }
 
 /* ==========================================================================
-   7. 📊 ЗАГОЛОВКИ КОЛОНОК ТАБЛИЦЫ
+   7. 📊 СЕТКА СТРОК WATCHLIST (ОБЩИЕ КОЛОНКИ ДЛЯ ЗАГОЛОВКОВ И СТРОК)
+   Единый grid для заголовков колонок, строк тикеров и заголовков разделов:
+   колонки идеально синхронизированы при любой ширине панели (#watchlist
+   ресайзится через #resizer). Меняется только в одном месте — CSS-переменной.
+   Порядок колонок: drag | флажок | логотип | тикер | цена | изм. | изм.% | меню
    ========================================================================== */
+#watchlist {
+  --wl-grid-cols: 14px 18px 20px minmax(56px, 1fr) 62px 58px 62px 22px;
+  --wl-grid-gap: 6px;
+}
+.wl-row-grid {
+  display: grid;
+  grid-template-columns: var(--wl-grid-cols);
+  column-gap: var(--wl-grid-gap);
+  align-items: center;
+}
+
+/* --- Заголовки колонок --- */
 .column-headers {
-  display: flex; padding: 6px 8px; background: #252a36; border-bottom: 1px solid #2a2e39;
+  padding: 6px 8px; background: #252a36; border-bottom: 1px solid #2a2e39;
   font-size: 10px; font-weight: 600; color: #787b86; text-transform: uppercase; letter-spacing: 0.5px;
 }
-.column-header { cursor: pointer; user-select: none; transition: color 0.2s; display: flex; align-items: center; gap: 4px; }
-.column-header:hover { color: #d1d4dc; }
+.column-header {
+  cursor: pointer; user-select: none; transition: color 0.2s;
+  display: inline-flex; align-items: center; gap: 4px;
+  /* увеличенная зона клика: минус компенсация паддинга, чтобы текст не «уезжал» */
+  padding: 4px 6px; margin: -4px -6px; border-radius: 4px;
+}
+.column-header:hover { color: #d1d4dc; background: #2a2e39; }
 .column-header.active { color: #2962ff; }
-.column-header .sort-icon { font-size: 9px; opacity: 0; transition: opacity 0.2s; }
-.column-header:hover .sort-icon, .column-header.active .sort-icon { opacity: 1; }
+/* SVG-стрелки сортировки (↑/↓ вместо нечитаемого «↕»): у активной колонки
+   всегда видима, у неактивных — появляется при hover и занимает место
+   заранее (перекрёстное скрытие ниже), чтобы заголовок не дёргался */
+.column-header .sort-icon {
+  display: inline-flex; width: 10px; height: 10px; flex: none;
+  opacity: 0; transition: opacity 0.15s;
+}
+.column-header .sort-icon svg { width: 10px; height: 10px; display: block; }
+.sort-icon-dir-up, .sort-icon-dir-down { display: none; }
+.column-header:hover .sort-icon { opacity: 0.6; }
+.column-header.active .sort-icon { opacity: 1; }
+.column-header.active[data-dir="asc"] .sort-icon-dir-up,
+.column-header.active[data-dir="desc"] .sort-icon-dir-down { display: inline-flex; }
+.column-header.active .sort-icon-dir-neutral { display: none; }
 
-.col-ticker { flex: 1; min-width: 70px; }
-.col-price { min-width: 50px; text-align: right; }
-.col-change { min-width: 40px; text-align: right; border-radius: 3px; }
-.col-change-pct { min-width: 44px; text-align: right; border-radius: 3px; }
+.col-empty { pointer-events: none; }        /* заглушки над служебными колонками */
+.col-ticker { justify-self: start; }
+.col-price, .col-change, .col-change-pct { justify-self: end; }
+/* выравнивание данных под заголовками: правый край цены/изменений = правый край заголовка */
+.ticker-price, .ticker-change, .ticker-change-percent { justify-self: end; }
 
 /* ==========================================================================
    8. ➕ ФОРМА ДОБАВЛЕНИЯ ТИКЕРА
@@ -223,31 +257,42 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #add-btn { background: #2962ff; color: #fff; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
 #add-btn:hover { background: #1e53e5; }
 #add-section-btn {
-  background: transparent !important; border: 1px solid #363a45 !important; color: #787b86 !important;
-  padding: 5px 8px !important; border-radius: 4px !important; cursor: pointer !important;
-  font-size: 12px !important; transition: all 0.2s ease !important;
+  background: transparent; border: 1px solid #363a45; color: #787b86;
+  padding: 5px 8px; border-radius: 4px; cursor: pointer;
+  font-size: 12px; transition: all 0.2s ease;
 }
 #add-section-btn:hover {
-  background: rgba(41, 98, 255, 0.1) !important; border-color: #2962ff !important; color: #2962ff !important;
+  background: rgba(41, 98, 255, 0.1); border-color: #2962ff; color: #2962ff;
 }
 
 /* ==========================================================================
    9. 📜 СПИСОК ТИКЕРОВ И ЭЛЕМЕНТЫ
    ========================================================================== */
-#ticker-list { flex: 1; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
-#ticker-list::-webkit-scrollbar { display: none; }
+/* Скроллбар: тонкий, но видимый — пользователь должен понимать, что список
+   прокручивается (раньше был полностью скрыт) */
+#ticker-list { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #363a45 transparent; }
+#ticker-list::-webkit-scrollbar { width: 8px; }
+#ticker-list::-webkit-scrollbar-track { background: transparent; }
+#ticker-list::-webkit-scrollbar-thumb { background: #363a45; border-radius: 4px; border: 2px solid #1e222d; }
+#ticker-list::-webkit-scrollbar-thumb:hover { background: #4a4f5c; }
 
-/* --- Базовый элемент тикера --- */
+/* --- Базовый элемент тикера (колонки — общие с заголовками, см. .wl-row-grid) --- */
 .ticker-item {
   padding: 4px 8px; cursor: pointer; font-size: 11px; transition: background 0.15s;
-  border-bottom: 1px solid #2a2e39; display: flex; align-items: center; gap: 6px;
+  border-bottom: 1px solid #2a2e39; min-height: 30px;
 }
 .ticker-item:hover { background: #2a2e39; }
-.ticker-item.active { background: #2962ff22; border-left: 3px solid #2962ff; padding-left: 5px; }
+/* Активная строка: подложка + inset-полоса слева — БЕЗ border-left/padding-костыля,
+   который сдвигал контент колонки «Тикер» на 3px относительно неактивных строк */
+.ticker-item.active {
+  background: rgba(41, 98, 255, 0.12);
+  box-shadow: inset 3px 0 0 #2962ff;
+}
 
-/* --- Drag & Drop --- */
-.drag-handle { color: #787b86; cursor: grab; opacity: 0; transition: opacity 0.15s; font-size: 14px; user-select: none; line-height: 1; }
-.ticker-item:hover .drag-handle { opacity: 1; }
+/* --- Drag & Drop: ручка появляется сразу при hover строки (не только при hover
+   самой ручки) и заранее занимает место в сетке — строка не «прыгает» --- */
+.drag-handle { color: #787b86; cursor: grab; opacity: 0; transition: opacity 0.15s; font-size: 14px; user-select: none; line-height: 1; text-align: center; }
+.ticker-item:hover .drag-handle, .section-header:hover .drag-handle { opacity: 0.85; }
 .drag-handle:active { cursor: grabbing; }
 
 /* --- Избранное (флажки) --- */
@@ -285,12 +330,12 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Закрашенный bookmark для избранной новости (красный) — как в списке тикеров */
 .news-fav-flag .favorite-flag.favorite-filled svg { fill: currentColor; stroke: currentColor; }
 
-/* === КРУГЛЫЙ ЛОГОТИП ТИКЕРА (меньший размер) === */
+/* === ЛОГОТИП ТИКЕРА: уменьшен до 20px — меньше визуального шума в плотной строке === */
 .ticker-logo-container {
   border-radius: 50%;
   overflow: hidden;
-  width: 24px; /* Было 32px */
-  height: 24px; /* Было 32px */
+  width: 20px; /* Было 24px: в 30-пиксельной строке логотип перетягивал внимание */
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -312,31 +357,75 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   background: #2a2e39;
   color: #d1d4dc;
   font-weight: 600;
-  font-size: 11px; /* Было 14px */
+  font-size: 9px;
   border-radius: 50%;
 }
-.ticker-info { flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 55px; }
-.ticker-symbol-link { font-weight: 600; font-size: 11px; display: block; color: #d1d4dc; text-decoration: none; transition: color 0.2s; line-height: 1.2; }
+.ticker-info { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.ticker-symbol-link { font-weight: 600; font-size: 11px; display: block; color: #d1d4dc; text-decoration: none; transition: color 0.2s; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ticker-symbol-link:hover { color: #2962ff; text-decoration: underline; }
 
-/* --- Цены и изменения --- */
-.ticker-price { font-size: 11px; font-weight: 600; min-width: 48px; text-align: right; }
-.ticker-change, .ticker-change-percent {
-  font-size: 11px; font-weight: 600; min-width: 40px; text-align: right;
-  border-radius: 3px; padding: 1px 2px; transition: background-color 0.2s;
+/* --- Цены и изменения ---
+   tabular-nums: цифры фиксированной ширины, значения не «пляшут» при
+   обновлении цен; цена укрупнена до 12px (была 11px — мельче остального текста) */
+.ticker-price {
+  font-size: 12px; font-weight: 600; text-align: right;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.ticker-change-percent { min-width: 44px; }
+.ticker-change, .ticker-change-percent {
+  font-size: 11px; font-weight: 600; text-align: right;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  border-radius: 3px; padding: 1px 4px; transition: background-color 0.2s;
+}
+/* Иерархия: «Изм.%» — главный акцент (насыщенный бейдж), абсолютное изменение — подсобное число */
+.ticker-change-percent { font-size: 12px; }
 .positive-bg { background-color: rgba(38, 166, 154, 0.15); color: #26a69a; }
 .negative-bg { background-color: rgba(239, 83, 80, 0.15); color: #ef5350; }
+/* Насыщенные версии бейджей для процентной колонки и нейтральная — для абсолютной */
+.positive-bg-strong { background-color: rgba(38, 166, 154, 0.32); color: #26a69a; }
+.negative-bg-strong { background-color: rgba(239, 83, 80, 0.28); color: #ef5350; }
+.ticker-change:not(.positive-bg):not(.negative-bg) { color: #787b86; }
 /* Подсветка строки цены при инкрементальном обновлении (значение изменилось) */
 .price-flash { animation: price-flash 0.9s ease-out; border-radius: 3px; }
 @keyframes price-flash {
   0%   { background-color: rgba(41, 98, 255, 0.35); }
   100% { background-color: transparent; }
 }
-.ticker-remove { color: #787b86; cursor: pointer; font-size: 12px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
+/* Кнопка удаления строки → контекстное меню «⋯»: деструктивные действия
+   (удалить/переименовать заметку) больше не выполняются одним кликом по «×» */
+.ticker-remove {
+  color: #787b86; cursor: pointer; font-size: 13px; line-height: 1; opacity: 0;
+  transition: opacity 0.15s; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin: -2px 0; border-radius: 4px; user-select: none;
+}
 .ticker-item:hover .ticker-remove { opacity: 1; }
-.ticker-remove:hover { color: #ef5350; }
+.ticker-remove:hover { color: #ef5350; background: rgba(239, 83, 80, 0.12); }
+/* Иконка корзины внутри кнопки удаления */
+.ticker-remove svg { width: 14px; height: 14px; display: block; }
+
+/* Кнопка «⋯» контекстного меню раздела (переименовать/свернуть/удалить) */
+.section-menu-btn {
+  color: #787b86; cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin: -2px 0; border-radius: 4px; user-select: none;
+}
+.section-menu-btn:hover { color: #d1d4dc; background: #363a45; }
+.section-menu-btn svg { width: 14px; height: 14px; display: block; }
+
+/* --- Контекстное меню строки/раздела (открывается по «⋯») --- */
+.wl-context-menu {
+  position: fixed; z-index: 1200; min-width: 170px;
+  background: #1e222d; border: 1px solid #363a45; border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); padding: 4px;
+  display: flex; flex-direction: column; gap: 2px; font-size: 12px;
+}
+.wl-context-menu button {
+  background: transparent; border: none; color: #d1d4dc; text-align: left;
+  padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+.wl-context-menu button:hover { background: #2a2e39; }
+.wl-context-menu button.danger { color: #ef5350; }
+.wl-context-menu button.danger:hover { background: rgba(239, 83, 80, 0.12); }
 
 /* --- Алерты и скелетоны загрузки ---
    Колокольчики алертов убраны из строк тикеров в watchlist. */
@@ -748,42 +837,65 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* ==========================================================================
    14. 📂 ЗАГОЛОВКИ РАЗДЕЛОВ (СЕКЦИЙ)
    ========================================================================== */
+/* Раздел — на тёмном фоне с accent-полосой слева и счётчиком инструментов;
+   сетка колонок общая со строками тикеров (.wl-row-grid) */
 .section-header {
-  padding: 4px 8px; background: #252a36; color: #787b86; font-size: 11px; font-weight: 500;
-  text-transform: uppercase; letter-spacing: 0.5px; display: flex;
-  justify-content: space-between; align-items: center;
+  padding: 5px 8px; background: #252a36; color: #a3a7b2; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
   border-bottom: 1px solid #2a2e39; border-top: 1px solid #2a2e39;
-  margin-top: 4px; cursor: default; gap: 6px;
+  box-shadow: inset 3px 0 0 #2962ff; /* accent-полоса без сдвига контента */
+  margin-top: 6px; cursor: default; min-height: 28px;
 }
 .section-header .section-title {
   display: flex; align-items: center; gap: 6px; cursor: pointer;
-  transition: color 0.2s; font-size: 11px; font-weight: 500;
+  transition: color 0.2s; font-size: 11px; font-weight: 600;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .section-header .section-title:hover { color: #d1d4dc; }
-.section-collapse-btn {
-  cursor: pointer; font-size: 9px; padding: 1px 3px; border-radius: 3px;
-  transition: background 0.2s; display: flex; align-items: center; line-height: 1;
+/* Название раздела растянуто на колонки тикер+цена+изм. (сетка общая со строками) */
+.section-header .col-section-name { grid-column: 4 / span 4; }
+/* Счётчик инструментов в разделе (заполняется в updateSectionElement) */
+.section-count {
+  font-size: 10px; font-weight: 500; color: #787b86; text-transform: none; letter-spacing: 0;
+  background: #2a2e39; border-radius: 8px; padding: 1px 6px; flex: none; line-height: 1.4;
 }
+/* Рабочая кнопка свернуть/развернуть: SVG-шеврон, поворот через transform,
+   увеличенная зона клика (компенсация отрицательным margin — контент не прыгает) */
+.section-collapse-btn {
+  cursor: pointer; padding: 4px; margin: -4px; border-radius: 4px; width: 18px; height: 18px;
+  transition: background 0.2s; display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1; color: inherit; flex: none;
+}
+.section-collapse-btn svg { width: 12px; height: 12px; display: block; transition: transform 0.15s ease; }
+.section-header.collapsed .section-collapse-btn svg { transform: rotate(-90deg); }
 .section-collapse-btn:hover { background: #363a45; color: #d1d4dc; }
 .section-header .drag-handle { cursor: grab; opacity: 0.5; font-size: 14px; }
-.section-header:hover .drag-handle { opacity: 1; }
-.section-header .ticker-remove { opacity: 0; font-size: 12px; transition: opacity 0.2s ease; }
-.section-header:hover .ticker-remove { opacity: 1; }
+.section-header:hover .drag-handle { opacity: 0.85; }
+.section-header .section-menu-btn { opacity: 0; transition: opacity 0.2s ease; }
+.section-header:hover .section-menu-btn { opacity: 1; }
 
 /* ==========================================================================
    15. 🔘 КНОПКИ ПЕРЕКЛЮЧЕНИЯ (TOGGLE)
    ========================================================================== */
 .toggle-watchlist-btn {
-  background: transparent !important; border: none !important; color: #787b86 !important;
-  cursor: pointer; padding: 4px 6px !important; border-radius: 4px !important;
-  font-size: 14px !important; font-weight: 500 !important; transition: all 0.2s ease !important;
-  display: flex !important; align-items: center !important; justify-content: center !important;
-  min-width: 28px !important; height: 28px !important;
+  background: transparent; border: none; color: #787b86;
+  cursor: pointer; padding: 4px 6px; border-radius: 4px;
+  font-size: 14px; font-weight: 500; transition: all 0.2s ease;
+  display: flex; align-items: center; justify-content: center;
+  min-width: 28px; height: 28px;
 }
-.toggle-watchlist-btn:hover { background: #2a2e39 !important; color: #d1d4dc !important; }
-.toggle-watchlist-btn:active { transform: scale(0.95) !important; background: #363a45 !important; }
-.toggle-watchlist-btn.danger:hover { background: rgba(239, 83, 80, 0.1) !important; color: #ef5350 !important; }
-.toggle-watchlist-btn.danger:active { background: rgba(239, 83, 80, 0.2) !important; }
+.toggle-watchlist-btn:hover { background: #2a2e39; color: #d1d4dc; }
+.toggle-watchlist-btn:active { transform: scale(0.95); background: #363a45; }
+.toggle-watchlist-btn.danger:hover { background: rgba(239, 83, 80, 0.1); color: #ef5350; }
+.toggle-watchlist-btn.danger:active { background: rgba(239, 83, 80, 0.2); }
+
+/* Кнопка «Обновить» в шапке панели (рядом с индикатором автообновления) —
+   тот же облик, что у остальных toggle-кнопок header'а */
+#manual-refresh-btn svg { width: 14px; height: 14px; display: block; }
+/* Индикатор автообновления кликабел: клик = ручное обновление цен */
+#auto-refresh-indicator { cursor: pointer; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; transition: background 0.15s, color 0.15s; }
+#auto-refresh-indicator:hover { background: #2a2e39; color: #d1d4dc; }
+#auto-refresh-indicator:active { background: #363a45; }
 
 /* ==========================================================================
    16. ✨ АНИМАЦИИ

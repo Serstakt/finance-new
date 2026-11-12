@@ -79,7 +79,9 @@ window.cacheLogosFromData = function(symbol, data) {
 // Приоритет: официальный логотип крипты (CoinGecko CDN) -> favicon сайта эмитента
 // (Google s2) -> буква-заглушка.
 window.buildLogoHtml = function(fullSymbol, baseTicker, data) {
-  const fallbackLetter = (baseTicker || fullSymbol || '?').charAt(0).toUpperCase();
+  // Двухбуквенная заглушка (напр. «СБ» для SBER): однобуквенные fallback'и
+  // выглядели шумно и повторялись у разных эмитентов.
+  const fallbackLetter = (baseTicker || fullSymbol || '?').slice(0, 2).toUpperCase();
   const parts = String(fullSymbol || '').toUpperCase().split(':');
   const isCrypto = parts[0] === 'BINANCE' ||
     /USDT$|BTC$|ETH$/.test(String(baseTicker || '').toUpperCase());
