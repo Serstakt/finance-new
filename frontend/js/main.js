@@ -564,25 +564,36 @@ if (typeof Sortable !== 'undefined') {
 // Ресайзер
 const resizer = document.getElementById('resizer');
 const watchlist = document.getElementById('watchlist');
+// Ниже этой ширины панель скрывается автоматически (кнопки «Скрыть панель» больше нет)
+const WATCHLIST_HIDE_WIDTH = 200;
 let isResizing = false;
 resizer.addEventListener('mousedown', (e) => { isResizing = true; resizer.classList.add('active'); document.body.style.userSelect = 'none'; });
 document.addEventListener('mousemove', (e) => {
   // Панель справа: ширина = расстояние от правого края окна до курсора
-  if (isResizing) {
-    const w = window.innerWidth - e.clientX;
-    if (w >= 260 && w <= 500) watchlist.style.width = `${w}px`;
+  if (!isResizing) return;
+  const w = window.innerWidth - e.clientX;
+  if (w < WATCHLIST_HIDE_WIDTH) {
+    // Потянули слишком узко — панель скрывается сама, ресайз завершается
+    isResizing = false;
+    resizer.classList.remove('active');
+    document.body.style.userSelect = '';
+    watchlist.style.width = ''; // сброс к ширине по умолчанию из CSS
+    hideWatchlist();
+  } else if (w <= 500) {
+    watchlist.style.width = `${w}px`;
   }
 });
 document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; resizer.classList.remove('active'); document.body.style.userSelect = ''; } });
 
-document.getElementById('hide-watchlist-btn').addEventListener('click', () => {
+function hideWatchlist() {
   watchlist.classList.add('hidden'); resizer.classList.add('hidden'); document.getElementById('show-watchlist-btn').classList.add('visible');
   if (widget && widgetReady) setTimeout(() => widget.resize(), 150);
-});
-document.getElementById('show-watchlist-btn').addEventListener('click', () => {
+}
+function showWatchlist() {
   watchlist.classList.remove('hidden'); resizer.classList.remove('hidden'); document.getElementById('show-watchlist-btn').classList.remove('visible');
   if (widget && widgetReady) setTimeout(() => widget.resize(), 150);
-});
+}
+document.getElementById('show-watchlist-btn').addEventListener('click', showWatchlist);
 
 // Кастомный селектор списков (#list-selector, div вместо <select> — см.
 // populateListSelector в state.js): клик по кнопке открывает меню, клик по
