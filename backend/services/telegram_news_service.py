@@ -11,6 +11,11 @@ from ..database.models import NewsCache
 
 CACHE_DURATION_SECONDS = 300  # 5 минут
 
+# Сколько новостей по тикеру накапливается в БД: новый парсинг НЕ затирает
+# предыдущую ленту, а сливается с ней (см. save_news_to_cache) — свежие посты
+# в начале, самые старые вытесняются за пределом лимита.
+NEWS_HISTORY_LIMIT = 100
+
 # Ключ строки кэша с общим новостным потоком @newssmartlab (без фильтра по
 # тикеру): его наполняет фоновый вотчер (backend/main.py), и из него вкладка
 # «🚩 Избранные новости» берёт заголовки/время постов напрямую из БД.
@@ -94,23 +99,98 @@ async def get_stale_cached_news(ticker: str) -> list | None:
         print(f"❌ Ошибка чтения устаревшего кэша: {e}")
         return None
 
+def _normalize_link(link: str) -> str:
+    """Приводит ссылку на пост к каноничному виду для дедупликации и PK.
+
+    Ссылки из Telegram-парсера могут отличаться хвостовым слэшем или схемой
+    (http/https), из-за чего одна новость могла бы сохраниться дважды.
+    (Используется и news_favorites_service — импортирует отсюда.)
+    """
+    s = (link or "").strip()
+    if not s:
+        return ""
+    if s.startswith("http://"):
+        s = "https://" + s[len("http://"):]
+    return s.rstrip("/")
+
+
+def _post_id(link: str) -> int | None:
+    """Достаёт числовой id поста Telegram из ссылки вида t.me/<channel>/<id>.
+
+    id в канале монотонный, поэтому служит надёжным ключом сортировки при
+    слиянии накопленной истории со свежим парсом. Используется и
+    news_favorites_service (импортирует отсюда).
+    """
+    tail = (link or "").rstrip("/").rsplit("/", 1)[-1]
+    # у закреп/форвардов бывают хвосты вида /123?single — отрезаем не-цифры
+    digits = ""
+    for ch in reversed(tail):
+        if ch.isdigit():
+            digits = ch + digits
+        else:
+            break
+    return int(digits) if digits else None
+
+
 async def save_news_to_cache(ticker: str, news_data: list):
-    """Сохраняет или обновляет кэш новостей в БД."""
+    """Сливает свежий парсинг с накопленной историей тикера и сохраняет в БД.
+
+    Раньше здесь был upsert через delete+insert: каждый парсинг затирал
+    предыдущую ленту целиком. Теперь новые посты добавляются В НАЧАЛО списка,
+    дубли (по нормализованной ссылке на пост) убираются, записи сортируются
+    по id поста (свежие сверху) и обрезаются до NEWS_HISTORY_LIMIT — так
+    история по тикеру накапливается, а не пересоздаётся заново.
+    """
+    cache_key = ticker if ticker else STREAM_CACHE_KEY
     try:
         with get_session() as db:
+            cache = db.query(NewsCache).filter(NewsCache.ticker == cache_key).first()
+            old_posts = []
+            if cache:
+                try:
+                    loaded = json.loads(cache.news_data or "[]")
+                    if isinstance(loaded, list):
+                        old_posts = [p for p in loaded if isinstance(p, dict)]
+                except (ValueError, TypeError):
+                    old_posts = []
+
+            # Слияние: свежий парс первым (побеждает при дубликатах — его
+            # full_text актуальнее), затем накопленная история.
+            merged: list[dict] = []
+            seen: set[str] = set()
+            for post in list(news_data or []) + old_posts:
+                if not isinstance(post, dict):
+                    continue
+                key = _normalize_link(post.get("link", ""))
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(post)
+
+            # Свежие сверху: сортируем по числовому id поста (монотонный в
+            # канале); записи без числового id — в конец, между собой стабильно.
+            merged.sort(key=lambda p: (_post_id(p.get("link", "")) is not None,
+                                       _post_id(p.get("link", "")) or 0),
+                        reverse=True)
+
+            merged = merged[:NEWS_HISTORY_LIMIT]
+
             # Удаляем старую запись (UPSERT через delete + insert проще для SQLite)
-            db.query(NewsCache).filter(NewsCache.ticker == ticker).delete()
+            db.query(NewsCache).filter(NewsCache.ticker == cache_key).delete()
 
             new_cache = NewsCache(
-                ticker=ticker,
-                news_data=json.dumps(news_data, ensure_ascii=False),
+                ticker=cache_key,
+                news_data=json.dumps(merged, ensure_ascii=False),
                 timestamp=datetime.utcnow()
             )
             db.add(new_cache)
             db.commit()
-            print(f"💾 Новости для {ticker} сохранены в SQLite кэш")
+            print(f"💾 Новости для {cache_key or 'STREAM'} сохранены в SQLite кэш "
+                  f"(всего {len(merged)}, лимит {NEWS_HISTORY_LIMIT})")
+            return merged
     except Exception as e:
         print(f"❌ Ошибка сохранения в кэш: {e}")
+        return None
 
 async def _refresh_cache_in_background(cache_key: str):
     """Фоновое переобновление кэша (stale-while-revalidate).
@@ -244,9 +324,11 @@ async def parse_and_save_news(ticker: str, max_posts: int = 1000, max_news: int 
 
         print(f"\n✅ Завершено. Проверено: {total_checked}, найдено: {len(news_list)}")
 
-        # Сохраняем результат в кэш перед возвратом (перезаписывает stale-строку)
-        await save_news_to_cache(ticker, news_list)
-        return news_list
+        # Сливаем с накопленной историей тикера и сохраняем (запись обновляет
+        # stale-строку); возвращаем СЛИТЫЙ список, чтобы даже force_refresh
+        # показал накопленную историю, а не только свежий парс.
+        merged = await save_news_to_cache(ticker, news_list)
+        return merged if merged is not None else news_list
 
     except Exception as e:
         print(f"❌ Ошибка парсинга: {e}")
