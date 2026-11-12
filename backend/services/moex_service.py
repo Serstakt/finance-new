@@ -1,8 +1,76 @@
 import asyncio
+from typing import Optional
+
 import aiohttp
 
+# Задержка данных ISS для неавторизованного пользователя (user status =
+# NOT AUTHORIZED): свечи приходят с лагом ~15 минут. Для тестового графика
+# этого достаточно, авторизация не требуется.
+async def fetch_moex_candles(
+    ticker: str,
+    interval: int = 24,
+    from_date: Optional[str] = None,
+    till_date: Optional[str] = None,
+) -> dict:
+    """Свечи OHLCV с iss.moex.com (акции, режим TQBR).
 
-import aiohttp
+    interval: 1 (мин), 10, 60 (час), 24 (день), 7 (неделя), 31 (месяц) —
+    стандартные интервалы ISS. from/till: даты 'YYYY-MM-DD'.
+    Возвращает сырые свечи ISS: open/close/high/low/volume/value + begin/end.
+    """
+    ticker = ticker.upper().strip()
+    url = (
+        f"https://iss.moex.com/iss/engines/stock/markets/shares/"
+        f"boards/TQBR/securities/{ticker}/candles.json"
+        f"?interval={interval}"
+    )
+    if from_date:
+        url += f"&from={from_date}"
+    if till_date:
+        url += f"&till={till_date}"
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        try:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return {"symbol": f"MOEX:{ticker}", "error": f"Not found (Status {response.status})"}
+                data = await response.json()
+        except asyncio.TimeoutError:
+            return {"symbol": f"MOEX:{ticker}", "error": "Timeout"}
+        except Exception as e:
+            return {"symbol": f"MOEX:{ticker}", "error": str(e)}
+
+    candles = data.get("candles") or {}
+    columns = candles.get("columns") or []
+    rows = candles.get("data") or []
+    if not columns or not rows:
+        return {"symbol": f"MOEX:{ticker}", "error": "No candles data", "candles": []}
+
+    def get_col(row, name):
+        try:
+            return row[columns.index(name)]
+        except ValueError:
+            return None
+
+    result = []
+    for row in rows:
+        result.append({
+            "open": get_col(row, "open"),
+            "close": get_col(row, "close"),
+            "high": get_col(row, "high"),
+            "low": get_col(row, "low"),
+            "volume": get_col(row, "volume"),
+            "value": get_col(row, "value"),
+            "begin": get_col(row, "begin"),
+            "end": get_col(row, "end"),
+        })
+
+    return {
+        "symbol": f"MOEX:{ticker}",
+        "interval": interval,
+        "candles": result,
+    }
+
 
 async def fetch_moex_price(ticker: str) -> dict:
     ticker = ticker.upper().strip()
