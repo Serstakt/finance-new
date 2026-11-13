@@ -10,6 +10,8 @@
          «вечно грузит» и локальный сервер тут ни при чём. -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script defer src="https://s3.tradingview.com/tv.js"></script>
+    <!-- KLineChart для раздела «Тест график» (свечи MOEX ISS) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/klinecharts@9/dist/klinecharts.min.js"></script>
 </head>
 <body>
 <nav id="nav-bar">
@@ -17,6 +19,7 @@
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
+    <button class="nav-btn" data-page="test-chart" onclick="navigateTo('test-chart')">Тест график</button>
 </nav>
 
 <div id="main-content">
@@ -391,6 +394,53 @@
         </div>
     </div>
 
+    <div id="test-chart-page" class="page">
+        <div class="test-chart-container">
+            <h2 class="portfolio-title">Тест график</h2>
+            <p class="test-chart-hint">
+                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой ~15 мин).
+                Введите тикер акции, например <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>.
+            </p>
+            <!-- Ввод тикера — по образцу формы добавления в watchlist:
+                 поле + кнопка, отправка по Enter (см. js/test_chart.js) -->
+            <div class="test-chart-controls">
+                <input id="test-chart-ticker-input" placeholder="SBER, GAZP, LKOH…" title="Введите тикер акции Мосбиржи" />
+                <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
+                <select id="test-chart-interval" title="Таймфрейм" onchange="loadTestChartCandles()">
+                    <option value="60">1 час</option>
+                    <option value="24" selected>1 день</option>
+                    <option value="7">1 неделя</option>
+                    <option value="31">1 месяц</option>
+                </select>
+            </div>
+            <!-- Панель инструментов: разметка поверх графика (нативные
+                 overlay-объекты KLineChart: клик по кнопке → следующий клик
+                 по графику ставит точки фигуры; правый клик по фигуре
+                 удаляет её) и индикаторы (переключатели). -->
+            <div class="test-chart-toolbar">
+                <span class="tc-group-label">Разметка:</span>
+                <button type="button" onclick="tcDrawOverlay('segment')" title="Отрезок — 2 точки">Линия</button>
+                <button type="button" onclick="tcDrawOverlay('horizontalRayLine')" title="Горизонтальный луч-уровень — 1 точка">Уровень</button>
+                <button type="button" onclick="tcDrawOverlay('tc-rect')" title="Прямоугольник — 2 точки">Прямоугольник</button>
+                <button type="button" onclick="tcDrawOverlay('fibonacciLine')" title="Уровни Фибоначчи — 2 точки">Фибоначчи</button>
+                <button type="button" onclick="tcDrawOverlay('text')" title="Текстовая заметка — 1 точка">Текст</button>
+                <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">Очистить</button>
+                <span class="tc-sep"></span>
+                <span class="tc-group-label">Индикаторы:</span>
+                <button type="button" id="tc-ind-vol" onclick="tcToggleIndicator('VOL')" title="Объёмы (под-окно)">VOL</button>
+                <button type="button" id="tc-ind-ma" onclick="tcToggleIndicator('MA')" title="Moving Average (на графике)">MA</button>
+                <button type="button" id="tc-ind-macd" onclick="tcToggleIndicator('MACD')" title="MACD (под-окно)">MACD</button>
+            </div>
+            <div class="test-chart-status" id="test-chart-status"></div>
+            <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
+                 (см. defer-скрипт внизу страницы): если CDN недоступен,
+                 показываем предупреждение вместо «вечной загрузки». -->
+            <div id="test-chart-kline" class="test-chart-wrapper">
+                <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
+            </div>
+        </div>
+    </div>
+
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
     <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
@@ -423,6 +473,7 @@
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
+<script defer src="js/test_chart.js"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
      показываем предупреждение вместо «вечной загрузки» -->
@@ -431,6 +482,7 @@ window.addEventListener('load', function () {
   var blocked = [];
   if (typeof Sortable === 'undefined') blocked.push('cdnjs.cloudflare.com');
   if (typeof TradingView === 'undefined') blocked.push('s3.tradingview.com');
+  if (typeof klinecharts === 'undefined') blocked.push('cdn.jsdelivr.net');
   if (blocked.length) {
     var bar = document.createElement('div');
     bar.id = 'cdn-warning';

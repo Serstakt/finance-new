@@ -95,6 +95,29 @@ async def get_price(symbol: str):
 
 
 # =============================================================================
+# СВЕЧИ (MOEX ISS, user status NOT AUTHORIZED — данные с задержкой ~15 мин)
+# Раздел «Тест график»: KLineChart на фронте читает отсюда.
+# =============================================================================
+
+@app.get("/api/candles/{symbol}")
+async def get_candles(symbol: str,
+                      interval: int = Query(default=24, ge=1),
+                      from_date: str | None = Query(default=None, alias="from"),
+                      till_date: str | None = Query(default=None, alias="till")):
+    # Разрешённые интервалы ISS для раздела «Тест график»:
+    # 60 (час), 24 (день), 7 (неделя), 31 (месяц). Минутные (1, 10) убраны.
+    if interval not in (60, 24, 7, 31):
+        raise HTTPException(status_code=400, detail="interval must be one of 60, 24, 7, 31")
+    try:
+        ticker = symbol.replace("MOEX:", "").upper()
+        return await moex_service.fetch_moex_candles(
+            ticker, interval=interval, from_date=from_date, till_date=till_date
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # ПОРТФЕЛЬ
 # =============================================================================
 

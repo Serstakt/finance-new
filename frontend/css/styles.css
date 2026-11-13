@@ -1121,3 +1121,135 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
     gap: 16px;
   }
 }
+
+/* ==========================================================================
+   18. 📈 РАЗДЕЛ «ТЕСТ ГРАФИК» (KLineChart + свечи MOEX ISS)
+   ========================================================================== */
+.test-chart-container {
+  padding: 10px 40px 40px 40px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.test-chart-hint {
+  color: #787b86;
+  font-size: 13px;
+  margin: 4px 0 16px 0;
+}
+
+.test-chart-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+#test-chart-ticker-input {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+  color: #d1d4dc;
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 260px;
+  outline: none;
+}
+
+#test-chart-ticker-input:focus {
+  border-color: #2962ff;
+}
+
+#test-chart-load-btn {
+  background: #2962ff;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#test-chart-load-btn:hover {
+  background: #1e4fd8;
+}
+
+#test-chart-interval {
+  background: #2a2e39;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  color: #d1d4dc;
+  padding: 9px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.test-chart-status {
+  min-height: 18px;
+  font-size: 13px;
+  color: #787b86;
+  margin-bottom: 8px;
+}
+
+.test-chart-status.error {
+  color: #ef5350;
+}
+
+.test-chart-wrapper {
+  flex: 1;
+  min-height: 420px;
+  width: 100%;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #161a1e;
+}
+
+/* Панель инструментов «Тест график»: разметка + индикаторы */
+.test-chart-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.test-chart-toolbar .tc-group-label {
+  color: #787b86;
+  font-size: 12px;
+  margin-right: 2px;
+}
+
+.test-chart-toolbar button {
+  background: #2a2e39;
+  border: 1px solid #363a45;
+  color: #d1d4dc;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.test-chart-toolbar button:hover {
+  background: #363a45;
+}
+
+.test-chart-toolbar button.active {
+  background: #2962ff;
+  border-color: #2962ff;
+  color: #fff;
+}
+
+.test-chart-toolbar button.tc-danger:hover {
+  background: #ef5350;
+  border-color: #ef5350;
+}
+
+.test-chart-toolbar .tc-sep {
+  width: 1px;
+  height: 20px;
+  background: #363a45;
+  margin: 0 6px;
+}
