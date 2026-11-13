@@ -1,5 +1,6 @@
 // Раздел «Тест график»: свечи MOEX ISS (user status NOT AUTHORIZED —
-// данные с задержкой ~15 мин) рисуются библиотекой KLineChart.
+// данные с задержкой ~15 мин) и крипто-пары Binance (BINANCE:BTCUSDT,
+// реальное время) рисуются библиотекой KLineChart.
 // Ввод тикера — по образцу формы добавления в watchlist: поле + кнопка,
 // отправка по Enter. Данные идут через бэкенд: GET /api/candles/{symbol}.
 
@@ -48,8 +49,12 @@
     }
   };
 
+  // Префикс биржи выбирает источник данных на бэкенде: MOEX: (акции ISS) или
+  // BINANCE: (крипто-пары, спот). Без префикса считаем тикером Мосбиржи.
   const normalizeTicker = (raw) =>
-    String(raw || '').replace('MOEX:', '').trim().toUpperCase();
+    String(raw || '').trim().toUpperCase().replace('MOEX:', '');
+
+  const isBinanceTicker = (ticker) => ticker.startsWith('BINANCE:');
 
   const getChartInstance = () => {
     if (typeof klinecharts === 'undefined') {
@@ -97,7 +102,7 @@
     const input = document.getElementById('test-chart-ticker-input');
     const ticker = normalizeTicker(input && input.value);
     if (!ticker) {
-      setStatus('Введите тикер акции Мосбиржи', true);
+      setStatus('Введите тикер: акция (SBER) или крипто-пара (BINANCE:BTCUSDT)', true);
       return;
     }
     const interval = parseInt(
@@ -128,6 +133,8 @@
 
       // ISS: begin "2026-11-05 06:00:00" (время Мосбиржи). Парсим как есть
       // в локальном времени — для тестового графика этого достаточно.
+      // Binance: begin "2026-11-05T00:00:00Z" (UTC с 'Z') — Date() парсит
+      // такую строку как UTC, что даёт корректные метки времени.
       const klineData = data.candles.map(c => ({
         timestamp: new Date(String(c.begin).replace(' ', 'T')).getTime(),
         open: c.open, high: c.high, low: c.low, close: c.close,
@@ -139,7 +146,10 @@
 
       instance.applyNewData(klineData);
       lastTicker = ticker;
-      setStatus(`График ${ticker} · свечей: ${klineData.length} · данные ISS с задержкой ~15 мин`);
+      const sourceNote = isBinanceTicker(ticker)
+        ? 'данные Binance (реальное время)'
+        : 'данные ISS с задержкой ~15 мин';
+      setStatus(`График ${ticker} · свечей: ${klineData.length} · ${sourceNote}`);
     } catch (e) {
       setStatus(`Не удалось загрузить свечи: ${e.message || e}`, true);
     }

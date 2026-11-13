@@ -24,11 +24,18 @@ changeMonth, changeYear), которые раньше всегда были пу
 
 import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiohttp
 
 API_BASE = "https://api.coingecko.com/api/v3"
+BINANCE_API_BASE = "https://api.binance.com"
+
+# Раздел «Тест график» использует интервалы ISS (60/24/7/31) — маппим их
+# на интервалы klines Binance. Минутные (1, 10) у Binance есть (1m, 3m, 5m,
+# 15m, 30m), но 10 минут нет, поэтому пока держим тот же whitelist, что и MOEX.
+BINANCE_INTERVALS = {60: "1h", 24: "1d", 7: "1w", 31: "1M"}
 
 # TTL кэшей (секунды)
 LIST_TTL = 24 * 3600        # список монет обновляем раз в сутки
@@ -446,6 +453,123 @@ async def fetch_crypto_price(symbol: str) -> dict:
         if not m:
             return {"symbol": f"BINANCE:{symbol}", "error": "API limit or error"}
         return _build_response(symbol, m)
+
+
+async def fetch_binance_candles(
+    symbol: str,
+    interval: int = 24,
+    from_date: Optional[str] = None,
+    till_date: Optional[str] = None,
+) -> dict:
+    """Свечи OHLCV пары Binance (спот, /api/v3/klines) — МАКСИМАЛЬНАЯ история.
+
+    symbol: пара вида 'BTCUSDT'. interval: 60 (час), 24 (день), 7 (неделя),
+    31 (месяц) — те же коды, что и у ISS, маппятся через BINANCE_INTERVALS.
+    from/till: даты 'YYYY-MM-DD' (опционально).
+
+    Binance отдаёт до 1000 свечей за запрос (вес 2, лимит публичного API
+    6000 весов/мин — запас большой). История собирается пагинацией по
+    startTime = closeTime последней полученной свечи + 1 мс, поэтому данные
+    идут по возрастанию времени с самой ранней доступной свечи (BTCUSDT —
+    с августа 2017). Защита от бесконечного цикла — жёсткий лимит
+    MAX_CANDLES. Отдаём свечи в том же формате, что и moex_service
+    (open/close/high/low/volume/value + begin/end), чтобы фронтенд
+    «Тест график» работал без изменений; begin/end — ISO-строки UTC с 'Z'
+    (new Date() на фронте парсит их как UTC).
+    """
+    symbol = symbol.upper().strip()
+    binance_interval = BINANCE_INTERVALS.get(interval)
+    if not binance_interval:
+        return {"symbol": f"BINANCE:{symbol}", "error": f"Unsupported interval {interval}"}
+
+    PAGE_SIZE = 1000        # максимум свечей в одном ответе Binance
+    MAX_CANDLES = 50000     # страховка от бесконечной пагинации
+
+    params = {"symbol": symbol, "interval": binance_interval, "limit": PAGE_SIZE}
+    # Без startTime Binance отдаёт ПОСЛЕДНИЕ 1000 свечей — чтобы собрать
+    # всю историю по возрастанию, стартуем от начала эпохи (0 = все свечи).
+    params["startTime"] = _date_to_ms(from_date, end_of_day=False) if from_date else 0
+    if till_date:
+        params["endTime"] = _date_to_ms(till_date, end_of_day=True)
+
+    rows = []
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        while len(rows) < MAX_CANDLES:
+            try:
+                async with session.get(f"{BINANCE_API_BASE}/api/v3/klines", params=params) as response:
+                    if response.status != 200:
+                        body = await response.json(content_type=None)
+                        msg = (body or {}).get("msg") or f"Status {response.status}"
+                        if not rows:
+                            return {
+                                "symbol": f"BINANCE:{symbol}",
+                                "error": f"Not found ({msg})",
+                            }
+                        break  # ошибка в середине — отдаём что успели собрать
+                    page = await response.json()
+            except asyncio.TimeoutError:
+                if not rows:
+                    return {"symbol": f"BINANCE:{symbol}", "error": "Timeout"}
+                break
+            except Exception as e:
+                if not rows:
+                    return {"symbol": f"BINANCE:{symbol}", "error": str(e)}
+                break
+
+            if not isinstance(page, list):
+                break
+            rows.extend(page)
+            if len(page) < PAGE_SIZE:
+                break  # последняя страница истории
+            # следующий запрос — сразу после closeTime последней полученной свечи
+            params["startTime"] = int(page[-1][6]) + 1
+
+    if not rows:
+        return {"symbol": f"BINANCE:{symbol}", "error": "No candles data", "candles": []}
+
+    result = []
+    for row in rows:
+        # Формат строки klines:
+        # [openTime, open, high, low, close, volume, closeTime,
+        #  quoteAssetVolume, numTrades, takerBuyBase, takerBuyQuote, ignore]
+        open_time, close_time = int(row[0]), int(row[6])
+        result.append({
+            "open": float(row[1]),
+            "close": float(row[4]),
+            "high": float(row[2]),
+            "low": float(row[3]),
+            "volume": float(row[5]),
+            "value": float(row[7]),  # объём в котируемой валюте (quoteAssetVolume)
+            "begin": _ms_to_iso(open_time),
+            "end": _ms_to_iso(close_time),
+        })
+
+    return {
+        "symbol": f"BINANCE:{symbol}",
+        "interval": interval,
+        "candles": result,
+    }
+
+
+def _date_to_ms(date_str: str, end_of_day: bool = False) -> int:
+    """'YYYY-MM-DD' -> миллисекунды UTC. end_of_day=True — конец суток
+    (для till, чтобы включить все свечи указанного дня)."""
+    d = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if end_of_day:
+        d += timedelta(days=1) - timedelta(milliseconds=1)
+    return int(d.timestamp() * 1000)
+
+
+def _ms_to_iso(ms: int) -> str:
+    """Миллисекунды UTC -> 'YYYY-MM-DD HH:MM:SSZ'.
+
+    'Z' в конце нужен фронту «Тест график»: new Date() парсит такую строку
+    как UTC, а строки ISS (без 'Z') — как локальное время (см. test_chart.js).
+    """
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    ) + "Z"
 
 
 async def fetch_crypto_prices_batch(symbols: list[str]) -> dict[str, dict]:
