@@ -398,13 +398,15 @@
         <div class="test-chart-container">
             <h2 class="portfolio-title">Тест график</h2>
             <p class="test-chart-hint">
-                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой ~15 мин).
-                Введите тикер акции, например <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>.
+                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой ~15 мин)
+                и крипто-пары Binance (реальное время).
+                Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
+                крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
             </p>
             <!-- Ввод тикера — по образцу формы добавления в watchlist:
                  поле + кнопка, отправка по Enter (см. js/test_chart.js) -->
             <div class="test-chart-controls">
-                <input id="test-chart-ticker-input" placeholder="SBER, GAZP, LKOH…" title="Введите тикер акции Мосбиржи" />
+                <input id="test-chart-ticker-input" placeholder="SBER, GAZP, BINANCE:BTCUSDT…" title="Тикер акции Мосбиржи или пара Binance с префиксом BINANCE:" />
                 <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
                 <select id="test-chart-interval" title="Таймфрейм" onchange="loadTestChartCandles()">
                     <option value="60">1 час</option>
