@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Column, String, Integer, Float, DateTime, Text
+from sqlalchemy import (Boolean, Column, ForeignKey, String, Integer, Float,
+                        DateTime, Text, UniqueConstraint)
 from datetime import datetime
 from .database import Base
 
@@ -89,6 +90,64 @@ class PriceAlert(Base):
     triggered_price = Column(Float, nullable=True)     # цена срабатывания
     created_at = Column(DateTime, default=datetime.utcnow)
     triggered_at = Column(DateTime, nullable=True)
+
+
+class CandleTicker(Base):
+    """Справочник тикеров раздела «Тест график» (свечи накапливаются в БД).
+
+    symbol — полное имя с префиксом источника ('MOEX:SBER', 'BINANCE:BTCUSDT'),
+    ровно как его собирает GET /api/candles/{symbol}. Отдельная таблица нужна,
+    чтобы «тяжёлая» candle_bars ссылалась на компактный integer id, а не
+    повторяла строку-тикер в каждой свече.
+    """
+    __tablename__ = "candle_tickers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, nullable=False, unique=True, index=True)
+    first_seen_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CandleTimeframe(Base):
+    """Реестр «тикер × таймфрейм»: метаданные накопленной истории.
+
+    last_begin и candle_count хранятся здесь, чтобы инкрементальная докачка
+    и счётчики НЕ агрегировали большую таблицу candle_bars (при десятках
+    тысяч свечей на тикер каждый COUNT/OFFSET-запрос по ней дорог).
+    """
+    __tablename__ = "candle_timeframes"
+    __table_args__ = (UniqueConstraint("ticker_id", "interval", name="uq_candle_tf"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker_id = Column(Integer, ForeignKey("candle_tickers.id"),
+                       nullable=False, index=True)
+    interval = Column(Integer, nullable=False)  # 60 (час), 24 (день), 7 (нед), 31 (мес)
+    last_begin = Column(String, nullable=True)  # begin последней сохранённой свечи
+    candle_count = Column(Integer, nullable=False, default=0)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CandleBar(Base):
+    """Свеча OHLCV (единственная «объёмная» таблица хранилища свечей).
+
+    begin — строка ровно как отдаёт источник: ISS — локальное время Мосбиржи
+    ('YYYY-MM-DD HH:MM:SS'), Binance — UTC с 'Z'. Фронт «Тест график» парсит
+    оба формата по-разному осознанно (см. frontend/js/test_chart.js), поэтому
+    сохраняем без нормализации. Лексикографическая сортировка begin корректна
+    для обоих форматов.
+    """
+    __tablename__ = "candle_bars"
+
+    ticker_id = Column(Integer, ForeignKey("candle_tickers.id"),
+                       nullable=False, primary_key=True)
+    interval = Column(Integer, nullable=False, primary_key=True)
+    begin = Column(String, nullable=False, primary_key=True)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=True)
+    value = Column(Float, nullable=True)
+    end = Column(String, nullable=True)
 
 
 class AlertNotificationLog(Base):
