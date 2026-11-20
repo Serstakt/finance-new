@@ -303,11 +303,8 @@ window.addSection = async function() {
 };
 
 window.refreshAllPrices = function() {
-  localStorage.removeItem(CACHE_KEY);
   log('🔄 Ручное обновление...', 'info');
-  render();
-  countdownValue = 120;
-  updateCountdownDisplay();
+  refreshPricesLive();
 };
 
 window.exportAllData = async function() {
@@ -428,31 +425,42 @@ window.openOnTradingView = function() {
 };
 
 window.updateCountdownDisplay = function() {
+  // Real-time режим: обратный отсчёт не нужен, показываем постоянный маркер.
   const el = document.getElementById('countdown');
-  if (el) el.textContent = `${countdownValue}с`;
+  if (el) el.textContent = 'RT';
 };
 
 window.startAutoRefresh = function() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   if (countdownTimer) clearInterval(countdownTimer);
+  updateCountdownDisplay();
 
+  // Real-time: цены всего активного списка забираются одним батч-запросом
+  // (/api/prices/batch — на бэкенде это 1 снапшот доски ISS + батч CoinGecko).
   autoRefreshTimer = setInterval(() => {
-    if (sessionStorage.getItem('activePage') === 'watchlist') {
-      localStorage.removeItem(CACHE_KEY);
-      log('🔄 Автообновление цен...', 'info');
-      render();
-      countdownValue = 120;
-    }
-    updateCountdownDisplay();
+    if (sessionStorage.getItem('activePage') !== 'watchlist') return;
+    // Не рвём ввод (заметки/переименование): пока фокус в текстовом поле — пропускаем тик.
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    refreshPricesLive();
   }, AUTO_REFRESH_INTERVAL);
+};
 
-  countdownTimer = setInterval(() => {
-    if (sessionStorage.getItem('activePage') === 'watchlist') {
-      if (countdownValue > 0) countdownValue--;
-      else countdownValue = 120;
-    }
-    updateCountdownDisplay();
-  }, 1000);
+// Тик real-time: батч-запрос цен → мерж в кэш последнего рендера → render().
+// Обновление __lastRenderData обязательно: иначе render() уйдёт по лёгкому
+// пути (canRenderWithoutPrices) с прежними ценами и ничего не перерисует.
+// Keyed-diff в render() обновит только изменившиеся строки; сортировка при
+// изменении цен тоже отработает (пересортировка «живая»).
+window.refreshPricesLive = async function() {
+  const symbols = getCurrentList().tickers.filter(s => !s.startsWith('SECTION:'));
+  if (!symbols.length) return;
+  const prices = await fetchPricesBatch(symbols);
+  if (!Object.keys(prices).length) return;
+  if (window.__lastRenderData && window.__rowsCache.listId === appState.activeListId) {
+    Object.assign(window.__lastRenderData, prices);
+    window.__lastRenderAt = Date.now();
+  }
+  render();
 };
 
 window.log = function(message, type = 'info') {

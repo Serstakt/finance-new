@@ -33,7 +33,10 @@ window.UI_STATE_KEY = 'ui_active_list_id';
 // удалять реальные записи и цены будут устаревать.
 window.CACHE_KEY = 'ticker_cache';
 window.CACHE_DURATION = 120 * 1000;
-window.AUTO_REFRESH_INTERVAL = 120 * 1000;
+// Real-time автообновление: тик каждые 3 с. Цены всего списка забираются
+// ОДНИМ батч-запросом (/api/prices/batch), а на бэкенде акции TQBR идут
+// одним снапшотом доски ISS — частота опроса безопасна и для MOEX.
+window.AUTO_REFRESH_INTERVAL = 15 * 1000;
 window.ALERTS_KEY = 'price_alerts';
 
 // Флажки избранного: иконка — bookmark lucide (https://lucide.dev/icons/bookmark),
@@ -70,7 +73,8 @@ window.replaceCircleIcons = function(name) {
 window.widget = null;
 window.widgetReady = false;
 window.debugVisible = false;
-window.countdownValue = 120;
+// countdownValue больше нет: автообновление перешло на real-time
+// (постоянный маркер «RT» вместо обратного отсчёта).
 window.countdownTimer = null;
 window.autoRefreshTimer = null;
 window.currentSort = { field: null, direction: 'asc' };

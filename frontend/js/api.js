@@ -54,6 +54,36 @@ window.fetchTickerData = async function(symbol) {
   }
 };
 
+// === БАТЧ-ЗАПРОС ЦЕН (real-time автообновление) ===
+// Один вызов /api/prices/batch вместо запроса на каждый тикер: бэкенд сам
+// группирует символы по источникам (акции TQBR — снапшот доски ISS, крипта —
+// батч CoinGecko). Свежие ответы мержатся в localStorage-кэш с новым
+// timestamp, поэтому последующий render() через fetchTickerData берёт их
+// оттуда без повторных запросов.
+window.fetchPricesBatch = async function(symbols) {
+  if (!symbols || !symbols.length) return {};
+  try {
+    const response = await window.fetchWithTimeout(
+      `${API_BASE}/api/prices/batch?symbols=${encodeURIComponent(symbols.join(','))}`, {}, 15000
+    );
+    if (!response.ok) return {};
+    const prices = (await response.json()).prices || {};
+
+    let cache = {};
+    try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch(e) {}
+    const now = Date.now();
+    for (const [sym, data] of Object.entries(prices)) {
+      if (data && data.logo) rememberCryptoLogo(sym, data.logo);
+      cache[sym] = { data, timestamp: now };
+    }
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch(e) {}
+    return prices;
+  } catch (e) {
+    console.error('Ошибка батч-запроса цен:', e);
+    return {};
+  }
+};
+
 // === ЛОГОТИПЫ ТИКЕРОВ ===
 // Кэш официальных логотипов криптовалют (CoinGecko image) из ответа /api/prices:
 // symbol -> url. Пишется при каждой загрузке цены, читается при отрисовке тикера,

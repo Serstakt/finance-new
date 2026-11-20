@@ -213,3 +213,117 @@ async def fetch_moex_price(ticker: str) -> dict:
         "changeDay": float(change_percent) if change_percent else None,
         "changeValue": float(change_value) if change_value else None
     }
+
+
+def _parse_board_marketdata(data: dict, tickers: list[str]) -> dict[str, dict]:
+    """Достаём цены запрошенных тикеров из снапшота целой доски ISS.
+
+    Формат блоков тот же, что у одиночного ответа (marketdata/columns/data),
+    но строк несколько, а первой колонкой идёт SECID — по нему и выбираем.
+    """
+    md = data.get('marketdata') or {}
+    columns = md.get('columns') or []
+    rows = md.get('data') or []
+    if not columns or not rows:
+        return {}
+    try:
+        i_sec = columns.index('SECID')
+    except ValueError:
+        return {}
+
+    wanted = set(tickers)
+    by_secid = {row[i_sec]: row for row in rows if row[i_sec] in wanted}
+
+    out: dict[str, dict] = {}
+    for t in tickers:
+        row = by_secid.get(t)
+        if row is None:
+            continue
+
+        def get_col(name):
+            try:
+                return row[columns.index(name)]
+            except ValueError:
+                return None
+
+        # Для индексов иногда используется LASTVALUE, для акций LAST
+        price = get_col('LAST') or get_col('LASTVALUE') or get_col('VALTODAY')
+        change_percent = get_col('LASTTOPREVPRICE') or get_col('LASTCHANGEPRC')
+        change_value = get_col('CHANGE') or get_col('LASTCHANGE')
+        out[t] = {
+            "symbol": f"MOEX:{t}",
+            "price": float(price) if price else None,
+            "changeDay": float(change_percent) if change_percent else None,
+            "changeValue": float(change_value) if change_value else None,
+        }
+    return out
+
+
+async def _fetch_board_prices(engine: str, market: str, board: str,
+                              tickers: list[str]) -> dict[str, dict]:
+    """Цены акций одним снапшотом доски TQBR (marketdata всех бумаг).
+
+    engine=stock, market=shares, board=TQBR. С токеном — apim.moex.com
+    (без задержки ~15 мин), при отказе — откат на анонимный iss.moex.com.
+    marketdata.columns сужает ответ до нужных колонок — снапшот доски
+    остаётся лёгким даже при частом real-time-опросе.
+    """
+    token = get_moex_token()
+    host = "apim.moex.com" if token else "iss.moex.com"
+    board_name = board.lower() if token else board
+    cols = ("SECID,LAST,LASTVALUE,LASTCHANGE,LASTCHANGEPRC,"
+            "LASTTOPREVPRICE,CHANGE,VALTODAY")
+    url = (f"https://{host}/iss/engines/{engine}/markets/{market}/"
+           f"boards/{board_name}/securities.json?marketdata.columns={cols}")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    data = await _get_json(url, headers)
+    if "error" in data and token:
+        anon_url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}/"
+                    f"boards/{board}/securities.json?marketdata.columns={cols}")
+        data = await _get_json(anon_url)
+    if "error" in data:
+        return {}
+    return _parse_board_marketdata(data, tickers)
+
+
+async def fetch_moex_prices_batch(tickers: list[str]) -> dict[str, dict]:
+    """Цены сразу для нескольких тикеров Мосбиржи — минимум HTTP-запросов.
+
+    Группа «акции TQBR» берётся одним снапшотом доски (один запрос на весь
+    список), поэтому real-time-опрос watchlist акций создаёт 1 запрос к MOEX
+    вместо запроса на каждый тикер. Валюты и индексы ISS снапшотом доски не
+    отдаёт (анонимный список бумаг пустой / у индексов особый URL) — тянутся
+    параллельными одиночными запросами через fetch_moex_price.
+    Возвращает {тикер_без_префикса: ответ той же формы, что у /api/prices}.
+    """
+    tickers = list(dict.fromkeys(t.upper().strip() for t in tickers if t and t.strip()))
+    if not tickers:
+        return {}
+
+    index_tickers = [t for t in tickers if t in ('IMOEX', 'RTSI', 'RGBI', 'IRUS')]
+    currency_tickers = [t for t in tickers if t not in index_tickers
+                        and ('RUB' in t or t in ('USD000UTSTOM', 'EUR_RUB__TOM'))]
+    share_tickers = [t for t in tickers
+                     if t not in index_tickers and t not in currency_tickers]
+
+    tasks = []
+    if share_tickers:
+        tasks.append(_fetch_board_prices("stock", "shares", "TQBR", share_tickers))
+    single_tickers = index_tickers + currency_tickers
+    if single_tickers:
+        tasks.append(asyncio.gather(
+            *(fetch_moex_price(t) for t in single_tickers), return_exceptions=True))
+
+    out: dict[str, dict] = {t: {"symbol": f"MOEX:{t}", "error": "No data"} for t in tickers}
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for res in results:
+        if isinstance(res, BaseException):
+            continue
+        if isinstance(res, dict):
+            out.update(res)                       # снапшот доски: {тикер: ответ}
+        elif isinstance(res, (list, tuple)):      # индексы: список ответов
+            for r in res:
+                if isinstance(r, dict) and str(r.get("symbol", "")).startswith("MOEX:"):
+                    out[str(r["symbol"]).replace("MOEX:", "")] = r
+    return out

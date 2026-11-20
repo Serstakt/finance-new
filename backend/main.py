@@ -81,6 +81,54 @@ async def favicon():
 # ЦЕНЫ (БЕЗ YAHOO FINANCE: MOEX + крипто CoinGecko)
 # =============================================================================
 
+@app.get("/api/prices/batch", response_model=schemas.BatchPriceResponse)
+async def get_prices_batch(
+    symbols: str = Query(..., description="Тикеры через запятую: MOEX:SBER,BINANCE:BTCUSDT,IMOEX"),
+):
+    """Батч цен для real-time автообновления watchlist.
+
+    Один вызов вместо запроса на каждый тикер: MOEX-тикеры группируются по
+    источникам (акции TQBR и валюты CETS — одним снапшотом доски, индексы —
+    параллельные одиночные запросы), крипта — батч CoinGecko. Группы идут
+    параллельно; ошибки одной группы не ломают остальные.
+    """
+    requested = list(dict.fromkeys(
+        s.strip().upper() for s in symbols.split(",") if s.strip()))
+    if not requested:
+        raise HTTPException(status_code=400, detail="Empty symbols list")
+
+    binance_pairs: list[str] = []
+    moex_plain: list[tuple[str, str]] = []   # (полный символ, тикер без префикса)
+    for s in requested:
+        if s.startswith("BINANCE:"):
+            binance_pairs.append(s.replace("BINANCE:", ""))
+        else:
+            moex_plain.append((s, s.replace("MOEX:", "") if s.startswith("MOEX:") else s))
+
+    coros = []
+    if binance_pairs:
+        coros.append(crypto_service.fetch_crypto_prices_batch(binance_pairs))
+    if moex_plain:
+        coros.append(moex_service.fetch_moex_prices_batch([t for _, t in moex_plain]))
+
+    out: dict[str, schemas.PriceResponse] = {}
+    if coros:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        i = 0
+        if binance_pairs:
+            binance_result = results[i] if not isinstance(results[i], BaseException) else {}
+            i += 1
+            for pair in binance_pairs:
+                r = binance_result.get(pair) if isinstance(binance_result, dict) else None
+                out[f"BINANCE:{pair}"] = r or {"symbol": f"BINANCE:{pair}", "error": "No data"}
+        if moex_plain:
+            moex_result = results[i] if not isinstance(results[i], BaseException) else {}
+            for full, plain in moex_plain:
+                r = moex_result.get(plain) if isinstance(moex_result, dict) else None
+                out[full] = r or {"symbol": full, "error": "No data"}
+    return {"prices": out}
+
+
 @app.get("/api/prices/{symbol}", response_model=schemas.PriceResponse)
 async def get_price(symbol: str):
     try:

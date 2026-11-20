@@ -15,6 +15,11 @@ class PriceResponse(BaseModel):
     logo: str | None = None
 
 
+class BatchPriceResponse(BaseModel):
+    """Батч цен для real-time автообновления: {символ: цена}."""
+    prices: Dict[str, PriceResponse]
+
+
 class PositionCreate(BaseModel):
     symbol: str
     quantity: float
