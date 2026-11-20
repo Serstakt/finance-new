@@ -1,21 +1,55 @@
 import asyncio
+import os
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
+from dotenv import load_dotenv
 
-# Задержка данных ISS для неавторизованного пользователя (user status =
-# NOT AUTHORIZED): свечи приходят с лагом ~15 минут. Для тестового графика
-# этого достаточно, авторизация не требуется.
+# .env ищем рядом с модулем (backend/.env) и в корне проекта — как в
+# notification_service. Токен Algopack нужен для авторизованного ISS
+# (котировки без задержки ~15 мин анонимного доступа).
+for _candidate in (Path(__file__).resolve().parent.parent / ".env",
+                   Path(__file__).resolve().parent.parent.parent / ".env"):
+    if _candidate.exists():
+        load_dotenv(_candidate)
+
+
+def get_moex_token() -> str:
+    """Bearer-токен ISS из .env/окружения; пустая строка, если не задан."""
+    return (os.getenv("MOEX_API_TOKEN") or "").strip()
+
+
+async def _get_json(url: str, headers: Optional[dict] = None) -> dict:
+    """GET url -> dict ISS; при сетевой ошибке/не-200 возвращает {'error': …}."""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+        try:
+            async with session.get(url, headers=headers or {}) as response:
+                if response.status != 200:
+                    return {"error": f"Not found (Status {response.status})"}
+                return await response.json()
+        except asyncio.TimeoutError:
+            return {"error": "Timeout"}
+        except Exception as e:
+            return {"error": str(e)}
+
+# Свечи ISS: с токеном Algopack — apim.moex.com (данные без задержки),
+# без токена — анонимный iss.moex.com (лаг ~15 минут, для тестового графика
+# этого достаточно).
 async def fetch_moex_candles(
     ticker: str,
     interval: int = 24,
     from_date: Optional[str] = None,
     till_date: Optional[str] = None,
 ) -> dict:
-    """Свечи OHLCV с iss.moex.com (акции, режим TQBR) — МАКСИМАЛЬНАЯ история.
+    """Свечи OHLCV (акции, режим TQBR) — МАКСИМАЛЬНАЯ история.
 
     interval: 1 (мин), 10, 60 (час), 24 (день), 7 (неделя), 31 (месяц) —
     стандартные интервалы ISS. from/till: даты 'YYYY-MM-DD' (опционально).
+
+    С токеном MOEX_API_TOKEN запрос идёт на apim.moex.com с заголовком
+    Authorization: Bearer (котировки без задержки); если токен не принят —
+    откат на анонимный iss.moex.com.
 
     ISS отдаёт не более 500 свечей за запрос, поэтому история собирается
     пагинацией параметром start (0, 500, 1000, …) до конца доступных данных
@@ -24,15 +58,24 @@ async def fetch_moex_candles(
     Возвращает сырые свечи ISS: open/close/high/low/volume/value + begin/end.
     """
     ticker = ticker.upper().strip()
-    base_url = (
-        f"https://iss.moex.com/iss/engines/stock/markets/shares/"
-        f"boards/TQBR/securities/{ticker}/candles.json"
-        f"?interval={interval}"
-    )
-    if from_date:
-        base_url += f"&from={from_date}"
-    if till_date:
-        base_url += f"&till={till_date}"
+    token = get_moex_token()
+
+    def base_url(use_apim: bool) -> str:
+        host = "apim.moex.com" if use_apim else "iss.moex.com"
+        board = "tqbr" if use_apim else "TQBR"
+        url = (
+            f"https://{host}/iss/engines/stock/markets/shares/"
+            f"boards/{board}/securities/{ticker}/candles.json"
+            f"?interval={interval}"
+        )
+        if from_date:
+            url += f"&from={from_date}"
+        if till_date:
+            url += f"&till={till_date}"
+        return url
+
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    use_apim = bool(token)   # при отказе apim падаем на анонимный ISS
 
     PAGE_SIZE = 500          # максимум свечей в одном ответе ISS
     MAX_CANDLES = 50000      # страховка от бесконечной пагинации
@@ -44,17 +87,29 @@ async def fetch_moex_candles(
         start = 0
         while start < MAX_CANDLES:
             try:
-                async with session.get(f"{base_url}&start={start}") as response:
+                async with session.get(f"{base_url(use_apim)}&start={start}",
+                                       headers=headers if use_apim else {}) as response:
                     if response.status != 200:
+                        if not rows and use_apim:
+                            # apim не принял токен / недоступен — откат на
+                            # анонимный ISS (данные с задержкой ~15 мин)
+                            use_apim = False
+                            continue
                         if not rows:  # ошибка на первой странице — сообщаем
                             return {"symbol": f"MOEX:{ticker}", "error": f"Not found (Status {response.status})"}
                         break       # ошибка в середине — отдаём что успели собрать
                     data = await response.json()
             except asyncio.TimeoutError:
+                if not rows and use_apim:
+                    use_apim = False
+                    continue
                 if not rows:
                     return {"symbol": f"MOEX:{ticker}", "error": "Timeout"}
                 break
             except Exception as e:
+                if not rows and use_apim:
+                    use_apim = False
+                    continue
                 if not rows:
                     return {"symbol": f"MOEX:{ticker}", "error": str(e)}
                 break
@@ -99,6 +154,7 @@ async def fetch_moex_candles(
 
 async def fetch_moex_price(ticker: str) -> dict:
     ticker = ticker.upper().strip()
+    token = get_moex_token()
 
     # 1. Индексы (IMOEX, RTSI, RGBI, IRUS)
     if ticker in ['IMOEX', 'RTSI', 'RGBI', 'IRUS']:
@@ -108,18 +164,29 @@ async def fetch_moex_price(ticker: str) -> dict:
         url = f"https://iss.moex.com/iss/engines/currency/markets/currencies/boards/CETS/securities/{ticker}.json"
     # 3. Акции и облигации (по умолчанию)
     else:
-        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}.json"
+        if token:
+            # Авторизованный ISS (Algopack): котировки без задержки ~15 мин.
+            # Авторизация — Bearer-токен в заголовке самого запроса
+            # (отдельного шага логина у ISS нет).
+            url = (f"https://apim.moex.com/iss/engines/stock/markets/shares/"
+                   f"boards/tqbr/securities/{ticker}.json")
+        else:
+            url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}.json"
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-        try:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    return {"symbol": f"MOEX:{ticker}", "error": f"Not found (Status {response.status})"}
-                data = await response.json()
-        except asyncio.TimeoutError:
-            return {"symbol": f"MOEX:{ticker}", "error": "Timeout"}
-        except Exception as e:
-            return {"symbol": f"MOEX:{ticker}", "error": str(e)}
+    headers = {}
+    if token and "apim.moex.com" in url:
+        headers["Authorization"] = f"Bearer {token}"
+
+    data = await _get_json(url, headers)
+
+    # apim не ответил или не принял токен (401/403) — откат на анонимный ISS,
+    # чтобы ручка watchlist не отваливалась (данные будут с задержкой ~15 мин).
+    if "error" in data and "apim.moex.com" in url:
+        anon_url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}.json"
+        data = await _get_json(anon_url)
+
+    if "error" in data:
+        return {"symbol": f"MOEX:{ticker}", "error": data["error"]}
 
     # MOEX возвращает данные в сложной структуре. Ищем marketdata
     if not data.get('marketdata') or not data['marketdata'].get('data'):
