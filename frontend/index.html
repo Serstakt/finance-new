@@ -10,8 +10,11 @@
          «вечно грузит» и локальный сервер тут ни при чём. -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script defer src="https://s3.tradingview.com/tv.js"></script>
-    <!-- KLineChart для раздела «Тест график» (свечи MOEX ISS) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/klinecharts@9/dist/klinecharts.min.js"></script>
+    <!-- KLineChart для раздела «Тест график» (свечи MOEX ISS).
+         Версия запинена на 9.6.0: код (кастомный overlay «rect», сериализация
+         разметки) проверен именно на ней, а плавающий тег @9 при выходе
+         новых минорных версий мог бы молча сменить поведение API. -->
+    <script defer src="https://cdn.jsdelivr.net/npm/klinecharts@9.6.0/dist/klinecharts.min.js"></script>
 </head>
 <body>
 <nav id="nav-bar">
@@ -400,26 +403,30 @@
             <h2 class="portfolio-title">Тест график</h2>
             <p class="test-chart-hint">
                 Свечи Мосбиржи (ISS, без авторизации — данные с задержкой ~15 мин)
-                и крипто-пары Binance (реальное время).
+                и крипто-пары Binance (реальное время). Последняя свеча
+                обновляется автоматически. Разметка сохраняется по тикеру
+                (в этом браузере) и переживает смену тикера и перезагрузку.
                 Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
                 крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
             </p>
             <!-- Ввод тикера — по образцу формы добавления в watchlist:
-                 поле + кнопка, отправка по Enter (см. js/test_chart.js) -->
+                 поле + кнопка, отправка по Enter (см. js/test_chart.js).
+                 Таймфреймы — сегмент кнопок как в TradingView (tcSetInterval). -->
             <div class="test-chart-controls">
                 <input id="test-chart-ticker-input" placeholder="SBER, GAZP, BINANCE:BTCUSDT…" title="Тикер акции Мосбиржи или пара Binance с префиксом BINANCE:" />
                 <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
-                <select id="test-chart-interval" title="Таймфрейм" onchange="loadTestChartCandles()">
-                    <option value="60">1 час</option>
-                    <option value="24" selected>1 день</option>
-                    <option value="7">1 неделя</option>
-                    <option value="31">1 месяц</option>
-                </select>
+                <div class="tc-tf-group" id="test-chart-tf" title="Таймфрейм">
+                    <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
+                    <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
+                    <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
+                    <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
+                </div>
             </div>
             <!-- Панель инструментов: разметка поверх графика (нативные
                  overlay-объекты KLineChart: клик по кнопке → следующий клик
                  по графику ставит точки фигуры; правый клик по фигуре
-                 удаляет её) и индикаторы (переключатели). -->
+                 удаляет её) и индикаторы (dropdown всех встроенных; клик по
+                 названию включённого — настройка периодов, как в TradingView). -->
             <div class="test-chart-toolbar">
                 <span class="tc-group-label">Разметка:</span>
                 <button type="button" onclick="tcDrawOverlay('segment')" title="Отрезок — 2 точки">Линия</button>
@@ -430,9 +437,31 @@
                 <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">Очистить</button>
                 <span class="tc-sep"></span>
                 <span class="tc-group-label">Индикаторы:</span>
-                <button type="button" id="tc-ind-vol" onclick="tcToggleIndicator('VOL')" title="Объёмы (под-окно)">VOL</button>
-                <button type="button" id="tc-ind-ma" onclick="tcToggleIndicator('MA')" title="Moving Average (на графике)">MA</button>
-                <button type="button" id="tc-ind-macd" onclick="tcToggleIndicator('MACD')" title="MACD (под-окно)">MACD</button>
+                <select id="tc-indicator-select" title="Добавить индикатор">
+                    <option value="">+ индикатор…</option>
+                    <optgroup label="На графике цены">
+                        <option value="MA">MA</option>
+                        <option value="EMA">EMA</option>
+                        <option value="BOLL">BOLL</option>
+                        <option value="SAR">SAR</option>
+                        <option value="BBI">BBI</option>
+                    </optgroup>
+                    <optgroup label="В под-окнах">
+                        <option value="VOL">VOL</option>
+                        <option value="MACD">MACD</option>
+                        <option value="RSI">RSI</option>
+                        <option value="KDJ">KDJ</option>
+                        <option value="WR">WR</option>
+                        <option value="CCI">CCI</option>
+                        <option value="DMI">DMI</option>
+                        <option value="OBV">OBV</option>
+                        <option value="ROC">ROC</option>
+                        <option value="DMA">DMA</option>
+                        <option value="BIAS">BIAS</option>
+                        <option value="TRIX">TRIX</option>
+                    </optgroup>
+                </select>
+                <span id="tc-indicator-chips" class="tc-ind-chips"></span>
             </div>
             <div class="test-chart-status" id="test-chart-status"></div>
             <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
