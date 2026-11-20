@@ -455,6 +455,36 @@ async def fetch_crypto_price(symbol: str) -> dict:
         return _build_response(symbol, m)
 
 
+# Имена монет (шапка «Тест график»): {SYMBOL: {"name": str|None, "ts": float}}.
+# Имя вечно, кэш живёт в процессе; неудача (CoinGecko недоступен) — 10 минут.
+_coin_name_cache: dict[str, dict] = {}
+_NAME_NEG_TTL = 600.0
+
+
+async def fetch_coin_name(symbol: str) -> Optional[str]:
+    """Имя монеты по тикеру пары ('BTCUSDT' -> 'Bitcoin') для шапки графика.
+
+    Резолвит id обычным путём (общие кэши) и берёт name из batch
+    /coins/markets; собственный кэш убирает походы в CoinGecko из
+    8-секундного поллинга свечей после первого успешного вызова.
+    """
+    symbol = symbol.upper().strip()
+    cached = _coin_name_cache.get(symbol)
+    now = time.time()
+    if cached and (cached["name"] is not None or now - cached["ts"] < _NAME_NEG_TTL):
+        return cached["name"]
+
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        coin_id = await resolve_coin_id(session, symbol)
+        if not coin_id:
+            return None
+        markets = await _fetch_markets(session, [coin_id])
+        name = (markets.get(coin_id) or {}).get("name")
+    _coin_name_cache[symbol] = {"name": name, "ts": now}
+    return name
+
+
 async def fetch_binance_candles(
     symbol: str,
     interval: int = 24,

@@ -216,6 +216,21 @@ def _schedule_backfill(symbol_full: str, requested_interval: int) -> None:
     task.add_done_callback(_backfill_tasks.discard)
 
 
+async def _instrument_name(ticker: str, is_binance: bool) -> str | None:
+    """Имя инструмента для шапки «Тест график» («Сбербанк», «Bitcoin»).
+
+    Некритичная приправа к свечам: таймаут 6 с — при молчащем источнике
+    имени просто не будет, свечи не задержатся. Повторные запросы дёшевы:
+    у обоих сервисов имена кэшируются в процессе.
+    """
+    try:
+        coro = (crypto_service.fetch_coin_name(ticker) if is_binance
+                else moex_service.fetch_moex_name(ticker))
+        return await asyncio.wait_for(coro, timeout=6)
+    except Exception:  # noqa: BLE001 — имя не критично, важнее вовремя отдать свечи
+        return None
+
+
 @app.get("/api/candles/{symbol}")
 async def get_candles(symbol: str,
                       interval: int = Query(default=24, ge=1),
@@ -248,6 +263,7 @@ async def get_candles(symbol: str,
             return {
                 "symbol": symbol_full,
                 "interval": interval,
+                "name": await _instrument_name(ticker, is_binance),
                 "candles": fresh,
             }
         except Exception as e:  # noqa: BLE001 — как и основной путь, не роняем сервер
@@ -271,6 +287,7 @@ async def get_candles(symbol: str,
             return {
                 "symbol": symbol_full,
                 "interval": interval,
+                "name": await _instrument_name(ticker, is_binance),
                 "candles": candles,
                 "stored": candle_store_service.stored_candle_counts(symbol_full),
                 "incremental": bool(last),
@@ -283,6 +300,7 @@ async def get_candles(symbol: str,
             return {
                 "symbol": symbol_full,
                 "interval": interval,
+                "name": await _instrument_name(ticker, is_binance),
                 "candles": stored_candles,
                 "stored": candle_store_service.stored_candle_counts(symbol_full),
                 "note": f"Источник недоступен ({result.get('error')}); "

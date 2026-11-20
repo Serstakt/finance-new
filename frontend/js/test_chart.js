@@ -16,7 +16,12 @@
 //     (getBarSpace/getOffsetRightDistance → set… после applyNewData);
 //   - разметка (overlay) хранится по тикеру в localStorage и
 //     восстанавливается при возврате к тикеру;
-//   - последний тикер/ТФ автозагружаются при открытии страницы.
+//   - последний тикер/ТФ автозагружаются при открытии страницы;
+//   - облик TradingView: вертикальная панель инструментов разметки слева
+//     (иконки SVG инлайном), шапка символа (код · имя · ТФ + последняя
+//     цена с дельтой, имя приходит в candles-ответе бэкенда), легенда
+//     OHLCV в углу холста следует за кроссхейром (subscribeAction
+//     onCrosshairChange, в 9.6 payload несёт kLineData).
 
 (() => {
   let chartInstance = null;
@@ -122,6 +127,16 @@
               upBorderColor: '#26a69a', downBorderColor: '#ef5350',
               upWickColor: '#26a69a', downWickColor: '#ef5350',
             },
+            // Встроенную строку OHLC гасим: в 9.6 standard-tooltip рисуется
+            // безусловно, подавить его можно только парой showType 'rect' +
+            // showRule 'none' (isDrawTooltip = false). Вместо него — своя
+            // легенда .tc-legend в левом верхнем углу, как в TradingView.
+            tooltip: { showType: 'rect', showRule: 'none' },
+          },
+          indicator: {
+            // Значения индикаторов (MA, RSI…) оставляем, но опускаем ниже
+            // строки легенды (дефолтный marginTop 8 пересекался бы с ней)
+            tooltip: { showType: 'standard', showRule: 'always', text: { marginTop: 26 } },
           },
           xAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
           yAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
@@ -129,12 +144,18 @@
             horizontal: { text: { backgroundColor: '#434651' } },
             vertical: { text: { backgroundColor: '#434651' } },
           },
-          tooltip: { text: { color: '#d1d4dc' } },
         },
       });
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
       window.testChartInstance = chartInstance;
+      // Легенда OHLCV следует за кроссхейром (как в TradingView). При уходе
+      // курсора KLineChart отдаёт последнюю свечу — легенда «возвращается».
+      if (typeof chartInstance.subscribeAction === 'function') {
+        chartInstance.subscribeAction('onCrosshairChange', (ev) => {
+          if (ev && ev.kLineData) renderLegend(ev.kLineData);
+        });
+      }
     }
     return chartInstance;
   };
@@ -204,17 +225,39 @@
     saveOverlaysToStorage(lastTicker, serializeOverlays());
   };
 
+  // Активный инструмент на вертикальной панели (иконка подсвечена синим,
+  // как выбранный инструмент в TradingView). Снимается после построения
+  // фигуры, её удаления или «Очистить».
+  let activeToolBtn = null;
+  const clearToolActive = () => {
+    if (activeToolBtn) {
+      activeToolBtn.classList.remove('active');
+      activeToolBtn = null;
+    }
+  };
+  const setToolActive = (btn) => {
+    clearToolActive();
+    if (btn) {
+      btn.classList.add('active');
+      activeToolBtn = btn;
+    }
+  };
+
   // Колбэки жизненного цикла overlay → автосохранение. onDrawEnd — фигура
   // достроена, onPressedMoveEnd — точку перетащили, onDeselected — сняли
   // выделение (страховка после правок), onRemoved — удаление любым способом
   // (контекстное меню по правому клику, «Очистить»).
   const overlayCallbacks = () => ({
-    onDrawEnd: () => persistOverlays(),
+    onDrawEnd: () => {
+      clearToolActive();
+      persistOverlays();
+    },
     onPressedMoveEnd: () => persistOverlays(),
     onDeselected: () => persistOverlays(),
     onRemoved: (e) => {
       const id = e && e.overlay && e.overlay.id;
       if (id) overlayIds = overlayIds.filter(x => x !== id);
+      clearToolActive();
       persistOverlays();
     },
   });
@@ -258,6 +301,109 @@
     ? 'данные Binance (реальное время)'
     : 'данные ISS с задержкой ~15 мин';
 
+  // ---- Шапка символа и легенда OHLCV (облик TradingView) ----
+  // Шапка над графиком: код · имя (name из candles-ответа бэкенда) · ТФ +
+  // крупная последняя цена с цветной дельтой к предыдущей свече. Легенда
+  // поверх холста показывает O/H/L/C/Vol свечи под курсором (crosshair),
+  // без курсора — последнюю. Значения окрашены по направлению свечи.
+
+  const TF_LABELS = { 60: '1ч', 24: '1д', 7: '1н', 31: '1М' };
+
+  const fmtNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n)
+      ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '—';
+  };
+
+  const fmtVol = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '—';
+    if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
+    return String(n);
+  };
+
+  // Тикер для шапки: без технического префикса источника (BINANCE:BTCUSDT → BTCUSDT)
+  const displayTicker = (ticker) =>
+    isBinanceTicker(ticker) ? ticker.replace('BINANCE:', '') : ticker;
+
+  // Код/ТФ показываем сразу (ещё до ответа бэкенда), цену — прочерком
+  const setHeaderSymbol = (ticker, interval) => {
+    const code = document.getElementById('tc-sym-code');
+    if (!code) return;
+    code.textContent = displayTicker(ticker);
+    const name = document.getElementById('tc-sym-name');
+    if (name) { name.textContent = ''; name.style.display = 'none'; }
+    const tf = document.getElementById('tc-sym-tf');
+    if (tf) tf.textContent = TF_LABELS[interval] || '';
+    const price = document.getElementById('tc-sym-price');
+    if (price) price.textContent = '—';
+    const change = document.getElementById('tc-sym-change');
+    if (change) { change.textContent = ''; change.classList.remove('up', 'down'); }
+  };
+
+  // Имя инструмента из candles-ответа (две строки на бэкенде): «Сбербанк»,
+  // «Bitcoin»; нет имени (источник не отдал) — span скрывается вместе с «·»
+  const applySymbolName = (data) => {
+    const name = data && data.name ? String(data.name) : '';
+    const nameEl = document.getElementById('tc-sym-name');
+    if (!nameEl) return;
+    nameEl.textContent = name;
+    nameEl.style.display = name ? '' : 'none';
+  };
+
+  // Цена + дельта к предыдущей свече: «+10.00 (+3.25%)» зелёным/красным
+  const updateSymbolQuote = (list) => {
+    const priceEl = document.getElementById('tc-sym-price');
+    const changeEl = document.getElementById('tc-sym-change');
+    if (!priceEl || !list || !list.length) return;
+    const last = list[list.length - 1];
+    priceEl.textContent = fmtNum(last.close);
+    if (!changeEl) return;
+    const prev = list.length > 1 ? list[list.length - 2] : null;
+    if (!prev || !Number.isFinite(prev.close) || !prev.close) {
+      changeEl.textContent = '';
+      changeEl.classList.remove('up', 'down');
+      return;
+    }
+    const delta = last.close - prev.close;
+    const pct = (delta / prev.close) * 100;
+    const up = delta >= 0;
+    const sign = up ? '+' : '';
+    changeEl.textContent = `${sign}${delta.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
+    changeEl.classList.toggle('up', up);
+    changeEl.classList.toggle('down', !up);
+  };
+
+  const renderLegend = (k) => {
+    const root = document.getElementById('tc-legend');
+    if (!root || !k) return;
+    const up = k.close >= k.open;
+    root.classList.toggle('up', up);
+    root.classList.toggle('down', !up);
+    const vals = {
+      'tc-leg-o': fmtNum(k.open),
+      'tc-leg-h': fmtNum(k.high),
+      'tc-leg-l': fmtNum(k.low),
+      'tc-leg-c': fmtNum(k.close),
+      'tc-leg-v': fmtVol(k.volume),
+    };
+    for (const [id, text] of Object.entries(vals)) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+  };
+
+  // Легенда + цена из текущих данных графика (последняя свеча)
+  const refreshChartReadouts = () => {
+    if (!chartInstance) return;
+    const list = chartInstance.getDataList();
+    renderLegend(list.length ? list[list.length - 1] : null);
+    updateSymbolQuote(list);
+  };
+
   const pollOnce = async (ticker, interval) => {
     if (!chartInstance || lastTs == null) return;
     try {
@@ -285,6 +431,8 @@
         const time = new Date().toLocaleTimeString('ru-RU');
         setStatus(`График ${ticker} · свечей: ${chartInstance.getDataList().length} · `
           + `${sourceNote(ticker)} · обновлено ${time}`);
+        // Последняя свеча тикнула — обновить цену в шапке и легенду
+        refreshChartReadouts();
       }
     } catch (e) {
       // сетевые сбои поллинга не тревожат статус, но в консоль попадают —
@@ -401,6 +549,10 @@
         return;
       }
 
+      // Шапка символа: код/ТФ и имя инструмента (name из candles-ответа)
+      setHeaderSymbol(ticker, interval);
+      applySymbolName(data);
+
       const klineData = data.candles.map(toKline)
         .filter(c => !Number.isNaN(c.timestamp))
         // KLineChart требует возрастающих меток времени
@@ -426,6 +578,8 @@
       lastTs = klineData.length ? klineData[klineData.length - 1].timestamp : null;
       lastTicker = ticker;
       restoreViewport(vp);
+      // Шапка (цена/дельта) и легенда — по свежим данным
+      refreshChartReadouts();
 
       // Доборка старых экранов при скролле влево (переввод callback — идемпотентно)
       instance.loadMore((oldestTs) => loadMoreHistory(oldestTs));
@@ -463,18 +617,23 @@
     if (![60, 24, 7, 31].includes(value)) return;
     currentInterval = value;
     syncTfButtons();
+    // ТФ в шапке символа обновляем сразу, не дожидаясь перезагрузки
+    const tfEl = document.getElementById('tc-sym-tf');
+    if (tfEl) tfEl.textContent = TF_LABELS[value] || '';
     // Как в TradingView: клик по ТФ сразу перезагружает график выбранного тикера
     if (lastTicker) window.loadTestChartCandles();
     else setStatus(`Таймфрейм: ${document.getElementById(`tc-tf-${value}`)?.textContent || value}`);
   };
 
   // ---- Панель разметки: рисование нативных overlay-объектов KLineChart ----
-  // Клик по кнопке включает инструмент: следующий клик(и) по графику
-  // ставят точки фигуры. Правый клик по готовой фигуре удаляет её
-  // (стандартное поведение KLineChart).
-  window.tcDrawOverlay = function (name) {
+  // Клик по иконке на вертикальной панели включает инструмент: следующий
+  // клик(и) по графику ставят точки фигуры. Правый клик по готовой фигуре
+  // удаляет её (стандартное поведение KLineChart).
+  window.tcDrawOverlay = function (name, btn) {
     const instance = getChartInstance();
     if (!instance) return;
+    // Подсветка активного инструмента — как выбранная иконка в TradingView
+    setToolActive(btn);
     if (name === 'text') {
       const text = window.prompt('Текст заметки на графике:');
       if (!text) return;
@@ -502,6 +661,7 @@
     if (!chartInstance) return;
     chartInstance.removeOverlay();
     overlayIds = [];
+    clearToolActive();
     persistOverlays();
     setStatus('Разметка удалена');
   };
@@ -590,6 +750,33 @@
 
   // ---- Стартовые слушатели ----
 
+  // klinecharts.init измеряет контейнер в момент вызова. Автозагрузка
+  // последнего графика стреляет на DOMContentLoaded, когда активной может
+  // быть другая страница («Главная»): контейнер 0×0, панель свечей
+  // раскладывается в нулевую высоту, и после показа раздела свечи остаются
+  // сжатыми в полосу у верхнего края (ResizeObserver растягивает канвас,
+  // но раскладку панелей не пересчитывает). Поэтому загрузка в скрытом
+  // разделе откладывается до первого показа, а уже созданный график при
+  // показе пересобирается через resize().
+  let pendingAutoload = false;
+
+  const chartSectionVisible = () => {
+    const el = document.getElementById('test-chart-kline');
+    return !!(el && el.offsetParent !== null);
+  };
+
+  // Вызывается из navigateTo при первом показе раздела (декоратор ниже)
+  window.tcSectionShown = function () {
+    if (!chartSectionVisible()) return;
+    if (pendingAutoload) {
+      pendingAutoload = false;
+      autoLoadLastChart();
+    } else if (chartInstance && typeof chartInstance.resize === 'function') {
+      // Раздел снова виден — пересобрать панели под реальные размеры
+      chartInstance.resize();
+    }
+  };
+
   const autoLoadLastChart = () => {
     let last = null;
     try { last = JSON.parse(localStorage.getItem(LAST_LS_KEY) || 'null'); } catch (e) {}
@@ -598,7 +785,18 @@
     if (input) input.value = last.ticker;
     if (last.interval && TF_LOOKBACK_DAYS[last.interval]) currentInterval = last.interval;
     syncTfButtons();
+    if (!chartSectionVisible()) { pendingAutoload = true; return; }
     window.loadTestChartCandles();
+  };
+
+  // Показ раздела — как в portfolio.js: оборачиваем navigateTo, чтобы
+  // отложить/догрузить график именно в момент, когда контейнер имеет размер
+  const originalNavigateTo = window.navigateTo;
+  window.navigateTo = function (pageName) {
+    const result = typeof originalNavigateTo === 'function'
+      ? originalNavigateTo(pageName) : undefined;
+    if (pageName === 'test-chart') window.tcSectionShown();
+    return result;
   };
 
   document.addEventListener('DOMContentLoaded', () => {

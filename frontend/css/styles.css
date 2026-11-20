@@ -1212,14 +1212,188 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   color: #ff9800;
 }
 
-.test-chart-wrapper {
+/* Область графика в духе TradingView: слева узкая колонка инструментов
+   разметки, справа — шапка символа и сам холст. Рамку и скругление несёт
+   вся область целиком, как единая панель. */
+.tc-chart-area {
+  display: flex;
+  align-items: stretch;
   flex: 1;
-  min-height: 420px;
+  min-height: 460px;
   width: 100%;
   border: 1px solid #2a2e39;
   border-radius: 8px;
   overflow: hidden;
-  background: #161a1e;
+  background: #131722;
+}
+
+/* Вертикальная панель инструментов разметки (иконки SVG инлайном, без CDN) */
+.tc-draw-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 42px;
+  padding: 6px 0;
+  background: #131722;
+  border-right: 1px solid #2a2e39;
+  box-sizing: border-box;
+}
+
+.tc-draw-toolbar button {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #d1d4dc;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tc-draw-toolbar button svg {
+  width: 20px;
+  height: 20px;
+  pointer-events: none; /* клик всегда ловит кнопка */
+}
+
+.tc-draw-toolbar button:hover {
+  background: #2a2e39;
+}
+
+/* Активный инструмент — фирменный синий TradingView, как у выбранного
+   инструмента рисования в TV */
+.tc-draw-toolbar button.active {
+  background: #2962ff;
+  color: #fff;
+}
+
+.tc-draw-toolbar button.tc-danger:hover {
+  color: #ef5350;
+  background: #2a2e39;
+}
+
+.tc-draw-toolbar .tc-draw-sep {
+  width: 24px;
+  height: 1px;
+  background: #2a2e39;
+  margin: 4px 0;
+}
+
+.tc-chart-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Шапка символа: SBER · Сбербанк · 1д + последняя цена с дельтой */
+.tc-symbol-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #2a2e39;
+  background: #131722;
+  min-height: 20px;
+}
+
+.tc-sym-code {
+  font-size: 15px;
+  font-weight: 700;
+  color: #d1d4dc;
+}
+
+.tc-sym-name,
+.tc-sym-tf {
+  font-size: 13px;
+  color: #787b86;
+  white-space: nowrap;
+}
+
+/* Разделитель «·» между кодом/именем/ТФ: на span'е, который всегда
+   присутствует (имя скрывается целиком вместе со своим разделителем) */
+.tc-sym-name::before,
+.tc-sym-tf::before {
+  content: '·';
+  margin-right: 10px;
+  color: #363a45;
+}
+
+.tc-sym-quote {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.tc-sym-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: #d1d4dc;
+}
+
+.tc-sym-change {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tc-sym-change.up,
+.tc-legend.up .tc-leg-val {
+  color: #26a69a;
+}
+
+.tc-sym-change.down,
+.tc-legend.down .tc-leg-val {
+  color: #ef5350;
+}
+
+/* Холст графика: позиционирование легенды поверх канваса */
+.tc-chart-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.test-chart-wrapper {
+  flex: 1;
+  min-height: 380px;
+  width: 100%;
+  background: #131722;
+}
+
+/* Легенда OHLCV в левом верхнем углу холста (как в TradingView): значения
+   окрашены по направлению свечи, обновляются под курсором. pointer-events
+   none — не мешает рисованию инструментов. */
+.tc-legend {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  display: flex;
+  gap: 12px;
+  pointer-events: none;
+  font-size: 12px;
+  z-index: 5;
+}
+
+.tc-leg-item {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.tc-leg-label {
+  color: #787b86;
+}
+
+.tc-leg-val {
+  color: #d1d4dc;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Панель инструментов «Тест график»: разметка + индикаторы */
@@ -1260,13 +1434,6 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .test-chart-toolbar button.tc-danger:hover {
   background: #ef5350;
   border-color: #ef5350;
-}
-
-.test-chart-toolbar .tc-sep {
-  width: 1px;
-  height: 20px;
-  background: #363a45;
-  margin: 0 6px;
 }
 
 /* Сегмент таймфреймов 1ч/1д/1н/1М — как верхняя панель TradingView:

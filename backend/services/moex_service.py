@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -213,6 +214,54 @@ async def fetch_moex_price(ticker: str) -> dict:
         "changeDay": float(change_percent) if change_percent else None,
         "changeValue": float(change_value) if change_value else None
     }
+
+
+# Кэш названий бумаг (шапка «Тест график»): {TICKER: {"name": str|None, "ts": float}}.
+# Имя бумаги почти вечно — положительный результат живёт в процессе; неудача
+# (ISS недоступен) кэшируется на 10 минут, чтобы не тормозить каждый запрос.
+_moex_name_cache: dict[str, dict] = {}
+_NAME_NEG_TTL = 600.0
+
+
+async def fetch_moex_name(ticker: str) -> Optional[str]:
+    """Короткое название бумаги (SHORTNAME ISS, напр. «Сбербанк») для шапки графика.
+
+    Запрашивается securities.json той же доски TQBR, что и котировки
+    (см. fetch_moex_price), с тем же откатом apim → анонимный ISS.
+    """
+    ticker = ticker.upper().strip()
+    cached = _moex_name_cache.get(ticker)
+    now = time.monotonic()
+    if cached and (cached["name"] is not None or now - cached["ts"] < _NAME_NEG_TTL):
+        return cached["name"]
+
+    token = get_moex_token()
+    host = "apim.moex.com" if token else "iss.moex.com"
+    board = "tqbr" if token else "TQBR"
+    url = (f"https://{host}/iss/engines/stock/markets/shares/"
+           f"boards/{board}/securities/{ticker}.json")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    data = await _get_json(url, headers)
+    if "error" in data and token:
+        # apim не ответил или не принял токен — откат на анонимный ISS,
+        # чтобы имя не пропадало вместе с токеном (как в fetch_moex_price)
+        data = await _get_json(
+            f"https://iss.moex.com/iss/engines/stock/markets/shares/"
+            f"boards/TQBR/securities/{ticker}.json")
+
+    name = None
+    sec = data.get("securities") or {}
+    cols = sec.get("columns") or []
+    rows = sec.get("data") or []
+    if cols and rows:
+        try:
+            v = rows[0][cols.index("SHORTNAME")]
+            name = str(v).strip() if v else None
+        except ValueError:
+            pass
+    _moex_name_cache[ticker] = {"name": name, "ts": now}
+    return name
 
 
 def _parse_board_marketdata(data: dict, tickers: list[str]) -> dict[str, dict]:
