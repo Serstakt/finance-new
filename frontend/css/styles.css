@@ -1206,6 +1206,12 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   color: #ef5350;
 }
 
+/* Предупреждение о деградации данных (note бэкенда: источник недоступен,
+   отдаём накопленную историю) — не ошибка, но заметно глазу */
+.test-chart-status.warn {
+  color: #ff9800;
+}
+
 .test-chart-wrapper {
   flex: 1;
   min-height: 420px;
@@ -1261,4 +1267,85 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   height: 20px;
   background: #363a45;
   margin: 0 6px;
+}
+
+/* Сегмент таймфреймов 1ч/1д/1н/1М — как верхняя панель TradingView:
+   склеенные кнопки, активная — синяя */
+.tc-tf-group {
+  display: flex;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tc-tf-group button {
+  background: #2a2e39;
+  border: none;
+  border-right: 1px solid #363a45;
+  color: #d1d4dc;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tc-tf-group button:last-child {
+  border-right: none;
+}
+
+.tc-tf-group button:hover {
+  background: #363a45;
+}
+
+.tc-tf-group button.active {
+  background: #2962ff;
+  color: #fff;
+}
+
+/* Dropdown индикаторов — в стиле прежнего #test-chart-interval */
+#tc-indicator-select {
+  background: #2a2e39;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  color: #d1d4dc;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Чипы включённых индикаторов: имя открывает периоды, × убирает */
+.tc-ind-chips {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tc-ind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1e222d;
+  border: 1px solid #363a45;
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #d1d4dc;
+}
+
+.tc-ind-chip .tc-ind-name {
+  cursor: pointer;
+}
+
+.tc-ind-chip .tc-ind-name:hover {
+  color: #787b86;
+}
+
+.tc-ind-chip .tc-ind-close {
+  cursor: pointer;
+  color: #787b86;
+  padding: 0 2px;
+}
+
+.tc-ind-chip .tc-ind-close:hover {
+  color: #ef5350;
 }

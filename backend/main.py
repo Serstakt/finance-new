@@ -220,7 +220,8 @@ def _schedule_backfill(symbol_full: str, requested_interval: int) -> None:
 async def get_candles(symbol: str,
                       interval: int = Query(default=24, ge=1),
                       from_date: str | None = Query(default=None, alias="from"),
-                      till_date: str | None = Query(default=None, alias="till")):
+                      till_date: str | None = Query(default=None, alias="till"),
+                      slice_mode: bool = Query(default=False, alias="slice")):
     if interval not in CANDLE_INTERVALS:
         raise HTTPException(status_code=400,
                             detail="interval must be one of 60, 24, 7, 31")
@@ -229,6 +230,28 @@ async def get_candles(symbol: str,
     is_binance = upper.startswith("BINANCE:")
     ticker = upper.replace("BINANCE:", "").replace("MOEX:", "")
     symbol_full = f"BINANCE:{ticker}" if is_binance else f"MOEX:{ticker}"
+
+    # Оконный режим (?slice=1) для «Тест график»: вернуть ТОЛЬКО запрошенный
+    # срез источника, без выгрузки всего хранилища. В хранилище срез при этом
+    # пишется (историчность копится). Нужен, чтобы начальная загрузка графика
+    # отдавала последний экран истории быстро, а более старые экраны фронт
+    # дозагружал при скролле влево (loadMore KLineChart).
+    if slice_mode:
+        try:
+            result = await _fetch_candles_from_source(ticker, is_binance, interval,
+                                                      from_date, till_date)
+            if result.get("error"):
+                return result
+            fresh = result.get("candles") or []
+            if fresh:
+                candle_store_service.save_candles(symbol_full, interval, fresh)
+            return {
+                "symbol": symbol_full,
+                "interval": interval,
+                "candles": fresh,
+            }
+        except Exception as e:  # noqa: BLE001 — как и основной путь, не роняем сервер
+            raise HTTPException(status_code=500, detail=str(e))
 
     try:
         last = candle_store_service.get_last_begin(symbol_full, interval)
