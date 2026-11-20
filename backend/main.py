@@ -13,6 +13,7 @@ from .services import watchlist_service
 from .services import news_favorites_service
 from .services import alert_service
 from .services import notification_service
+from .services import candle_store_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -99,28 +100,126 @@ async def get_price(symbol: str):
 # /api/v3/klines, реальное время). Раздел «Тест график»: KLineChart на
 # фронте читает отсюда. Префикс биржи выбирает источник: MOEX: или BINANCE:
 # (без префикса считаем тикером Мосбиржи).
+#
+# Свечи накапливаются в БД (services/candle_store_service.py): каждый запрос
+# сохраняет полученное и далее докачивает только свежие свечи от последней
+# сохранённой, остальные ТФ тикера добираются фоновой задачей. При недоступности
+# источника отдаётся накопленная история.
 # =============================================================================
+
+# Разрешённые интервалы для раздела «Тест график»:
+# 60 (час), 24 (день), 7 (неделя), 31 (месяц). Минутные (1, 10) убраны.
+CANDLE_INTERVALS = (60, 24, 7, 31)
+
+# Незавершённые задачи фоновой докачки (symbol_full, interval): чтобы
+# параллельные запросы не запускали дубли докачки одного и того же ТФ.
+_backfill_inflight: set[tuple[str, int]] = set()
+# Ссылки на задачи держим, чтобы asyncio не собрал их GC-ом до завершения.
+_backfill_tasks: set[asyncio.Task] = set()
+
+
+async def _fetch_candles_from_source(ticker: str, is_binance: bool, interval: int,
+                                     from_date: str | None, till_date: str | None) -> dict:
+    """Запрос свечей у источника (MOEX ISS или Binance) без накопления в БД."""
+    if is_binance:
+        return await crypto_service.fetch_binance_candles(
+            ticker, interval=interval, from_date=from_date, till_date=till_date,
+        )
+    return await moex_service.fetch_moex_candles(
+        ticker, interval=interval, from_date=from_date, till_date=till_date
+    )
+
+
+async def _backfill_other_intervals(symbol_full: str, requested_interval: int) -> None:
+    """Фоновая докачка остальных ТФ тикера (историчность на каждом таймфрейме).
+
+    Для каждого из CANDLE_INTERVALS, кроме запрошенного: если ТФ уже копился —
+    в API уходит from = дата последней сохранённой свечи (инкремент), иначе —
+    полная история. Ошибка одного ТФ не мешает остальным.
+    """
+    is_binance = symbol_full.startswith("BINANCE:")
+    ticker = symbol_full.replace("BINANCE:", "").replace("MOEX:", "")
+    for tf in CANDLE_INTERVALS:
+        if tf == requested_interval:
+            continue
+        key = (symbol_full, tf)
+        if key in _backfill_inflight:
+            continue
+        _backfill_inflight.add(key)
+        try:
+            last = candle_store_service.get_last_begin(symbol_full, tf)
+            from_date = last[:10] if last else None
+            result = await _fetch_candles_from_source(ticker, is_binance, tf, from_date, None)
+            candles = result.get("candles") or []
+            if not result.get("error") and candles:
+                saved = candle_store_service.save_candles(symbol_full, tf, candles)
+                print(f"🕯 Фоновая докачка {symbol_full} ТФ {tf}: "
+                      f"+{saved['affected']} свечей (всего {saved['candle_count']})")
+        except Exception as e:  # noqa: BLE001 — докачка не должна ронять сервер
+            print(f"⚠ Фоновая докачка {symbol_full} ТФ {tf} не удалась: {e}")
+        finally:
+            _backfill_inflight.discard(key)
+
+
+def _schedule_backfill(symbol_full: str, requested_interval: int) -> None:
+    """Запускает докачку остальных ТФ в фоне, не блокируя ответ пользователю."""
+    task = asyncio.create_task(_backfill_other_intervals(symbol_full, requested_interval))
+    _backfill_tasks.add(task)
+    task.add_done_callback(_backfill_tasks.discard)
+
 
 @app.get("/api/candles/{symbol}")
 async def get_candles(symbol: str,
                       interval: int = Query(default=24, ge=1),
                       from_date: str | None = Query(default=None, alias="from"),
                       till_date: str | None = Query(default=None, alias="till")):
-    # Разрешённые интервалы для раздела «Тест график»:
-    # 60 (час), 24 (день), 7 (неделя), 31 (месяц). Минутные (1, 10) убраны.
-    if interval not in (60, 24, 7, 31):
-        raise HTTPException(status_code=400, detail="interval must be one of 60, 24, 7, 31")
+    if interval not in CANDLE_INTERVALS:
+        raise HTTPException(status_code=400,
+                            detail="interval must be one of 60, 24, 7, 31")
+
+    upper = symbol.upper()
+    is_binance = upper.startswith("BINANCE:")
+    ticker = upper.replace("BINANCE:", "").replace("MOEX:", "")
+    symbol_full = f"BINANCE:{ticker}" if is_binance else f"MOEX:{ticker}"
+
     try:
-        upper = symbol.upper()
-        if upper.startswith("BINANCE:"):
-            return await crypto_service.fetch_binance_candles(
-                upper.replace("BINANCE:", ""),
-                interval=interval, from_date=from_date, till_date=till_date,
-            )
-        ticker = upper.replace("MOEX:", "")
-        return await moex_service.fetch_moex_candles(
-            ticker, interval=interval, from_date=from_date, till_date=till_date
-        )
+        last = candle_store_service.get_last_begin(symbol_full, interval)
+        # Явный from пользователя приоритетнее; иначе инкремент от последней
+        # сохранённой свечи (inclusive — последняя перекачается и обновится,
+        # т.к. она ещё формируется). Нет истории — полная выгрузка, как раньше.
+        fetch_from = from_date or (last[:10] if last else None)
+
+        result = await _fetch_candles_from_source(ticker, is_binance, interval,
+                                                  fetch_from, till_date)
+        fresh = result.get("candles") or []
+
+        if not result.get("error") and fresh:
+            candle_store_service.save_candles(symbol_full, interval, fresh)
+            candles = candle_store_service.load_candles(symbol_full, interval)
+            _schedule_backfill(symbol_full, interval)
+            return {
+                "symbol": symbol_full,
+                "interval": interval,
+                "candles": candles,
+                "stored": candle_store_service.stored_candle_counts(symbol_full),
+                "incremental": bool(last),
+            }
+
+        # API недоступен (лимит/таймаут/ошибка сети), но история накоплена —
+        # отдаём её, чтобы график продолжал строиться.
+        stored_candles = candle_store_service.load_candles(symbol_full, interval)
+        if stored_candles:
+            return {
+                "symbol": symbol_full,
+                "interval": interval,
+                "candles": stored_candles,
+                "stored": candle_store_service.stored_candle_counts(symbol_full),
+                "note": f"Источник недоступен ({result.get('error')}); "
+                        f"отдаём накопленную историю",
+            }
+        return result  # ошибки нет, но свечей нет / ошибка и копить нечего
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
