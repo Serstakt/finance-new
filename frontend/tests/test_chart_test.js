@@ -46,6 +46,18 @@ const els = {
   'test-chart-kline': new El('div'),
   'tc-indicator-select': new El('select'),
   'tc-indicator-chips': new El('span'),
+  // шапка символа + легенда OHLCV (облик TradingView)
+  'tc-sym-code': new El('span'),
+  'tc-sym-name': new El('span'),
+  'tc-sym-tf': new El('span'),
+  'tc-sym-price': new El('span'),
+  'tc-sym-change': new El('span'),
+  'tc-legend': new El('div'),
+  'tc-leg-o': new El('span'),
+  'tc-leg-h': new El('span'),
+  'tc-leg-l': new El('span'),
+  'tc-leg-c': new El('span'),
+  'tc-leg-v': new El('span'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -109,7 +121,10 @@ const chart = {
     if (cb) cb();
   },
   createIndicatorPaneGuard: null,
+  // subscribeAction: легенда OHLCV подписывается на кроссхейр
+  subscribeAction: (type, cb) => { actions[type] = cb; },
 };
+const actions = {};
 const klinecharts = { init: () => chart, registerOverlay: () => {} };
 
 // ---------- Fake fetch, таймеры, prompt ----------
@@ -158,7 +173,7 @@ const candle = (day, close, month = 11) => ({
   //    (loadTestChartCandles срабатывает на DOMContentLoaded без ручного клика)
   store.set('test_chart_last', JSON.stringify({ ticker: 'SBER', interval: 24 }));
   fetchQueue = [{
-    symbol: 'MOEX:SBER', interval: 24,
+    symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк',
     candles: [candle(18, 305), candle(19, 308)],
   }];
   domReadyCb(); // DOMContentLoaded → autoLoadLastChart
@@ -170,14 +185,42 @@ const candle = (day, close, month = 11) => ({
   assert(loadMoreCb != null, 'loadMore: callback зарегистрирован');
   assert(JSON.parse(store.get('test_chart_last')).ticker === 'SBER', 'последний график сохранён в localStorage');
 
-  // 0b) Разметка на SBER: onDrawEnd сохраняет в localStorage
-  sandbox.window.tcDrawOverlay('segment');
+  // 0a) Шапка символа (облик TradingView): код · имя · ТФ + цена с дельтой
+  assert(els['tc-sym-code'].textContent === 'SBER', 'шапка: код SBER');
+  assert(els['tc-sym-name'].textContent === 'Сбербанк' && els['tc-sym-name'].style.display !== 'none',
+    'шапка: имя инструмента из candles-ответа показано');
+  assert(els['tc-sym-tf'].textContent === '1д', 'шапка: ТФ подписан как 1д');
+  assert(els['tc-sym-price'].textContent === '308.00', 'шапка: крупная последняя цена 308.00');
+  assert(els['tc-sym-change'].textContent === '+3.00 (+0.98%)' && els['tc-sym-change']._classes.has('up'),
+    'шапка: дельта +3.00 (+0.98%) зелёным');
+
+  // 0a2) Легенда OHLCV по последней свече, цвет по направлению
+  assert(els['tc-leg-o'].textContent === '303.00' && els['tc-leg-h'].textContent === '313.00' &&
+    els['tc-leg-l'].textContent === '301.00' && els['tc-leg-c'].textContent === '308.00' &&
+    els['tc-leg-v'].textContent === '10',
+    'легенда: O/H/L/C/Vol последней свечи');
+  assert(els['tc-legend']._classes.has('up') && !els['tc-legend']._classes.has('down'),
+    'легенда: класс направления up (close >= open)');
+
+  // 0a3) Кроссхейр: легенда следует за курсором, с курсора — на последнюю
+  actions['onCrosshairChange']({ kLineData: applied[0] }); // курсор на свечу 18-го
+  assert(els['tc-leg-c'].textContent === '305.00' && els['tc-leg-o'].textContent === '300.00',
+    'легенда: под курсором — значения свечи 18-го');
+  actions['onCrosshairChange']({ kLineData: applied[applied.length - 1] }); // ушли с графика
+  assert(els['tc-leg-c'].textContent === '308.00', 'легенда: уход курсора вернул последнюю свечу');
+
+  // 0b) Разметка на SBER: onDrawEnd сохраняет в localStorage; иконка
+  //     инструмента на вертикальной панели активна до конца рисования
+  const toolBtn = new El('button');
+  sandbox.window.tcDrawOverlay('segment', toolBtn);
+  assert(toolBtn._classes.has('active'), 'панель разметки: иконка инструмента подсвечена');
   const ovS = [...overlayStore.values()].reverse().find(o => o.name === 'segment');
   ovS.points = [
     { timestamp: Date.UTC(2026, 10, 18), value: 300, dataIndex: 0 },
     { timestamp: Date.UTC(2026, 10, 19), value: 310, dataIndex: 1 },
   ];
   ovS.opts.onDrawEnd();
+  assert(!toolBtn._classes.has('active'), 'панель разметки: подсветка снята после построения фигуры');
   const saved0 = JSON.parse(store.get('test_chart_markup'));
   assert(saved0['SBER'] && saved0['SBER'].length === 1 && saved0['SBER'][0].name === 'segment',
     'onDrawEnd сохранил разметку SBER в localStorage');
@@ -197,6 +240,8 @@ const candle = (day, close, month = 11) => ({
     'фолбэк: второй запрос без slice (полный, через хранилище)');
   assert(st1.warn && !st1.err, 'note бэкенда — warn, не error');
   assert(st1.text.includes('накопленную историю'), 'текст note попал в статус');
+  assert(els['tc-sym-code'].textContent === 'GAZP' && els['tc-sym-name'].style.display === 'none',
+    'шапка: без имени в ответе имя скрыто, код сменился на GAZP');
 
   // 2) Поллинг: обновление последней свечи + дописывание новой
   fetchQueue = [{
@@ -209,6 +254,8 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 3 && applied[2].close === 150, 'поллинг: новая свеча дописана');
   assert(/from=\d{4}-\d{2}-\d{2}/.test(fetchUrls[fetchUrls.length - 1]), 'поллинг: from= дата последней свечи');
   assert(statusOf().text.includes('обновлено'), 'поллинг: статус обновлён');
+  assert(els['tc-sym-price'].textContent === '150.00' && els['tc-sym-change'].textContent === '+2.00 (+1.35%)',
+    'шапка: цена и дельта обновились на тике поллинга');
 
   // 3) Разметка: у SBER уже сохранена (шаг 0b), у GAZP пока пусто
   const saved = JSON.parse(store.get('test_chart_markup'));
@@ -233,6 +280,8 @@ const candle = (day, close, month = 11) => ({
     'viewport: setBarSpace и setOffsetRightDistance после applyNewData, в нужном порядке');
   assert(barSpace === 15 && offsetRight === 120, 'viewport: зум и сдвиг восстановлены');
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
+  assert(els['tc-sym-price'].textContent === '318.00' && els['tc-sym-change'].textContent === '+3.00 (+0.95%)',
+    'шапка: цена и дельта пересчитаны для новых данных');
 
   // 6) Догрузка истории при скролле влево (loadMore)
   const oldestTs = applied[0].timestamp; // свеча за 19-е
@@ -299,13 +348,19 @@ const candle = (day, close, month = 11) => ({
   // 11) Binance: период поллинга 8 с, UTC-метки парсятся
   els['test-chart-ticker-input'].value = 'BINANCE:BTCUSDT';
   fetchQueue = [{
-    symbol: 'BINANCE:BTCUSDT', interval: 7,
+    symbol: 'BINANCE:BTCUSDT', interval: 7, name: 'Bitcoin',
     candles: [{ begin: '2026-11-19T00:00:00Z', open: 95000, high: 96000, low: 94000, close: 95500, volume: 1 }],
   }];
   await sandbox.window.loadTestChartCandles();
   await flush();
   assert(Number.isFinite(applied[applied.length - 1].timestamp), 'Binance: UTC begin парсится в timestamp');
   assert(statusOf().text.includes('8 с'), 'Binance: статус обещает автообновление 8 с');
+  assert(els['tc-sym-code'].textContent === 'BTCUSDT' && els['tc-sym-name'].textContent === 'Bitcoin',
+    'шапка: префикс BINANCE: скрыт, имя монеты показано');
+  assert(els['tc-sym-tf'].textContent === '1н', 'шапка: ТФ 1н для interval=7');
+  assert(els['tc-sym-price'].textContent === '95,500.00', 'шапка: цена с разделением разрядов');
+  assert(els['tc-sym-change'].textContent === '' && !els['tc-sym-change']._classes.has('up'),
+    'шапка: дельты нет, когда предыдущей свечи нет');
 
   // 12) Ошибка загрузки неизвестного тикера — статус ошибки
   els['test-chart-ticker-input'].value = 'ZZZZ';
@@ -315,6 +370,35 @@ const candle = (day, close, month = 11) => ({
   ];
   await sandbox.window.loadTestChartCandles();
   assert(statusOf().err && statusOf().text.includes('не найден'), 'неизвестный тикер: ошибка в статусе');
+
+  // 13) Скрытый раздел: автозагрузка откладывается до показа (navigateTo).
+  //     klinecharts.init при 0×0 ломает раскладку панелей — свечи сжимаются
+  //     в полосу у верхнего края и не раскладываются обратно.
+  els['test-chart-kline'].offsetParent = null; // раздел «Тест график» скрыт
+  store.set('test_chart_last', JSON.stringify({ ticker: 'GAZP', interval: 24 }));
+  fetchQueue = [];
+  const urlsBeforePending = fetchUrls.length;
+  domReadyCb(); // повторный DOMContentLoaded → autoLoadLastChart при скрытом разделе
+  await flush();
+  assert(els['test-chart-ticker-input'].value === 'GAZP', 'отложка: тикер подставлен в поле');
+  assert(applied.length === 1 && applied[applied.length - 1].close === 95500,
+    'отложка: старый график ещё на месте, свечи не перезагружены');
+  assert(fetchUrls.length === urlsBeforePending,
+    'отложка: запрос свечей не ушёл, пока раздел скрыт');
+  assert(!statusOf().text.includes('GAZP'),
+    'отложка: загрузка GAZP не стартовала (статус не тронут)');
+
+  // Показ раздела → navigateTo → tcSectionShown → отложенная загрузка
+  els['test-chart-kline'].offsetParent = {};
+  fetchQueue = [{
+    symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
+    candles: [candle(19, 141), candle(20, 143)],
+  }];
+  sandbox.window.navigateTo('test-chart');
+  await flush();
+  assert(applied.length === 2 && applied[applied.length - 1].close === 143,
+    'отложка: после показа раздела график GAZP загружен');
+  assert(els['tc-sym-name'].textContent === 'Газпром', 'отложка: имя инструмента показано в шапке');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

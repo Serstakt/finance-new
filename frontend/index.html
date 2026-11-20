@@ -422,20 +422,11 @@
                     <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
                 </div>
             </div>
-            <!-- Панель инструментов: разметка поверх графика (нативные
-                 overlay-объекты KLineChart: клик по кнопке → следующий клик
-                 по графику ставит точки фигуры; правый клик по фигуре
-                 удаляет её) и индикаторы (dropdown всех встроенных; клик по
-                 названию включённого — настройка периодов, как в TradingView). -->
+            <!-- Панель индикаторов: dropdown всех встроенных; клик по
+                 названию включённого — настройка периодов (как в TradingView).
+                 Инструменты разметки переехали в вертикальную колонку слева
+                 от графика (см. блок tc-chart-area ниже). -->
             <div class="test-chart-toolbar">
-                <span class="tc-group-label">Разметка:</span>
-                <button type="button" onclick="tcDrawOverlay('segment')" title="Отрезок — 2 точки">Линия</button>
-                <button type="button" onclick="tcDrawOverlay('horizontalRayLine')" title="Горизонтальный луч-уровень — 1 точка">Уровень</button>
-                <button type="button" onclick="tcDrawOverlay('tc-rect')" title="Прямоугольник — 2 точки">Прямоугольник</button>
-                <button type="button" onclick="tcDrawOverlay('fibonacciLine')" title="Уровни Фибоначчи — 2 точки">Фибоначчи</button>
-                <button type="button" onclick="tcDrawOverlay('text')" title="Текстовая заметка — 1 точка">Текст</button>
-                <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">Очистить</button>
-                <span class="tc-sep"></span>
                 <span class="tc-group-label">Индикаторы:</span>
                 <select id="tc-indicator-select" title="Добавить индикатор">
                     <option value="">+ индикатор…</option>
@@ -464,11 +455,90 @@
                 <span id="tc-indicator-chips" class="tc-ind-chips"></span>
             </div>
             <div class="test-chart-status" id="test-chart-status"></div>
-            <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
-                 (см. defer-скрипт внизу страницы): если CDN недоступен,
-                 показываем предупреждение вместо «вечной загрузки». -->
-            <div id="test-chart-kline" class="test-chart-wrapper">
-                <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
+            <!-- Облик TradingView: узкая вертикальная колонка инструментов
+                 слева (инлайн-SVG без CDN: клик включает режим рисования —
+                 следующий клик(и) по графику ставят точки фигуры; правый
+                 клик по готовой фигуре удаляет её), над графиком — шапка
+                 символа (код · имя · ТФ + последняя цена с дельтой), поверх
+                 графика — легенда OHLCV под курсором. Логика в js/test_chart.js. -->
+            <div class="tc-chart-area">
+                <div class="tc-draw-toolbar" title="Инструменты разметки">
+                    <button type="button" onclick="tcDrawOverlay('segment', this)" title="Линия — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="6" y1="18" x2="18" y2="6"/>
+                            <circle cx="6" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="18" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('horizontalRayLine', this)" title="Горизонтальный луч-уровень — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="6" y1="12" x2="20" y2="12"/>
+                            <circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            <path d="M16.5 8.5 20 12l-3.5 3.5"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('tc-rect', this)" title="Прямоугольник — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="4.5" y="6.5" width="15" height="11" rx="1"/>
+                            <circle cx="4.5" cy="6.5" r="1.3" fill="currentColor" stroke="none"/>
+                            <circle cx="19.5" cy="17.5" r="1.3" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('fibonacciLine', this)" title="Уровни Фибоначчи — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="4" y1="5" x2="20" y2="5"/>
+                            <line x1="4" y1="12" x2="20" y2="12"/>
+                            <line x1="4" y1="19" x2="20" y2="19"/>
+                            <line x1="4" y1="19" x2="20" y2="5"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('text', this)" title="Текстовая заметка — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M5 6.5h14"/>
+                            <path d="M12 6.5v12"/>
+                        </svg>
+                    </button>
+                    <span class="tc-draw-sep"></span>
+                    <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 7h16"/>
+                            <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            <path d="M6 7l1 13a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 20l1-13"/>
+                            <path d="M10 11v6M14 11v6"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="tc-chart-main">
+                    <!-- Шапка символа как в TradingView: SBER · Сбербанк · 1д
+                         + последняя цена с цветной дельтой (js/test_chart.js) -->
+                    <div class="tc-symbol-header" id="tc-symbol-header">
+                        <span class="tc-sym-code" id="tc-sym-code">—</span>
+                        <span class="tc-sym-name" id="tc-sym-name" style="display:none"></span>
+                        <span class="tc-sym-tf" id="tc-sym-tf"></span>
+                        <span class="tc-sym-quote">
+                            <span class="tc-sym-price" id="tc-sym-price">—</span>
+                            <span class="tc-sym-change" id="tc-sym-change"></span>
+                        </span>
+                    </div>
+                    <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
+                         (см. defer-скрипт внизу страницы): если CDN недоступен,
+                         показываем предупреждение вместо «вечной загрузки». -->
+                    <div class="tc-chart-stage">
+                        <div id="test-chart-kline" class="test-chart-wrapper">
+                            <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
+                        </div>
+                        <!-- Легенда OHLCV как в TradingView: значения окрашены
+                             по направлению свечи и обновляются под курсором
+                             (subscribeAction onCrosshairChange) -->
+                        <div class="tc-legend" id="tc-legend">
+                            <span class="tc-leg-item"><span class="tc-leg-label">O</span><span class="tc-leg-val" id="tc-leg-o"></span></span>
+                            <span class="tc-leg-item"><span class="tc-leg-label">H</span><span class="tc-leg-val" id="tc-leg-h"></span></span>
+                            <span class="tc-leg-item"><span class="tc-leg-label">L</span><span class="tc-leg-val" id="tc-leg-l"></span></span>
+                            <span class="tc-leg-item"><span class="tc-leg-label">C</span><span class="tc-leg-val" id="tc-leg-c"></span></span>
+                            <span class="tc-leg-item"><span class="tc-leg-label">Vol</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
