@@ -555,13 +555,20 @@ window.updateRow = function(div, sym, data, list, prev) {
 
   if (changed) {
     if (data && data.price) {
+      const newPrice = Number(data.price);
       priceEl.textContent = formatNumber(data.price);
-      // flash-подсветка только при переходе цена->цена (не при первом появлении)
-      if (prev.sig !== 'INIT' && !wasError) {
-        priceEl.classList.remove('price-flash');
+      // Направленная flash-подсветка цены: рост — зелёная, падение — красная.
+      // Только при переходе цена->цена с реальным изменением: при real-time
+      // тиках подпись (sig) меняется и от объёмов/процентов, где направления
+      // нет. prev.price хранится в state строки (см. __rowsCache.map).
+      // Прошлый класс снимаем всегда — иначе подсветка прежнего направления
+      // остаётся на узле, пока не придёт изменение в другую сторону.
+      priceEl.classList.remove('price-flash-up', 'price-flash-down');
+      if (typeof prev.price === 'number' && newPrice !== prev.price) {
         void priceEl.offsetWidth; // рестарт CSS-анимации
-        priceEl.classList.add('price-flash');
+        priceEl.classList.add(newPrice > prev.price ? 'price-flash-up' : 'price-flash-down');
       }
+      prev.price = newPrice;
       if (data.changeValue !== undefined && data.changeValue !== null) {
         changeValEl.innerHTML = formatChange(data.changeValue, false);
         changeValEl.className = `ticker-change ${data.changeValue >= 0 ? 'positive-bg' : 'negative-bg'}`;

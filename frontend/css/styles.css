@@ -381,11 +381,20 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .positive-bg-strong { background-color: rgba(38, 166, 154, 0.32); color: #26a69a; }
 .negative-bg-strong { background-color: rgba(239, 83, 80, 0.28); color: #ef5350; }
 .ticker-change:not(.positive-bg):not(.negative-bg) { color: #787b86; }
-/* Подсветка строки цены при инкрементальном обновлении (значение изменилось) */
-.price-flash { animation: price-flash 0.9s ease-out; border-radius: 3px; }
-@keyframes price-flash {
-  0%   { background-color: rgba(41, 98, 255, 0.35); }
-  100% { background-color: transparent; }
+/* Направленная подсветка ЦЕНЫ (самого текста, не фона) при real-time
+   обновлении: цифры вспыхивают зелёным при росте и красным при падении,
+   затем плавно возвращаются к базовому цвету темы (#d1d4dc — цвет body,
+   .ticker-price наследует его). Класс вешается только при реальном
+   изменении цены (см. updateRow в ui.js). */
+.price-flash-up { animation: price-flash-up 0.9s ease-out; }
+.price-flash-down { animation: price-flash-down 0.9s ease-out; }
+@keyframes price-flash-up {
+  0%   { color: #26a69a; }
+  100% { color: #d1d4dc; }
+}
+@keyframes price-flash-down {
+  0%   { color: #ef5350; }
+  100% { color: #d1d4dc; }
 }
 /* Кнопка удаления строки → контекстное меню «⋯»: деструктивные действия
    (удалить/переименовать заметку) больше не выполняются одним кликом по «×» */

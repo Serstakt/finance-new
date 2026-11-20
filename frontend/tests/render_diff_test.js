@@ -62,10 +62,24 @@ class Node {
       if (child) { child.parentNode = this; this.children.push(child); }
     }
   }
-  appendChild(n) { if (n.parentNode && n.parentNode !== this) n.remove(); n.parentNode = this; this._kids.push(n); this._liveKids.add(n); this._invalidate(); if (n._classes && n._classes.has('wl-context-menu')) globalThis.__lastMenuNode = n; return n; }
+  appendChild(n) {
+    // как в реальном DOM: перенос узла, уже являющегося ребёнком ЭТОГО родителя,
+    // сначала извлекает его со старой позиции — дубликатов в _kids быть не может
+    if (n.parentNode === this) {
+      const cur = this._kids.indexOf(n);
+      if (cur >= 0) this._kids.splice(cur, 1);
+    } else if (n.parentNode) n.remove();
+    n.parentNode = this; this._kids.push(n); this._liveKids.add(n); this._invalidate(); if (n._classes && n._classes.has('wl-context-menu')) globalThis.__lastMenuNode = n; return n;
+  }
   insertBefore(n, ref) {
     if (!ref) return this.appendChild(n);
-    if (n.parentNode && n.parentNode !== this) n.remove();
+    // как в реальном DOM: перемещение внутри того же родителя — сначала
+    // извлекаем узел со старой позиции (иначе keyed-diff даёт дубликаты в
+    // _kids, а обход по indexOf начинает пропускать узлы)
+    if (n.parentNode === this) {
+      const cur = this._kids.indexOf(n);
+      if (cur >= 0) this._kids.splice(cur, 1);
+    } else if (n.parentNode) n.remove();
     let idx = this._kids.indexOf(ref);
     if (idx < 0) idx = this._kids.length;
     n.parentNode = this; this._kids.splice(idx, 0, n);
@@ -365,20 +379,44 @@ function findNode(root, cls) {
   // --- Цена изменилась: обновился только текст, узел прежний ---
   priceStore['SBER'] = { price: 301, changeValue: 1.5, changeDay: 0.5 };
   await warmCache(priceStore);
+  // Сброс in-memory кэша последнего рендера: иначе render() уйдёт по
+  // лёгкому пути (canRenderWithoutPrices) со старыми ценами из __lastRenderData
+  sandbox.__lastRenderData = null; sandbox.__lastRenderAt = 0;
   await sandbox.render();
   assert(sandbox.__rowsCache.map.get('SBER').el === sberEntry.el, 'Узел сохранён после изменения цены');
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'Новая цена записана инкрементально');
-  assert(sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash'), 'Включена flash-подсветка изменившейся цены');
+  assert(sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-up'), 'Рост цены — зелёная flash-подсветка');
+  assert(!sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-down'), 'Красная подсветка при росте не ставится');
+
+  // --- Цена снизилась: красная подсветка, зелёная снята ---
+  priceStore['SBER'] = { price: 300.5, changeValue: 1.0, changeDay: 0.3 };
+  await warmCache(priceStore);
+  sandbox.__lastRenderData = null; sandbox.__lastRenderAt = 0;
+  await sandbox.render();
+  assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('300,5'), 'Падение цены записано инкрементально');
+  assert(sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-down'), 'Падение цены — красная flash-подсветка');
+  assert(!sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-up'), 'Зелёная подсветка снята при падении');
+
+  // --- Цена не изменилась (sig сменился от объёмов): подсветки нет ---
+  priceStore['SBER'] = { price: 300.5, changeValue: 2.0, changeDay: 0.9 };
+  await warmCache(priceStore);
+  sandbox.__lastRenderData = null; sandbox.__lastRenderAt = 0;
+  await sandbox.render();
+  assert(!sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-up') &&
+         !sberEntry.el.querySelector('#price-SBER')._classes.has('price-flash-down'),
+         'Без изменения цены подсветка не включается');
 
   // --- Сбой сети: предыдущая цена остаётся на месте (без мигания ошибкой) ---
   delete priceStore['SBER'];
   const _wsb = { ...priceStore }; delete _wsb['SBER'];
   await warmCache(_wsb); // SBER «исчез из кэша» -> fetch вернёт null (сбой MOEX)
+  sandbox.__lastRenderData = null; sandbox.__lastRenderAt = 0;
   await sandbox.render();
-  assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('301'), 'При временном сбое MOEX старая цена сохранена');
+  assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('300,5'), 'При временном сбое MOEX старая цена сохранена');
 
   // --- Удаление тикера одной корзиной: клик по .ticker-remove -> удаление сразу ---
   const removeBtn = gazpEntry.el.querySelector('.ticker-remove');
+  sandbox.__lastRenderData = null; sandbox.__lastRenderAt = 0;
   removeBtn.fire('click', { clientX: 10, clientY: 10 });
   await new Promise(r => setTimeout(r, 0)); // дождаться async removeTickerFromList
   await sandbox.render();
@@ -392,7 +430,7 @@ function findNode(root, cls) {
   const menuNode = findNode(sandbox.document.body, 'wl-context-menu');
   const delMenuItem = menuNode ? menuNode.querySelectorAll('button').find(b => b.textContent === 'Удалить из списка') : null;
   assert(!!menuNode && !!delMenuItem, 'Правый клик открывает меню с пунктом «Удалить из списка»');
-  closeWlContextMenu();
+  sandbox.closeWlContextMenu();
 
   // --- Смена списка: полный сброс кэша и контейнера ---
   sandbox.appState.lists.other = { name: 'Другой', tickers: ['LKOH'], activeSymbol: '', collapsedSections: [] };
@@ -408,8 +446,11 @@ function findNode(root, cls) {
   await sandbox.render();
   const sberEl = sandbox.__rowsCache.map.get('SBER').el;
   assert(sberEl.style.display === 'none', 'Строки свёрнутого раздела скрыты');
-  assert(secNode._classes.has('collapsed'), 'Раздел помечен классом .collapsed (SVG-шеврон поворачивает CSS)');
-  assert(secNode.querySelector('.section-count').textContent.trim() === '2', 'Счётчик инструментов раздела показывает 2');
+  // Секция пересобрана при возврате на список — берём СВЕЖИЙ узел из кэша,
+  // а не ссылку, захваченную до переключений (старый узел отсоединён от DOM).
+  const secNodeNow = sandbox.__rowsCache.map.get('SECTION:Росия');
+  assert(secNodeNow._classes.has('collapsed'), 'Раздел помечен классом .collapsed (SVG-шеврон поворачивает CSS)');
+  assert(secNodeNow.querySelector('.section-count').textContent.trim() === '2', 'Счётчик инструментов раздела показывает 2');
 
   // --- График: createChart вызывается только при СМЕНЕ активного тикера ---
   const chartCallsBefore = sandbox.createChartCalls.length;
