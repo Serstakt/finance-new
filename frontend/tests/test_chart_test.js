@@ -1,12 +1,13 @@
 // Тест раздела «Тест график» (js/test_chart.js): оконная загрузка (?slice=1)
 // с фолбэком на хранилище, автозагрузка последнего графика, сегмент ТФ,
 // догрузка истории при скролле влево (loadMore/applyMoreData), сохранение
-// viewport при смене данных, индикаторы (dropdown + чипы: добавить, настроить
-// периоды, убрать), volume-гистограмма в главном окне (вкл. по умолчанию,
-// draw с нормировкой по видимой области, метка на оси под курсором),
-// поллинг, сохранение разметки по тикеру в localStorage,
-// note бэкенда о деградации источника. Мини-DOM + fake klinecharts —
-// в стиле остальных тестов проекта (node:vm без браузера).
+// viewport при смене данных, сброс вида (двойной клик / правый клик →
+// «Reset chart»: дефолтные масштаб/сдвиг + scrollToRealTime), индикаторы
+// (dropdown + чипы: добавить, настроить периоды, убрать), volume-гистограмма
+// в главном окне (вкл. по умолчанию, draw с нормировкой по видимой области,
+// метка на оси под курсором), поллинг, сохранение разметки по тикеру
+// в localStorage, note бэкенда о деградации источника. Мини-DOM + fake
+// klinecharts — в стиле остальных тестов проекта (node:vm без браузера).
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -61,6 +62,10 @@ const els = {
   'tc-leg-c': new El('span'),
   'tc-leg-v': new El('span'),
   'tc-vol-axis': new El('div'),
+  // сброс вида: холст + контекстное меню «Reset chart»
+  'tc-chart-stage': new El('div'),
+  'tc-ctx-menu': new El('div'),
+  'tc-ctx-reset': new El('button'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -126,6 +131,8 @@ const chart = {
   createIndicatorPaneGuard: null,
   // subscribeAction: легенда OHLCV подписывается на кроссхейр
   subscribeAction: (type, cb) => { actions[type] = cb; },
+  // сброс вида: возврат к последней свече после дефолтных масштаба/сдвига
+  scrollToRealTime: () => { callOrder.push(['scrollToRealTime']); },
 };
 const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
@@ -149,12 +156,13 @@ const clearInterval = () => {};
 const setTimeoutCapturing = (cb, ms) => { timeouts.push({ cb, ms }); return timeouts.length; };
 
 let domReadyCb = null;
+const docListeners = {}; // click/keydown и др. — закрытие контекстного меню
 const sandbox = {
   document: {
     readyState: 'loading', hidden: false,
     getElementById: id => els[id] || null,
     createElement: tag => new El(tag),
-    addEventListener: (t, cb) => { if (t === 'DOMContentLoaded') domReadyCb = cb; },
+    addEventListener: (t, cb) => { if (t === 'DOMContentLoaded') domReadyCb = cb; docListeners[t] = cb; },
   },
   window: { fetchWithTimeout, addEventListener: () => {}, prompt: () => null },
   localStorage, klinecharts,
@@ -471,6 +479,61 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 2 && applied[applied.length - 1].close === 143,
     'отложка: после показа раздела график GAZP загружен');
   assert(els['tc-sym-name'].textContent === 'Газпром', 'отложка: имя инструмента показано в шапке');
+
+  // 14) Сброс вида (как в TradingView): «улетевшие» зум/сдвиг возвращаются
+  //     к дефолтам, снятым с инстанса при init, + scrollToRealTime.
+  //     Дефолты в fake-инстансе: barSpace 8, offsetRight 50 (на момент init).
+  barSpace = 25; offsetRight = 180; // масштаб/сдвиг «улетели»
+  sandbox.window.tcResetChartView();
+  assert(barSpace === 8 && offsetRight === 50, 'сброс: дефолтные масштаб (8) и сдвиг (50) возвращены');
+  const names = callOrder.map(c => c[0]);
+  const bsI = names.lastIndexOf('setBarSpace');
+  const orI = names.lastIndexOf('setOffsetRightDistance');
+  const srtI = names.lastIndexOf('scrollToRealTime');
+  assert(bsI !== -1 && orI === bsI + 1 && srtI === orI + 1,
+    'сброс: порядок setBarSpace → setOffsetRightDistance → scrollToRealTime');
+  assert(statusOf().text.includes('сброшен') && !statusOf().err,
+    'сброс: статус сообщает об успешном сбросе вида');
+
+  // 14a) Двойной клик по холсту — тот же сброс
+  barSpace = 25; offsetRight = 180;
+  els['tc-chart-stage']._listeners.dblclick({ preventDefault: () => {} });
+  assert(barSpace === 8 && offsetRight === 50, 'сброс: двойной клик возвращает дефолтный вид');
+
+  // 14b) Правый клик — своё меню «Reset chart» вместо браузерного
+  const stageEl = els['tc-chart-stage'];
+  const menuEl = els['tc-ctx-menu'];
+  stageEl._listeners.contextmenu({ clientX: 500, clientY: 300, preventDefault: () => {} });
+  assert(menuEl._classes.has('show'), 'меню: правый клик открыл контекстное меню');
+  assert(menuEl.style.left === '500px' && menuEl.style.top === '300px',
+    'меню: без геометрии холста позиция ставится у курсора как есть');
+  assert(docListeners.click && docListeners.keydown, 'меню: обработчики закрытия навешены на document');
+
+  // Прижим внутрь холста: курсор у правого/нижнего края — меню не обрезается
+  stageEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 400 });
+  menuEl.offsetWidth = 150; menuEl.offsetHeight = 36;
+  stageEl._listeners.contextmenu({ clientX: 900, clientY: 500, preventDefault: () => {} });
+  assert(menuEl.style.left === '442px' && menuEl.style.top === '356px',
+    'меню: позиция прижата внутрь границ холста (600×400, меню 150×36)');
+  assert(menuEl._classes.has('show'), 'меню: повторный правый клик переоткрывает меню');
+
+  // Клик по пункту — сброс вида
+  els['tc-ctx-reset']._listeners.click();
+  assert(barSpace === 8 && offsetRight === 50 && statusOf().text.includes('сброшен'),
+    'меню: клик по «Reset chart» сбросил вид');
+  docListeners.click(); // клик всплывает в document — меню закрывается
+  assert(!menuEl._classes.has('show'), 'меню: клик по пункту закрыл меню');
+
+  // Escape закрывает, чужая клавиша — нет; клик мимо (document click) тоже
+  stageEl._listeners.contextmenu({ clientX: 100, clientY: 100, preventDefault: () => {} });
+  assert(menuEl._classes.has('show'), 'меню: переоткрыто для проверки клавиатуры');
+  docListeners.keydown({ key: 'a' });
+  assert(menuEl._classes.has('show'), 'меню: чужая клавиша меню не закрывает');
+  docListeners.keydown({ key: 'Escape' });
+  assert(!menuEl._classes.has('show'), 'меню: Escape закрыл меню');
+  stageEl._listeners.contextmenu({ clientX: 100, clientY: 100, preventDefault: () => {} });
+  docListeners.click();
+  assert(!menuEl._classes.has('show'), 'меню: клик вне меню закрыл его');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

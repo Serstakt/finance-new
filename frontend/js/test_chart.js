@@ -25,7 +25,12 @@
 //   - volume-гистограмма включена по умолчанию: полупрозрачные столбики
 //     в главном окне (кастомный индикатор VOL_MAIN, нормировка по максимуму
 //     видимой области), своя метка на оси цены под курсором и легенда
-//     «Объем» (значение обновляется вместе с OHLC).
+//     «Объем» (значение обновляется вместе с OHLC);
+//   - сброс вида как в TradingView: двойной клик по графику или правый
+//     клик → контекстное меню «Reset chart» возвращает дефолтные масштаб
+//     и сдвиг от правого края (снимаются с инстанса сразу после init)
+//     и прокручивает график к последней свече (scrollToRealTime) —
+//     «улетевший» зум/сдвиг всегда можно вернуть.
 
 (() => {
   let chartInstance = null;
@@ -212,6 +217,12 @@
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
       window.testChartInstance = chartInstance;
+      // Дефолтный вид для сброса: снимаем до первого applyNewData и до
+      // restoreViewport пользовательских зума/сдвига — это чистые дефолты
+      defaultViewport = {
+        barSpace: chartInstance.getBarSpace(),
+        offsetRight: chartInstance.getOffsetRightDistance(),
+      };
       // Volume-гистограмма включена по умолчанию (как в TradingView);
       // выключается чипом, включается обратно через dropdown индикаторов
       if (!indicators.has(VOL_MAIN)) {
@@ -260,6 +271,102 @@
       chartInstance.setBarSpace(vp.barSpace);
       chartInstance.setOffsetRightDistance(vp.offsetRight);
     } catch (e) { /* стейт ещё не готов — останется дефолтный вид */ }
+  };
+
+  // ---- Сброс вида (как в TradingView): двойной клик / правый клик →
+  // «Reset chart» ---- Дефолтные масштаб и сдвиг снимаются с инстанса
+  // сразу после init (6 и 50 в 9.6.0, но снимаем свои — устойчиво к
+  // смене дефолтов библиотеки), сброс возвращает их и прокручивает
+  // график к последней свече. Иначе «улетевший» зум/сдвиг не вернуть.
+
+  let defaultViewport = null; // { barSpace, offsetRight } — библиотечные дефолты
+
+  const resetChartView = () => {
+    const instance = getChartInstance();
+    if (!instance || !defaultViewport) return;
+    if (!lastTicker || !instance.getDataList().length) {
+      setStatus('Сброс вида: сначала загрузите график');
+      return;
+    }
+    try {
+      instance.setBarSpace(defaultViewport.barSpace);
+      instance.setOffsetRightDistance(defaultViewport.offsetRight);
+      // К последней свече (правый край), как «Reset chart» в TradingView
+      if (typeof instance.scrollToRealTime === 'function') instance.scrollToRealTime();
+      setStatus(`Вид графика сброшен · ${sourceNote(lastTicker)}`);
+    } catch (e) {
+      setStatus(`Сброс вида не удался: ${e.message || e}`, true);
+    }
+  };
+  window.tcResetChartView = resetChartView;
+
+  // ---- Контекстное меню «Reset chart» (облик TradingView) ----
+  // Открывается правым кликом по холсту, позиционируется у курсора с
+  // прижимом внутрь границ холста. Закрытие: клик где угодно, Escape,
+  // resize окна. KLineChart сам подавляет браузерное меню (preventDefault
+  // на своём контейнере) — своё мы вешаем выше, на .tc-chart-stage.
+
+  let ctxMenuOpen = false;
+
+  const hideCtxMenu = () => {
+    const menu = document.getElementById('tc-ctx-menu');
+    if (menu) menu.classList.remove('show');
+    ctxMenuOpen = false;
+  };
+
+  const showCtxMenu = (x, y) => {
+    const menu = document.getElementById('tc-ctx-menu');
+    const stage = document.getElementById('tc-chart-stage');
+    if (!menu) return;
+    // Прижим внутрь холста, чтобы меню не обрезалось краем контейнера;
+    // без геометрии (мини-DOM тестов) ставим как есть
+    const rect = typeof (stage && stage.getBoundingClientRect) === 'function'
+      ? stage.getBoundingClientRect() : null;
+    if (rect) {
+      const menuW = menu.offsetWidth || 150;
+      const menuH = menu.offsetHeight || 36;
+      const margin = 8;
+      let px = x - rect.left;
+      let py = y - rect.top;
+      px = Math.min(Math.max(px, margin), rect.width - menuW - margin);
+      py = Math.min(Math.max(py, margin), rect.height - menuH - margin);
+      menu.style.left = `${Math.round(px)}px`;
+      menu.style.top = `${Math.round(py)}px`;
+    } else {
+      menu.style.left = `${Math.round(x)}px`;
+      menu.style.top = `${Math.round(y)}px`;
+    }
+    menu.classList.add('show');
+    ctxMenuOpen = true;
+  };
+
+  const bindResetViewUi = () => {
+    const stage = document.getElementById('tc-chart-stage');
+    const menu = document.getElementById('tc-ctx-menu');
+    if (!stage || stage.dataset.resetViewBound) return;
+    stage.dataset.resetViewBound = '1';
+    // Двойной клик — сброс вида (как в TradingView)
+    stage.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      resetChartView();
+    });
+    // Правый клик — своё меню вместо браузерного
+    stage.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showCtxMenu(e.clientX, e.clientY);
+    });
+    const item = menu && document.getElementById('tc-ctx-reset');
+    if (item) {
+      // Клик по пункту: сброс произойдёт до закрытия (клик всплывает в
+      // document-обработчик ниже — он только прячет меню)
+      item.addEventListener('click', () => resetChartView());
+    }
+    // Закрытие меню: клик где угодно, Escape, изменение размера окна
+    document.addEventListener('click', () => { if (ctxMenuOpen) hideCtxMenu(); });
+    document.addEventListener('keydown', (e) => {
+      if (e && e.key === 'Escape' && ctxMenuOpen) hideCtxMenu();
+    });
+    window.addEventListener('resize', () => { if (ctxMenuOpen) hideCtxMenu(); });
   };
 
   // ---- Разметка: сохранение/восстановление по тикеру (localStorage) ----
@@ -884,6 +991,8 @@
   // Вызывается из navigateTo при первом показе раздела (декоратор ниже)
   window.tcSectionShown = function () {
     if (!chartSectionVisible()) return;
+    // Меню могло остаться открытым при уходе с раздела — прячем (позиция устарела)
+    hideCtxMenu();
     if (pendingAutoload) {
       pendingAutoload = false;
       autoLoadLastChart();
@@ -919,6 +1028,9 @@
     registerRectOverlay();
     registerVolumeIndicator();
     syncTfButtons();
+    // Сброс вида (двойной клик / правый клик → «Reset chart») — слушатели
+    // на .tc-chart-stage, защищены от повторного навешивания
+    bindResetViewUi();
     const input = document.getElementById('test-chart-ticker-input');
     const btn = document.getElementById('test-chart-load-btn');
     if (btn) btn.addEventListener('click', () => window.loadTestChartCandles());
