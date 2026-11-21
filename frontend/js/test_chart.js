@@ -21,7 +21,11 @@
 //     (иконки SVG инлайном), шапка символа (код · имя · ТФ + последняя
 //     цена с дельтой, имя приходит в candles-ответе бэкенда), легенда
 //     OHLCV в углу холста следует за кроссхейром (subscribeAction
-//     onCrosshairChange, в 9.6 payload несёт kLineData).
+//     onCrosshairChange, в 9.6 payload несёт kLineData);
+//   - volume-гистограмма включена по умолчанию: полупрозрачные столбики
+//     в главном окне (кастомный индикатор VOL_MAIN, нормировка по максимуму
+//     видимой области), своя метка на оси цены под курсором и легенда
+//     «Объем» (значение обновляется вместе с OHLC).
 
 (() => {
   let chartInstance = null;
@@ -45,7 +49,65 @@
   // Начальное окно истории в днях (~600 баров; дозагрузка старых — loadMore)
   const TF_LOOKBACK_DAYS = { 60: 40, 24: 600, 7: 4200, 31: 18000 };
   // Индикаторы, живущие в главном окне со свечами; остальные — в своих под-окнах
-  const MAIN_PANE_INDICATORS = new Set(['MA', 'EMA', 'BOLL', 'SAR', 'BBI', 'AVP']);
+  const MAIN_PANE_INDICATORS = new Set(['MA', 'EMA', 'BOLL', 'SAR', 'BBI', 'AVP', 'VOL_MAIN']);
+
+  // ---- Volume-гистограмма в главном окне (как в TradingView) ----
+  // Кастомный индикатор VOL_MAIN: полупрозрачные столбики объёма поверх
+  // нижней части ценовой панели. Значений в result нет (figures: [],
+  // calc: []): диапазон оси главной панели в 9.6 учитывает значения figures
+  // главного индикатора — миллионы объёма растянули бы ценовую шкалу.
+  // Всё рисование — в draw: столбики нормируются по максимуму ВИДИМОЙ
+  // области и пересчитываются на каждом кадре (скролл/зум меняют высоты,
+  // как в TV). Геометрия запоминается в volScale — по ней HTML-метка
+  // tc-vol-axis ставится на верх столбика под курсором.
+
+  const VOL_MAIN = 'VOL_MAIN';
+  // Самый высокий столбик — 20% высоты ценовой панели (пропорции TV)
+  const VOL_MAX_HEIGHT_RATIO = 0.2;
+  const VOL_BAR_COLORS = {
+    up: 'rgba(38, 166, 154, 0.5)',
+    down: 'rgba(239, 83, 80, 0.5)',
+  };
+  let volScale = null; // { top, height, unitPx } — панель и px на единицу объёма
+
+  const registerVolumeIndicator = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerIndicator({
+      name: VOL_MAIN,
+      shortName: 'Объем',
+      figures: [],
+      calc: () => [],
+      draw: ({ ctx, kLineDataList, visibleRange, bounding, barSpace, xAxis }) => {
+        volScale = null;
+        if (!kLineDataList || !kLineDataList.length || !barSpace || !bounding) return false;
+        const from = Math.max(0, visibleRange.from);
+        const to = Math.min(kLineDataList.length - 1, visibleRange.to);
+        if (from > to) return false;
+        let volMax = 0;
+        for (let i = from; i <= to; i++) {
+          const v = kLineDataList[i].volume;
+          if (Number.isFinite(v) && v > volMax) volMax = v;
+        }
+        if (!(volMax > 0)) return false;
+        // Координаты draw — локальные относительно canvas панели: низ
+        // панели = bounding.height; bounding.top — та же точка в координатах
+        // контейнера графика (для позиции HTML-метки на оси)
+        const unitPx = (bounding.height * VOL_MAX_HEIGHT_RATIO) / volMax;
+        volScale = { top: bounding.top, height: bounding.height, unitPx };
+        for (let i = from; i <= to; i++) {
+          const k = kLineDataList[i];
+          const v = k.volume;
+          if (!Number.isFinite(v) || v <= 0) continue;
+          const h = Math.max(1, v * unitPx);
+          const x = xAxis.convertToPixel(i);
+          // Ширина — gapBar, как у встроенных bar-фигур индикаторов
+          ctx.fillStyle = k.close >= k.open ? VOL_BAR_COLORS.up : VOL_BAR_COLORS.down;
+          ctx.fillRect(x - barSpace.gapBar / 2, bounding.height - h, barSpace.gapBar, h);
+        }
+        return false; // figures нет — встроенному рисованию перекрыть нечего
+      },
+    });
+  };
 
   // Кастомный прямоугольник: в KLineChart v9.6 нет встроенного шаблона
   // overlay «rect» (rect — только тип фигуры), поэтому регистрируем свой
@@ -108,6 +170,7 @@
       return null;
     }
     registerRectOverlay();
+    registerVolumeIndicator();
     const el = document.getElementById('test-chart-kline');
     if (!el) return null;
     if (!chartInstance) {
@@ -149,11 +212,25 @@
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
       window.testChartInstance = chartInstance;
+      // Volume-гистограмма включена по умолчанию (как в TradingView);
+      // выключается чипом, включается обратно через dropdown индикаторов
+      if (!indicators.has(VOL_MAIN)) {
+        const id = chartInstance.createIndicator(VOL_MAIN, false, { id: 'candle_pane' });
+        if (id) {
+          indicators.set(VOL_MAIN, 'candle_pane');
+          renderIndicatorChips();
+        }
+      }
       // Легенда OHLCV следует за кроссхейром (как в TradingView). При уходе
       // курсора KLineChart отдаёт последнюю свечу — легенда «возвращается».
       if (typeof chartInstance.subscribeAction === 'function') {
         chartInstance.subscribeAction('onCrosshairChange', (ev) => {
-          if (ev && ev.kLineData) renderLegend(ev.kLineData);
+          if (ev && ev.kLineData) {
+            renderLegend(ev.kLineData);
+            // paneId пуст, когда курсор ушёл с графика (при этом отдаётся
+            // последняя свеча) — метку объёма на оси в этом случае прячем
+            renderVolumeAxisLabel(ev.kLineData, ev.paneId !== undefined);
+          }
         });
       }
     }
@@ -396,6 +473,26 @@
     }
   };
 
+  // Метка объёма на оси цены (как в TradingView): тег со значением столбика
+  // под курсором. Позиция по вертикали — верх столбика на гистограммной
+  // шкале (нижние 20% панели), геометрия — из последнего draw индикатора
+  // (canvas оси у KLineChart отдельный, нарисовать туда из draw нельзя).
+  // show=false (курсор ушёл/индикатор выключен/объёма нет) — тег прячется.
+  const renderVolumeAxisLabel = (k, show) => {
+    const el = document.getElementById('tc-vol-axis');
+    if (!el) return;
+    const vol = Number(k && k.volume);
+    const on = !!(show && volScale && indicators.has(VOL_MAIN)
+      && Number.isFinite(vol) && vol > 0);
+    const up = on && k.close >= k.open;
+    el.classList.toggle('show', on);
+    el.classList.toggle('up', up);
+    el.classList.toggle('down', on && !up);
+    if (!on) { el.textContent = ''; return; }
+    el.textContent = fmtVol(vol);
+    el.style.top = `${Math.round(volScale.top + volScale.height - vol * volScale.unitPx)}px`;
+  };
+
   // Легенда + цена из текущих данных графика (последняя свеча)
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
@@ -578,6 +675,9 @@
       lastTs = klineData.length ? klineData[klineData.length - 1].timestamp : null;
       lastTicker = ticker;
       restoreViewport(vp);
+      // Геометрия гистограммы устарела до первого перерисовывания draw —
+      // метку на оси прячем (вернётся при движении курсора)
+      renderVolumeAxisLabel(null, false);
       // Шапка (цена/дельта) и легенда — по свежим данным
       refreshChartReadouts();
 
@@ -681,10 +781,17 @@
     for (const [name, paneId] of indicators) {
       const chip = document.createElement('span');
       chip.className = 'tc-ind-chip';
+      // Подпись чипа — shortName живого инстанса («Объем» у гистограммы),
+      // нет инстанса — имя индикатора
+      let label = name;
+      try {
+        const inst = chartInstance && chartInstance.getIndicatorByPaneId(paneId, name);
+        if (inst && inst.shortName) label = inst.shortName;
+      } catch (e) { /* инстанс недоступен — остаётся имя */ }
       const nm = document.createElement('span');
       nm.className = 'tc-ind-name';
-      nm.textContent = name;
-      nm.title = `${name} — настройки периодов`;
+      nm.textContent = label;
+      nm.title = name === VOL_MAIN ? label : `${name} — настройки периодов`;
       nm.addEventListener('click', () => window.tcConfigureIndicator(name));
       const x = document.createElement('span');
       x.className = 'tc-ind-close';
@@ -711,7 +818,9 @@
     renderIndicatorChips();
     const select = document.getElementById('tc-indicator-select');
     if (select) select.value = '';
-    setStatus(`Индикатор ${name} включён — клик по названию открывает периоды`);
+    setStatus(name === VOL_MAIN
+      ? 'Гистограмма объёма включена'
+      : `Индикатор ${name} включён — клик по названию открывает периоды`);
   };
 
   window.tcRemoveIndicator = function (name) {
@@ -721,7 +830,10 @@
     instance.removeIndicator(paneId, name);
     indicators.delete(name);
     renderIndicatorChips();
-    setStatus(`Индикатор ${name} выключен`);
+    if (name === VOL_MAIN) renderVolumeAxisLabel(null, false);
+    setStatus(name === VOL_MAIN
+      ? 'Гистограмма объёма выключена'
+      : `Индикатор ${name} выключен`);
   };
 
   // Настройка периодов (как клик по названию индикатора в TradingView):
@@ -730,6 +842,10 @@
     const instance = getChartInstance();
     const paneId = indicators.get(name);
     if (!instance || !paneId) return;
+    if (name === VOL_MAIN) {
+      setStatus('У гистограммы объёма нет настроек периодов');
+      return;
+    }
     let current = '';
     try {
       const inst = instance.getIndicatorByPaneId(paneId, name);
@@ -801,6 +917,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     registerRectOverlay();
+    registerVolumeIndicator();
     syncTfButtons();
     const input = document.getElementById('test-chart-ticker-input');
     const btn = document.getElementById('test-chart-load-btn');

@@ -436,6 +436,7 @@
                         <option value="BOLL">BOLL</option>
                         <option value="SAR">SAR</option>
                         <option value="BBI">BBI</option>
+                        <option value="VOL_MAIN">Объем (гистограмма)</option>
                     </optgroup>
                     <optgroup label="В под-окнах">
                         <option value="VOL">VOL</option>
@@ -535,8 +536,12 @@
                             <span class="tc-leg-item"><span class="tc-leg-label">H</span><span class="tc-leg-val" id="tc-leg-h"></span></span>
                             <span class="tc-leg-item"><span class="tc-leg-label">L</span><span class="tc-leg-val" id="tc-leg-l"></span></span>
                             <span class="tc-leg-item"><span class="tc-leg-label">C</span><span class="tc-leg-val" id="tc-leg-c"></span></span>
-                            <span class="tc-leg-item"><span class="tc-leg-label">Vol</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
+                            <span class="tc-leg-item"><span class="tc-leg-label">Объем</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
                         </div>
+                        <!-- Метка объёма на оси цены (как в TradingView): тег
+                             со значением столбика под курсором; позиция и цвет
+                             задаются из js/test_chart.js (renderVolumeAxisLabel) -->
+                        <div class="tc-vol-axis" id="tc-vol-axis"></div>
                     </div>
                 </div>
             </div>
