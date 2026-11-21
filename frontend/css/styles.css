@@ -1428,6 +1428,45 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   background: #ef5350;
 }
 
+/* Контекстное меню «Reset chart» (облик TradingView): тёмная карточка у
+   курсора, прижимается внутрь холста (позиция из js). Появляется правым
+   кликом по графику, закрывается кликом/Escape/resize. */
+.tc-ctx-menu {
+  position: absolute;
+  display: none;
+  min-width: 150px;
+  padding: 4px;
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
+  z-index: 30;
+}
+
+.tc-ctx-menu.show {
+  display: block;
+}
+
+.tc-ctx-menu button {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tc-ctx-menu button:hover {
+  background: #2962ff;
+  color: #fff;
+}
+
 /* Панель инструментов «Тест график»: разметка + индикаторы */
 .test-chart-toolbar {
   display: flex;

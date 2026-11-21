@@ -408,6 +408,8 @@
                 (в этом браузере) и переживает смену тикера и перезагрузку.
                 Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
                 крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
+                Сбросить масштаб и сдвиг: двойной клик по графику или
+                правый клик → <b>Reset chart</b>.
             </p>
             <!-- Ввод тикера — по образцу формы добавления в watchlist:
                  поле + кнопка, отправка по Enter (см. js/test_chart.js).
@@ -524,7 +526,7 @@
                     <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
                          (см. defer-скрипт внизу страницы): если CDN недоступен,
                          показываем предупреждение вместо «вечной загрузки». -->
-                    <div class="tc-chart-stage">
+                    <div class="tc-chart-stage" id="tc-chart-stage">
                         <div id="test-chart-kline" class="test-chart-wrapper">
                             <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
                         </div>
@@ -542,6 +544,13 @@
                              со значением столбика под курсором; позиция и цвет
                              задаются из js/test_chart.js (renderVolumeAxisLabel) -->
                         <div class="tc-vol-axis" id="tc-vol-axis"></div>
+                        <!-- Контекстное меню «Reset chart» (как в TradingView):
+                             правый клик по графику открывает, клик/Escape/resize
+                             закрывает; пункт сбрасывает масштаб и сдвиг к
+                             дефолтным и возвращает график к последней свече -->
+                        <div class="tc-ctx-menu" id="tc-ctx-menu">
+                            <button type="button" id="tc-ctx-reset">Reset chart</button>
+                        </div>
                     </div>
                 </div>
             </div>
