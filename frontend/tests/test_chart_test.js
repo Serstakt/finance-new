@@ -6,8 +6,13 @@
 // (dropdown + чипы: добавить, настроить периоды, убрать), volume-гистограмма
 // в главном окне (вкл. по умолчанию, draw с нормировкой по видимой области,
 // метка на оси под курсором), поллинг, сохранение разметки по тикеру
-// в localStorage, note бэкенда о деградации источника. Мини-DOM + fake
-// klinecharts — в стиле остальных тестов проекта (node:vm без браузера).
+// в localStorage, note бэкенда о деградации источника, диалог настроек
+// вместо window.prompt (заметка на графике и периоды индикатора: Enter
+// применяет, отмена/ошибки inline), тип графика (свечи/бары/линия/области
+// через candle.type) и режим шкалы цены (normal/log/percentage + кнопка
+// «авто» для автоподгона оси) с сохранением выбора в localStorage.
+// Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
+// (node:vm без браузера).
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -66,6 +71,23 @@ const els = {
   'tc-chart-stage': new El('div'),
   'tc-ctx-menu': new El('div'),
   'tc-ctx-reset': new El('button'),
+  // тип графика (сегмент иконок) + шкала цены (log/%/авто)
+  'tc-type-candles': new El('button'),
+  'tc-type-bars': new El('button'),
+  'tc-type-line': new El('button'),
+  'tc-type-area': new El('button'),
+  'tc-scale-log': new El('button'),
+  'tc-scale-pct': new El('button'),
+  'tc-scale-auto': new El('button'),
+  // диалог настроек (заметка/периоды) вместо window.prompt
+  'tc-settings-modal': new El('div'),
+  'tc-settings-title': new El('div'),
+  'tc-settings-label': new El('div'),
+  'tc-settings-input': new El('input'),
+  'tc-settings-textarea': new El('textarea'),
+  'tc-settings-error': new El('div'),
+  'tc-settings-apply': new El('button'),
+  'tc-settings-cancel': new El('button'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -154,12 +176,19 @@ const chart = {
   subscribeAction: (type, cb) => { actions[type] = cb; },
   // сброс вида: возврат к последней свече после дефолтных масштаба/сдвига
   scrollToRealTime: () => { callOrder.push(['scrollToRealTime']); },
+  // тип графика/шкала: partial-стили запоминаем для проверок
+  setStyles: s => { styleCalls.push(s); },
+  // автоскейл: ось цены главной панели с флагом автоподгона (9.6
+  // снимает его при перетаскивании шкалы, setStyles с yAxis.type возвращает)
+  _candlePane: { getAxisComponent: () => ({ getAutoCalcTickFlag: () => autoCalcTickFlag }) },
   // Двойной клик не сбрасывает вид во время рисования фигуры
   getChartStore: () => ({
     getOverlayStore: () => ({ isDrawing: () => fakeDrawing }),
   }),
 };
 let fakeDrawing = false;
+let autoCalcTickFlag = true; // автоподгонка шкалы цены включена по умолчанию
+const styleCalls = [];
 const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
 const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
@@ -229,6 +258,12 @@ const candle = (day, close, month = 11) => ({
   assert(/slice=1/.test(fetchUrls[fetchUrls.length - 1]), 'начальная загрузка: оконный режим slice=1');
   assert(loadMoreCb != null, 'loadMore: callback зарегистрирован');
   assert(JSON.parse(store.get('test_chart_last')).ticker === 'SBER', 'последний график сохранён в localStorage');
+
+  // 0a0) Вид при init: применены сохранённые (здесь — дефолтные) тип
+  //      графика и режим шкалы цены
+  assert(styleCalls.length >= 2 && styleCalls[0].candle && styleCalls[0].candle.type === 'candle_solid'
+    && styleCalls[1].yAxis && styleCalls[1].yAxis.type === 'normal',
+    'вид при init: применены дефолтные тип (свечи) и режим шкалы (обычная)');
 
   // 0a) Шапка символа (облик TradingView): код · имя · ТФ + цена с дельтой
   assert(els['tc-sym-code'].textContent === 'SBER', 'шапка: код SBER');
@@ -379,18 +414,75 @@ const candle = (day, close, month = 11) => ({
   assert(createdIndicators['MA'].id === 'candle_pane', 'индикаторы: MA создан в главном окне');
   assert(els['tc-indicator-chips'].children.length === 3, 'индикаторы: второй чип добавлен');
 
-  sandbox.window.prompt = () => '21';
+  // 10a) Диалог настроек индикатора вместо window.prompt: клик по имени
+  //      чипа открывает модальное окно с текущими периодами, «Применить»
+  //      вызывает overrideIndicator, ошибка валидации остаётся inline
+  const btnTool = () => new El('button');
   const chipRsi = els['tc-indicator-chips'].children.find(c => c.children[0].textContent === 'RSI');
-  chipRsi.children[0]._listeners.click(); // клик по имени — настройка периодов
+  const modalEl = els['tc-settings-modal'];
+  chipRsi.children[0]._listeners.click();
+  assert(modalEl._classes.has('active'), 'диалог: клик по имени индикатора открыл модальное окно');
+  assert(els['tc-settings-title'].textContent.includes('RSI'), 'диалог: имя индикатора в заголовке');
+  assert(els['tc-settings-input'].value === '14' && els['tc-settings-input'].style.display !== 'none',
+    'диалог: текущие периоды подставлены в однострочное поле');
+  els['tc-settings-input'].value = '21';
+  els['tc-settings-apply']._listeners.click();
   assert(overrides.length === 1 && overrides[0].name === 'RSI' &&
     JSON.stringify(overrides[0].calcParams) === '[21]',
-    'индикаторы: клик по чипу открывает периоды и применяет overrideIndicator');
+    'диалог: «Применить» применил периоды через overrideIndicator');
+  assert(!modalEl._classes.has('active'), 'диалог: после применения окно закрыто');
   assert(indInstances['RSI'].calcParams.length === 1 && indInstances['RSI'].calcParams[0] === 21,
     'индикаторы: параметры RSI реально обновлены в инстансе');
 
-  sandbox.window.prompt = () => null; // отмена в промпте
+  // Неверные периоды: inline-ошибка, окно не закрывается, override нет
   chipRsi.children[0]._listeners.click();
-  assert(overrides.length === 1, 'индикаторы: отмена промпта не меняет параметры');
+  els['tc-settings-input'].value = 'abc';
+  els['tc-settings-apply']._listeners.click();
+  assert(modalEl._classes.has('active') && els['tc-settings-error'].style.display !== 'none'
+    && els['tc-settings-error'].textContent.length > 0,
+    'диалог: неверные периоды — inline-ошибка, окно осталось открытым');
+  assert(overrides.length === 1, 'диалог: при ошибке валидации override не вызван');
+  // Отмена закрывает окно, ничего не меняя
+  els['tc-settings-cancel']._listeners.click();
+  assert(!modalEl._classes.has('active') && overrides.length === 1,
+    'диалог: «Отмена» закрыла окно, параметры не изменились');
+
+  // 10b) Диалог заметки на графике (инструмент «Т»): многострочное поле,
+  //      «Применить» создаёт simpleAnnotation с обрезанным текстом
+  const noteBtn = btnTool();
+  sandbox.window.tcDrawOverlay('text', noteBtn);
+  assert(noteBtn._classes.has('active') && modalEl._classes.has('active'),
+    'заметка: инструмент активен, диалог открыт');
+  assert(els['tc-settings-input'].style.display === 'none'
+    && els['tc-settings-textarea'].style.display !== 'none',
+    'заметка: текст вводится в многострочном поле');
+  els['tc-settings-textarea'].value = '  Цель 320  ';
+  els['tc-settings-apply']._listeners.click();
+  const noteOv = liveOverlays().find(o => o.name === 'simpleAnnotation');
+  assert(noteOv && noteOv.extendData === 'Цель 320',
+    'заметка: текст обрезан и попал в extendData simpleAnnotation');
+  assert(!modalEl._classes.has('active'), 'заметка: после применения диалог закрыт');
+  chart.removeOverlay(noteOv.id);
+
+  // Пустой текст: inline-ошибка, объект не создан; Escape отменяет
+  // и снимает активный инструмент (window-обработчик, как в браузере)
+  const noteBtn2 = btnTool();
+  sandbox.window.tcDrawOverlay('text', noteBtn2);
+  els['tc-settings-textarea'].value = '   ';
+  els['tc-settings-apply']._listeners.click();
+  assert(modalEl._classes.has('active')
+    && !liveOverlays().find(o => o.name === 'simpleAnnotation'),
+    'заметка: пустой текст — inline-ошибка, объект не создан');
+  assert(els['tc-settings-error'].textContent.includes('текст'),
+    'заметка: текст ошибки про пустой ввод');
+  winListeners.keydown({ key: 'Escape' });
+  assert(!modalEl._classes.has('active') && !noteBtn2._classes.has('active'),
+    'заметка: Escape закрыл диалог и снял активный инструмент');
+
+  // Клик по фону (мимо карточки) — тоже отмена
+  sandbox.window.tcDrawOverlay('text', btnTool());
+  modalEl._listeners.click({ target: modalEl });
+  assert(!modalEl._classes.has('active'), 'заметка: клик по фону отменил диалог');
 
   chipRsi.children[1]._listeners.click(); // × — убрать
   assert(JSON.stringify(removedIndicators[0]) === JSON.stringify(['tc_ind_RSI', 'RSI']),
@@ -586,7 +678,6 @@ const candle = (day, close, month = 11) => ({
   assert(registeredOverlays['tc-measure'] && registeredOverlays['tc-measure'].totalStep === 3,
     'измеритель: кастомный overlay (2 точки) зарегистрирован');
 
-  const btnTool = () => new El('button');
   const gazpMarkup = () => (JSON.parse(store.get('test_chart_markup') || '{}')['GAZP'] || []);
   // press-drag: mousedown ловится на холсте (capture), move/up — на window
   const stageMDn = (ev) => els['tc-chart-stage']._listeners.mousedown({
@@ -788,6 +879,75 @@ const candle = (day, close, month = 11) => ({
   assert(restoredFuture, 'кисть: f-точки восстановлены как dataIndex (16) без timestamp');
   assert(statusOf().text.includes('разметка восстановлена'),
     'статус: разметка GAZP с правопольными точками восстановлена');
+
+  // 22) Тип графика и режим шкалы цены (как в TradingView): сегмент типов
+  //     (candle.type 9.6), кластер шкалы (yAxis.type) с сохранением выбора
+  styleCalls.length = 0;
+  sandbox.window.tcSetChartType('line');
+  const lineStyles = styleCalls[styleCalls.length - 1].candle;
+  assert(lineStyles.type === 'area' &&
+    lineStyles.area.backgroundColor.every(g => g.color === 'rgba(41, 98, 255, 0)'),
+    'тип «Линия»: area-тип по close с полностью прозрачной заливкой');
+  assert(lineStyles.priceMark.high.show === false && lineStyles.priceMark.low.show === false,
+    'тип «Линия»: метки max/min свечи скрыты (как в TradingView)');
+  assert(els['tc-type-line']._classes.has('active') && !els['tc-type-candles']._classes.has('active'),
+    'тип «Линия»: кнопка сегмента активна, свечи отжаты');
+  assert(JSON.parse(store.get('test_chart_view')).type === 'line',
+    'тип графика сохранён в localStorage');
+
+  sandbox.window.tcSetChartType('bars');
+  assert(styleCalls[styleCalls.length - 1].candle.type === 'ohlc', 'тип «Бары»: candle.type=ohlc');
+  sandbox.window.tcSetChartType('area');
+  const areaStyles22 = styleCalls[styleCalls.length - 1].candle;
+  assert(areaStyles22.type === 'area' &&
+    areaStyles22.area.backgroundColor[1].color === 'rgba(41, 98, 255, 0.22)',
+    'тип «Области»: заливка TV-синим видна');
+  sandbox.window.tcSetChartType('candles');
+  const candleStyles22 = styleCalls[styleCalls.length - 1].candle;
+  assert(candleStyles22.type === 'candle_solid' && candleStyles22.priceMark.high.show === true,
+    'тип «Свечи»: candle_solid, метки max/min возвращены');
+  assert(JSON.parse(store.get('test_chart_view')).type === 'candles',
+    'тип графика сохранён в localStorage');
+
+  // Шкала цены: log и % взаимоисключающие режимы (yAxis.type 9.6, как в TV)
+  sandbox.window.tcSetScaleMode('log');
+  assert(styleCalls[styleCalls.length - 1].yAxis.type === 'log', 'шкала: log через yAxis.type');
+  assert(els['tc-scale-log']._classes.has('active') && !els['tc-scale-pct']._classes.has('active'),
+    'шкала: активен только log');
+  sandbox.window.tcSetScaleMode('percentage');
+  assert(styleCalls[styleCalls.length - 1].yAxis.type === 'percentage', 'шкала: проценты');
+  assert(els['tc-scale-pct']._classes.has('active') && !els['tc-scale-log']._classes.has('active'),
+    'шкала: переключение на % сняло активность log');
+  assert(JSON.parse(store.get('test_chart_view')).scale === 'percentage',
+    'режим шкалы сохранён в localStorage');
+
+  // Автомасштаб: перетаскивание шкалы цены сняло автоподгонку (ручной
+  // масштаб, как в TV) — отпускание кнопки гасит «авто», клик возвращает
+  autoCalcTickFlag = false;
+  winListeners.mouseup();
+  assert(!els['tc-scale-auto']._classes.has('active'),
+    'автоскейл: перетаскивание шкалы сняло автоподгонку, кнопка «авто» отжалась');
+  styleCalls.length = 0;
+  sandbox.window.tcAutoSizeScale();
+  assert(styleCalls.length === 1 && styleCalls[0].yAxis.type === 'percentage',
+    'автоскейл: «авто» возвращает автоподгонку setStyles с текущим режимом шкалы');
+  autoCalcTickFlag = true; // setStyles в 9.6 сам возвращает флаг оси
+  sandbox.window.tcAutoSizeScale();
+  assert(els['tc-scale-auto']._classes.has('active') && statusOf().text.includes('уже'),
+    'автоскейл: при включённой автоподгонке повторный клик ничего не меняет');
+
+  // 22a) Выбор переживает «перезагрузку»: повторный DOMContentLoaded
+  //      подтягивает тип/шкалу из localStorage и синхронизирует кнопки
+  sandbox.window.tcSetChartType('area');
+  sandbox.window.tcSetScaleMode('log');
+  els['tc-type-area']._classes.delete('active');
+  els['tc-scale-log']._classes.delete('active');
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(20, 143)] }];
+  domReadyCb(); // повторная инициализация страницы
+  await flush();
+  assert(els['tc-type-area']._classes.has('active') && els['tc-scale-log']._classes.has('active')
+    && els['tc-scale-auto']._classes.has('active'),
+    'вид: после «перезагрузки» восстановлены область + log из localStorage');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

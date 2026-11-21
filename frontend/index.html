@@ -408,8 +408,10 @@
                 (в этом браузере) и переживает смену тикера и перезагрузку.
                 Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
                 крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
-                Сбросить масштаб и сдвиг: двойной клик по графику или
-                правый клик → <b>Reset chart</b>.
+                Тип графика (свечи/бары/линия/области) — кнопки рядом с
+                таймфреймом; шкала цены (log, %, авто) — кнопки у правого
+                края холста. Сбросить масштаб и сдвиг: двойной клик по
+                графику или правый клик → <b>Reset chart</b>.
             </p>
             <!-- Ввод тикера — по образцу формы добавления в watchlist:
                  поле + кнопка, отправка по Enter (см. js/test_chart.js).
@@ -422,6 +424,39 @@
                     <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
                     <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
                     <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
+                </div>
+                <!-- Тип графика как в TradingView: сегмент иконок
+                     свечи/бары/линия/области (tcSetChartType, js/test_chart.js) -->
+                <div class="tc-type-group" id="test-chart-type" title="Тип графика">
+                    <button type="button" id="tc-type-candles" onclick="tcSetChartType('candles')" title="Свечи">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M8 3v3M8 18v3"/>
+                            <rect x="5.5" y="6" width="5" height="12" rx="1"/>
+                            <path d="M16 5v3M16 16v3"/>
+                            <rect x="13.5" y="8" width="5" height="8" rx="1"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="tc-type-bars" onclick="tcSetChartType('bars')" title="Бары (OHLC)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M7 4v16"/>
+                            <path d="M4 7.5h3"/>
+                            <path d="M7 14h3"/>
+                            <path d="M17 6v14"/>
+                            <path d="M14 9.5h3"/>
+                            <path d="M17 16h3"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="tc-type-line" onclick="tcSetChartType('line')" title="Линия">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="tc-type-area" onclick="tcSetChartType('area')" title="Области">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
+                            <path d="M3 20v-3.5l6-6.5 4.5 4L21 5.5V20Z" fill="currentColor" fill-opacity="0.18" stroke="none"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
             <!-- Панель индикаторов: dropdown всех встроенных; клик по
@@ -588,6 +623,21 @@
                              со значением столбика под курсором; позиция и цвет
                              задаются из js/test_chart.js (renderVolumeAxisLabel) -->
                         <div class="tc-vol-axis" id="tc-vol-axis"></div>
+                        <!-- Кластер шкалы цены как в TradingView: «авто», log
+                             и % у правого края холста. Перетаскивание шкалы
+                             цены снимает автоподгонку (ручной масштаб),
+                             кнопка «авто» возвращает её (js/test_chart.js) -->
+                        <div class="tc-scale-cluster">
+                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: подгонять шкалу цены по видимой области (снимается перетаскиванием шкалы)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 4v16"/>
+                                    <path d="m8 8 4-4 4 4"/>
+                                    <path d="m8 16 4 4 4-4"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">log</button>
+                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">%</button>
+                        </div>
                         <!-- Контекстное меню «Reset chart» (как в TradingView):
                              правый клик по графику открывает, клик/Escape/resize
                              закрывает; пункт сбрасывает масштаб и сдвиг к
@@ -604,6 +654,24 @@
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
     <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
+</div>
+
+<!-- Диалог настроек тест-графика (текст заметки, периоды индикатора) —
+     модальное окно в стиле приложения вместо window.prompt: тот выглядит
+     чужеродно и блокирует вкладку. Enter применяет, Escape/клик по фону
+     отменяет, ошибки валидации показываются inline (js/test_chart.js) -->
+<div class="modal-overlay" id="tc-settings-modal">
+    <div class="modal-box">
+        <div class="modal-title" id="tc-settings-title">Настройки</div>
+        <div class="tc-settings-label" id="tc-settings-label"></div>
+        <input type="text" class="modal-input" id="tc-settings-input" autocomplete="off" />
+        <textarea class="modal-input tc-settings-textarea" id="tc-settings-textarea" rows="3" style="display:none"></textarea>
+        <div class="tc-settings-error" id="tc-settings-error"></div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" id="tc-settings-cancel" type="button">Отмена</button>
+            <button class="modal-btn modal-btn-save" id="tc-settings-apply" type="button">Применить</button>
+        </div>
+    </div>
 </div>
 
 <div class="modal-overlay" id="alert-modal">

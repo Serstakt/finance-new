@@ -30,7 +30,20 @@
 //     клик → контекстное меню «Reset chart» возвращает дефолтные масштаб
 //     и сдвиг от правого края (снимаются с инстанса сразу после init)
 //     и прокручивает график к последней свече (scrollToRealTime) —
-//     «улетевший» зум/сдвиг всегда можно вернуть.
+//     «улетевший» зум/сдвиг всегда можно вернуть;
+//   - тип графика как в TradingView: сегмент «свечи/бары/линия/области»
+//     (candle.type 9.6: линия и области — area-тип, у линии заливка
+//     прозрачная; метки max/min у линий скрываются, как в TV);
+//   - шкала цены как в TradingView: кластер «log / % / авто» у правого
+//     края холста (yAxis.type normal|log|percentage, режимы
+//     взаимоисключающие и только для панели свечей). Перетаскивание шкалы
+//     цены снимает автоподгонку оси (autoCalcTickFlag → ручной масштаб,
+//     как в TV), кнопка «авто» возвращает; тип и режим переживают
+//     перезагрузку (localStorage);
+//   - диалог настроек вместо window.prompt (чужеродный и блокирует
+//     вкладку): текст заметки и периоды индикатора вводятся в модальном
+//     окне в стиле приложения — Enter применяет, Escape/клик по фону
+//     отменяет, ошибки валидации показываются inline.
 
 (() => {
   let chartInstance = null;
@@ -55,6 +68,139 @@
   const TF_LOOKBACK_DAYS = { 60: 40, 24: 600, 7: 4200, 31: 18000 };
   // Индикаторы, живущие в главном окне со свечами; остальные — в своих под-окнах
   const MAIN_PANE_INDICATORS = new Set(['MA', 'EMA', 'BOLL', 'SAR', 'BBI', 'AVP', 'VOL_MAIN']);
+
+  // ---- Тип графика и режим шкалы цены (как в TradingView) ----
+  // Типы: candles|bars|line|area → candle.type 9.6 (candle_solid|ohlc|area).
+  // «Линия» — тот же area-тип по цене закрытия, но с прозрачной заливкой;
+  // у линий/областей метки max/min свечи скрываются (в TradingView линии
+  // их не имеют). Шкала: normal|log|percentage → yAxis.type (режимы
+  // взаимоисключающие и действуют только на панель свечей — как в TV).
+  // Перетаскивание шкалы цены библиотека превращает в ручной масштаб
+  // (autoCalcTickFlag=false), setStyles с yAxis.type возвращает
+  // автоподгонку — на этом построены и смена режима, и кнопка «авто».
+  // Выбор переживает перезагрузку страницы (localStorage).
+
+  const VIEW_LS_KEY = 'test_chart_view';
+  const LINE_COLOR = '#2962ff';
+  const CHART_TYPE_LABELS = { candles: 'Свечи', bars: 'Бары', line: 'Линия', area: 'Области' };
+  // Заливка area-типа: прозрачная у «линии», TV-синяя у «областей»
+  const areaStyles = (transparent) => ({
+    lineSize: 2,
+    lineColor: LINE_COLOR,
+    value: 'close',
+    backgroundColor: [
+      { offset: 0, color: transparent ? 'rgba(41, 98, 255, 0)' : 'rgba(41, 98, 255, 0.01)' },
+      { offset: 1, color: transparent ? 'rgba(41, 98, 255, 0)' : 'rgba(41, 98, 255, 0.22)' },
+    ],
+  });
+  const CHART_TYPE_STYLES = {
+    candles: { type: 'candle_solid', priceMark: { high: { show: true }, low: { show: true } } },
+    bars: { type: 'ohlc', priceMark: { high: { show: true }, low: { show: true } } },
+    line: { type: 'area', priceMark: { high: { show: false }, low: { show: false } }, area: areaStyles(true) },
+    area: { type: 'area', priceMark: { high: { show: false }, low: { show: false } }, area: areaStyles(false) },
+  };
+  const SCALE_MODES = ['normal', 'log', 'percentage'];
+  const SCALE_LABELS = { normal: 'обычная', log: 'логарифмическая', percentage: 'проценты' };
+
+  let chartType = 'candles'; // активный тип графика (candles|bars|line|area)
+  let scaleMode = 'normal';  // режим шкалы цены (normal|log|percentage)
+
+  const loadSavedView = () => {
+    try {
+      const v = JSON.parse(localStorage.getItem(VIEW_LS_KEY) || '{}');
+      if (CHART_TYPE_STYLES[v.type]) chartType = v.type;
+      if (SCALE_MODES.includes(v.scale)) scaleMode = v.scale;
+    } catch (e) { /* битый JSON — остаются дефолты */ }
+  };
+
+  const saveView = () => {
+    try {
+      localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ type: chartType, scale: scaleMode }));
+    } catch (e) { /* localStorage недоступен — вид не сохранится */ }
+  };
+
+  const syncTypeButtons = () => {
+    for (const t of Object.keys(CHART_TYPE_STYLES)) {
+      const btn = document.getElementById(`tc-type-${t}`);
+      if (btn) btn.classList.toggle('active', chartType === t);
+    }
+  };
+
+  // Ось цены главной панели — внутреннее API 9.6 (как getChartStore в
+  // isOverlayDrawing): нужен только флаг автоподгона; недоступен —
+  // считаем автоскейл включённым
+  const candlePaneAxis = () => {
+    try {
+      const pane = chartInstance && chartInstance._candlePane;
+      const axis = pane && typeof pane.getAxisComponent === 'function'
+        ? pane.getAxisComponent() : null;
+      return axis && typeof axis.getAutoCalcTickFlag === 'function' ? axis : null;
+    } catch (e) { return null; }
+  };
+
+  // Автоподгонка шкалы: перетаскивание оси цены снимает её (setExtremum),
+  // setStyles с yAxis.type возвращает
+  const isAutoScaleOn = () => {
+    const axis = candlePaneAxis();
+    return !axis || axis.getAutoCalcTickFlag() !== false;
+  };
+
+  const syncScaleButtons = () => {
+    const logBtn = document.getElementById('tc-scale-log');
+    if (logBtn) logBtn.classList.toggle('active', scaleMode === 'log');
+    const pctBtn = document.getElementById('tc-scale-pct');
+    if (pctBtn) pctBtn.classList.toggle('active', scaleMode === 'percentage');
+    const autoBtn = document.getElementById('tc-scale-auto');
+    if (autoBtn) autoBtn.classList.toggle('active', isAutoScaleOn());
+  };
+
+  const applyChartType = () => {
+    if (!chartInstance) return;
+    // setStyles в 9.6 сливает partial-стили: у линии/областей каждый раз
+    // задаём area целиком, прозрачная заливка линии не «прилипла» к others
+    chartInstance.setStyles({ candle: CHART_TYPE_STYLES[chartType] });
+  };
+
+  // Смена режима шкалы заодно сбрасывает ручной масштаб: в 9.6 setStyles
+  // с yAxis.type возвращает autoCalcTickFlag в true — шкала заново
+  // подгоняется по видимой области (как смена масштаба в TradingView)
+  const applyScaleMode = () => {
+    if (!chartInstance) return;
+    chartInstance.setStyles({ yAxis: { type: scaleMode } });
+  };
+
+  window.tcSetChartType = function (type) {
+    if (!CHART_TYPE_STYLES[type]) return;
+    chartType = type;
+    applyChartType();
+    syncTypeButtons();
+    saveView();
+    setStatus(`Тип графика: ${CHART_TYPE_LABELS[type]}`);
+  };
+
+  window.tcSetScaleMode = function (mode) {
+    if (!SCALE_MODES.includes(mode)) return;
+    scaleMode = mode;
+    applyScaleMode();
+    syncScaleButtons();
+    saveView();
+    setStatus(`Шкала цены: ${SCALE_LABELS[mode]}`);
+  };
+
+  window.tcAutoSizeScale = function () {
+    if (!getChartInstance()) return;
+    // Актуализируем кнопку на случай, если состояние оси изменилось мимо
+    // mouseup (например, из другого обработчика библиотеки)
+    syncScaleButtons();
+    if (isAutoScaleOn()) {
+      setStatus('Автомасштаб: шкала уже подгоняется по видимой области');
+      return;
+    }
+    // setStyles с текущим режимом шкалы возвращает автоподгонку оси
+    applyScaleMode();
+    setStatus('Автомасштаб включён: шкала подгоняется по видимой области');
+  };
+
 
   // ---- Volume-гистограмма в главном окне (как в TradingView) ----
   // Кастомный индикатор VOL_MAIN: полупрозрачные столбики объёма поверх
@@ -388,6 +534,10 @@
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
       window.testChartInstance = chartInstance;
+      // Сохранённый вид (тип графика + режим шкалы) применяем сразу —
+      // состояние уже прочитано из localStorage на DOMContentLoaded
+      applyChartType();
+      applyScaleMode();
       // Дефолтный вид для сброса: снимаем до первого applyNewData и до
       // restoreViewport пользовательских зума/сдвига — это чистые дефолты
       defaultViewport = {
@@ -552,6 +702,98 @@
       if (e && e.key === 'Escape' && ctxMenuOpen) hideCtxMenu();
     });
     window.addEventListener('resize', () => { if (ctxMenuOpen) hideCtxMenu(); });
+  };
+
+  // ---- Диалог настроек (текст заметки, периоды индикатора) ----
+  // Замена window.prompt: тот выглядит чужеродно и блокирует вкладку.
+  // Модальное окно в стиле приложения: Enter — применить, Escape/клик по
+  // фону/«Отмена» — закрыть без изменений. Колбэк apply(value) возвращает
+  // true (применено — окно закрывается) или строку с ошибкой валидации
+  // (окно остаётся открытым, ошибка показывается inline).
+
+  let dialogCtx = null; // { apply, cancel } текущего диалога
+
+  const hideSettingsDialog = () => {
+    const modal = document.getElementById('tc-settings-modal');
+    if (modal) modal.classList.remove('active');
+    dialogCtx = null;
+  };
+
+  const cancelSettingsDialog = () => {
+    if (dialogCtx && typeof dialogCtx.cancel === 'function') dialogCtx.cancel();
+    hideSettingsDialog();
+  };
+
+  const openSettingsDialog = ({ title, label, value = '', textarea = false, placeholder = '', apply, cancel }) => {
+    const modal = document.getElementById('tc-settings-modal');
+    const input = document.getElementById('tc-settings-input');
+    const area = document.getElementById('tc-settings-textarea');
+    if (!modal || !input || !area) return false;
+    dialogCtx = { apply, cancel };
+    const titleEl = document.getElementById('tc-settings-title');
+    if (titleEl) titleEl.textContent = title || '';
+    const labelEl = document.getElementById('tc-settings-label');
+    if (labelEl) {
+      labelEl.textContent = label || '';
+      labelEl.style.display = label ? '' : 'none';
+    }
+    const errEl = document.getElementById('tc-settings-error');
+    if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+    // Однострочное поле или многострочное — второй элемент прячется
+    input.style.display = textarea ? 'none' : '';
+    area.style.display = textarea ? '' : 'none';
+    input.value = textarea ? '' : value;
+    area.value = textarea ? value : '';
+    input.placeholder = placeholder;
+    area.placeholder = placeholder;
+    modal.classList.add('active');
+    if (typeof (textarea ? area : input).focus === 'function') {
+      (textarea ? area : input).focus();
+    }
+    return true;
+  };
+
+  const applySettingsDialog = () => {
+    if (!dialogCtx) { hideSettingsDialog(); return; }
+    const input = document.getElementById('tc-settings-input');
+    const area = document.getElementById('tc-settings-textarea');
+    const value = area && area.style.display !== 'none' ? area.value : (input ? input.value : '');
+    const result = typeof dialogCtx.apply === 'function' ? dialogCtx.apply(value) : true;
+    if (result === true) { hideSettingsDialog(); return; }
+    const errEl = document.getElementById('tc-settings-error');
+    if (errEl) {
+      errEl.textContent = typeof result === 'string' ? result : 'Проверьте введённое значение';
+      errEl.style.display = '';
+    }
+  };
+
+  const bindSettingsDialog = () => {
+    const modal = document.getElementById('tc-settings-modal');
+    if (!modal || modal.dataset.dialogBound) return;
+    modal.dataset.dialogBound = '1';
+    const applyBtn = document.getElementById('tc-settings-apply');
+    if (applyBtn) applyBtn.addEventListener('click', () => applySettingsDialog());
+    const cancelBtn = document.getElementById('tc-settings-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => cancelSettingsDialog());
+    // Enter/Escape при фокусе в поле; Escape работает и вне поля —
+    // слушаем на window (document keydown занят меню «Reset chart»)
+    const fieldKeydown = (e) => {
+      if (e && e.key === 'Enter') { e.preventDefault(); applySettingsDialog(); }
+      else if (e && e.key === 'Escape') cancelSettingsDialog();
+    };
+    for (const id of ['tc-settings-input', 'tc-settings-textarea']) {
+      const field = document.getElementById(id);
+      if (field) field.addEventListener('keydown', fieldKeydown);
+    }
+    window.addEventListener('keydown', (e) => {
+      if (!e || e.key !== 'Escape' || !dialogCtx) return;
+      const modalEl = document.getElementById('tc-settings-modal');
+      if (modalEl && modalEl.classList.contains('active')) cancelSettingsDialog();
+    });
+    // Клик по фону (мимо карточки диалога) — отмена
+    modal.addEventListener('click', (e) => {
+      if (e && e.target === modal) cancelSettingsDialog();
+    });
   };
 
   // ---- Разметка: сохранение/восстановление по тикеру (localStorage) ----
@@ -1000,6 +1242,10 @@
       lastTs = klineData.length ? klineData[klineData.length - 1].timestamp : null;
       lastTicker = ticker;
       restoreViewport(vp);
+      // Смена тикера/ТФ: вертикальную шкалу вернём к автоподгонке — новые
+      // цены могли не попасть в зажатый ручной масштаб (в TradingView при
+      // смене символа шкала тоже подгоняется заново)
+      if (!isAutoScaleOn()) applyScaleMode();
       // Геометрия гистограммы устарела до первого перерисовывания draw —
       // метку на оси прячем (вернётся при движении курсора)
       renderVolumeAxisLabel(null, false);
@@ -1200,6 +1446,9 @@
   };
 
   const onStageMouseUp = () => {
+    // Перетаскивание шкалы цены снимает автоподгонку оси (ручной масштаб)
+    // — актуализируем кнопку «авто» на каждом отпускании кнопки мыши
+    syncScaleButtons();
     if (!stageToolDrawing) return;
     stageToolDrawing = false;
     const id = stageToolOverlayId;
@@ -1271,15 +1520,31 @@
     // Подсветка активного инструмента — как выбранная иконка в TradingView
     setToolActive(btn);
     if (name === 'text') {
-      const text = window.prompt('Текст заметки на графике:');
-      if (!text) return;
-      // В 9.6 нет шаблона «text» — используем встроенную аннотацию
-      // simpleAnnotation: содержимое берётся из extendData (строка)
-      const id = instance.createOverlay({
-        name: 'simpleAnnotation', extendData: text, ...overlayCallbacks(),
+      // Текст заметки вводится в модальном диалоге (окно настроек в духе
+      // TradingView), не в window.prompt — тот выглядит чужеродно и
+      // блокирует вкладку
+      const opened = openSettingsDialog({
+        title: 'Заметка на графике',
+        label: 'Текст заметки',
+        textarea: true,
+        placeholder: 'Например: цель 320 ₽',
+        apply: (text) => {
+          const t = String(text || '').trim();
+          if (!t) return 'Введите текст заметки';
+          // В 9.6 нет шаблона «text» — используем встроенную аннотацию
+          // simpleAnnotation: содержимое берётся из extendData (строка)
+          const id = instance.createOverlay({
+            name: 'simpleAnnotation', extendData: t, ...overlayCallbacks(),
+          });
+          if (id) overlayIds.push(id);
+          setStatus('Кликните по свече — текст привяжется к её цене');
+          return true;
+        },
+        // Отмена/Escape — снять активный инструмент: рисовать без текста
+        // нечего (после успешного ввода подсветку снимет onDrawEnd)
+        cancel: () => clearToolActive(),
       });
-      if (id) overlayIds.push(id);
-      setStatus('Кликните по свече — текст привяжется к её цене');
+      if (!opened) clearToolActive();
       return;
     }
     const hints = {
@@ -1382,7 +1647,9 @@
   };
 
   // Настройка периодов (как клик по названию индикатора в TradingView):
-  // текущие значения берём из живого инстанса, правим через overrideIndicator
+  // текущие значения берём из живого инстанса, правим через overrideIndicator.
+  // Ввод в модальном диалоге (window.prompt выглядит чужеродно и блокирует
+  // вкладку); ошибка валидации показывается inline, окно не закрывается
   window.tcConfigureIndicator = function (name) {
     const instance = getChartInstance();
     const paneId = indicators.get(name);
@@ -1397,16 +1664,22 @@
       if (inst && Array.isArray(inst.calcParams) && inst.calcParams.length) {
         current = inst.calcParams.join(', ');
       }
-    } catch (e) { /* инстанс не найден — промпт без подсказки */ }
-    const raw = window.prompt(
-      `Периоды ${name} через запятую${current ? ` (сейчас: ${current})` : ''}:`, current || '14'
-    );
-    if (raw == null) return; // отмена
-    const params = raw.split(',').map(s => parseFloat(s.trim()))
-      .filter(n => Number.isFinite(n) && n > 0);
-    if (!params.length) { setStatus('Не понял периоды — нужны положительные числа через запятую', true); return; }
-    instance.overrideIndicator({ name, calcParams: params });
-    setStatus(`${name}: периоды ${params.join(', ')} применены`);
+    } catch (e) { /* инстанс не найден — диалог откроется с дефолтом */ }
+    openSettingsDialog({
+      title: `Настройки ${name}`,
+      label: `Периоды через запятую${current ? ` · сейчас: ${current}` : ''}`,
+      value: current || '14',
+      apply: (raw) => {
+        const params = String(raw).split(',').map(s => parseFloat(s.trim()))
+          .filter(n => Number.isFinite(n) && n > 0);
+        if (!params.length) {
+          return 'Нужны положительные числа через запятую — например 14 или 7, 25';
+        }
+        instance.overrideIndicator({ name, calcParams: params });
+        setStatus(`${name}: периоды ${params.join(', ')} применены`);
+        return true;
+      },
+    });
   };
 
   // ---- Стартовые слушатели ----
@@ -1466,11 +1739,17 @@
     registerCustomOverlays();
     registerVolumeIndicator();
     syncTfButtons();
-    // Сброс вида (двойной клик / правый клик → «Reset chart») и захват
-    // кисти/измерителя — слушатели на .tc-chart-stage, защищены от
+    // Сохранённый вид (тип графика + режим шкалы) читаем до первой
+    // загрузки: init графика применит его стилями (apply…Type/ScaleMode)
+    loadSavedView();
+    syncTypeButtons();
+    syncScaleButtons();
+    // Сброс вида (двойной клик / правый клик → «Reset chart»), захват
+    // кисти/измерителя и диалог настроек — слушатели защищены от
     // повторного навешивания
     bindResetViewUi();
     bindStageTools();
+    bindSettingsDialog();
     const input = document.getElementById('test-chart-ticker-input');
     const btn = document.getElementById('test-chart-load-btn');
     if (btn) btn.addEventListener('click', () => window.loadTestChartCandles());
