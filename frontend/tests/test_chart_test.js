@@ -2,7 +2,9 @@
 // с фолбэком на хранилище, автозагрузка последнего графика, сегмент ТФ,
 // догрузка истории при скролле влево (loadMore/applyMoreData), сохранение
 // viewport при смене данных, индикаторы (dropdown + чипы: добавить, настроить
-// периоды, убрать), поллинг, сохранение разметки по тикеру в localStorage,
+// периоды, убрать), volume-гистограмма в главном окне (вкл. по умолчанию,
+// draw с нормировкой по видимой области, метка на оси под курсором),
+// поллинг, сохранение разметки по тикеру в localStorage,
 // note бэкенда о деградации источника. Мини-DOM + fake klinecharts —
 // в стиле остальных тестов проекта (node:vm без браузера).
 const fs = require('fs');
@@ -58,6 +60,7 @@ const els = {
   'tc-leg-l': new El('span'),
   'tc-leg-c': new El('span'),
   'tc-leg-v': new El('span'),
+  'tc-vol-axis': new El('div'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -125,7 +128,12 @@ const chart = {
   subscribeAction: (type, cb) => { actions[type] = cb; },
 };
 const actions = {};
-const klinecharts = { init: () => chart, registerOverlay: () => {} };
+let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
+const klinecharts = {
+  init: () => chart,
+  registerOverlay: () => {},
+  registerIndicator: ind => { registeredIndicator = ind; },
+};
 
 // ---------- Fake fetch, таймеры, prompt ----------
 let fetchQueue = []; const fetchUrls = [];
@@ -319,13 +327,20 @@ const candle = (day, close, month = 11) => ({
   assert(liveOverlays().length === 1, 'смена ТФ: разметка осталась на графике (без дублей)');
 
   // 10) Индикаторы: добавление в нужные панели, настройка периодов, удаление
+  //     (чип volume-гистограммы включён по умолчанию и всегда в списке)
+  assert(createdIndicators['VOL_MAIN'] && createdIndicators['VOL_MAIN'].id === 'candle_pane',
+    'volume: гистограмма включена по умолчанию в главном окне');
+  assert(els['tc-indicator-chips'].children.some(c => c.children[0].textContent === 'VOL_MAIN'),
+    'volume: чип гистограммы показан среди включённых индикаторов');
+  assert(JSON.stringify(registeredIndicator.calc()) === '[]',
+    'volume: без result-значений — ценовая шкала главной панели не растягивается');
   sandbox.window.tcAddIndicator('RSI');
   assert(createdIndicators['RSI'] && createdIndicators['RSI'].id === 'tc_ind_RSI',
     'индикаторы: RSI создан в собственном под-окне');
-  assert(els['tc-indicator-chips'].children.length === 1, 'индикаторы: чип добавлен');
+  assert(els['tc-indicator-chips'].children.length === 2, 'индикаторы: чип добавлен (вместе с volume)');
   sandbox.window.tcAddIndicator('MA');
   assert(createdIndicators['MA'].id === 'candle_pane', 'индикаторы: MA создан в главном окне');
-  assert(els['tc-indicator-chips'].children.length === 2, 'индикаторы: второй чип добавлен');
+  assert(els['tc-indicator-chips'].children.length === 3, 'индикаторы: второй чип добавлен');
 
   sandbox.window.prompt = () => '21';
   const chipRsi = els['tc-indicator-chips'].children.find(c => c.children[0].textContent === 'RSI');
@@ -343,7 +358,64 @@ const candle = (day, close, month = 11) => ({
   chipRsi.children[1]._listeners.click(); // × — убрать
   assert(JSON.stringify(removedIndicators[0]) === JSON.stringify(['tc_ind_RSI', 'RSI']),
     'индикаторы: удаление передаёт (paneId, name) как требует API 9.6');
-  assert(els['tc-indicator-chips'].children.length === 1, 'индикаторы: чип удалён');
+  assert(els['tc-indicator-chips'].children.length === 2, 'индикаторы: чип удалён (volume остался)');
+
+  // 10a) Volume-гистограмма: draw с нормировкой по видимой области и
+  //      метка на оси, следующая за кроссхейром (облик TradingView)
+  const volRects = [];
+  const volCtx = {
+    fillStyle: null,
+    fillRect: (x, y, w, h) => volRects.push([x, y, w, h, volCtx.fillStyle]),
+  };
+  const volList = [
+    { volume: 100, close: 10, open: 9 }, // свеча вверх
+    { volume: 200, close: 8, open: 11 }, // свеча вниз
+    { volume: 0, close: 5, open: 5 },    // нулевой объём — столбика нет
+  ];
+  const volDraw = ({ from, to }) => registeredIndicator.draw({
+    ctx: volCtx,
+    kLineDataList: volList,
+    visibleRange: { from, to },
+    bounding: { top: 0, width: 300, height: 100 },
+    barSpace: { bar: 10, halfBar: 5, gapBar: 8, halfGapBar: 4 },
+    xAxis: { convertToPixel: i => i * 10 },
+  });
+  volDraw({ from: 0, to: 2 });
+  assert(volRects.length === 2, 'volume: нарисовано 2 столбика, нулевой объём пропущен');
+  assert(JSON.stringify(volRects[0]) === JSON.stringify([-4, 90, 8, 10, 'rgba(38, 166, 154, 0.5)']),
+    'volume: столбик вверх — полупрозрачный зелёный, высота 10px из 20% панели');
+  assert(JSON.stringify(volRects[1]) === JSON.stringify([6, 80, 8, 20, 'rgba(239, 83, 80, 0.5)']),
+    'volume: столбик вниз — полупрозрачный красный, высота по максимуму видимой области');
+  volRects.length = 0;
+  volDraw({ from: 0, to: 0 }); // виден один бар — нормировка по нему
+  assert(JSON.stringify(volRects[0]) === JSON.stringify([-4, 80, 8, 20, 'rgba(38, 166, 154, 0.5)']),
+    'volume: нормировка пересчитана по максимуму видимой области');
+  volDraw({ from: 0, to: 2 }); // вернуть полную геометрию для метки на оси
+
+  // Метка на оси: значение и верх столбика под курсором, цвет по свече
+  actions['onCrosshairChange']({ kLineData: volList[0], paneId: 'candle_pane' });
+  assert(els['tc-vol-axis'].textContent === '100' && els['tc-vol-axis'].style.top === '90px' &&
+    els['tc-vol-axis']._classes.has('show') && els['tc-vol-axis']._classes.has('up') &&
+    !els['tc-vol-axis']._classes.has('down'),
+    'volume: метка на оси — 100 на высоте столбика, зелёная');
+  actions['onCrosshairChange']({ kLineData: volList[1], paneId: 'candle_pane' });
+  assert(els['tc-vol-axis'].textContent === '200' && els['tc-vol-axis'].style.top === '80px' &&
+    els['tc-vol-axis']._classes.has('down') && !els['tc-vol-axis']._classes.has('up'),
+    'volume: метка следует за курсором, красная на столбике вниз');
+  actions['onCrosshairChange']({ kLineData: volList[0] }); // paneId нет — курсор ушёл с графика
+  assert(!els['tc-vol-axis']._classes.has('show') && els['tc-vol-axis'].textContent === '',
+    'volume: уход курсора прячет метку на оси');
+
+  sandbox.window.tcRemoveIndicator('VOL_MAIN');
+  assert(JSON.stringify(removedIndicators[removedIndicators.length - 1]) ===
+      JSON.stringify(['candle_pane', 'VOL_MAIN']),
+    'volume: удаление передаёт (candle_pane, VOL_MAIN)');
+  actions['onCrosshairChange']({ kLineData: volList[0], paneId: 'candle_pane' });
+  assert(!els['tc-vol-axis']._classes.has('show'), 'volume: метка скрыта, пока гистограмма выключена');
+  sandbox.window.tcAddIndicator('VOL_MAIN');
+  assert(createdIndicators['VOL_MAIN'] && createdIndicators['VOL_MAIN'].id === 'candle_pane' &&
+    statusOf().text.includes('Гистограмма объёма включена'),
+    'volume: включается обратно через dropdown в главном окне');
 
   // 11) Binance: период поллинга 8 с, UTC-метки парсятся
   els['test-chart-ticker-input'].value = 'BINANCE:BTCUSDT';

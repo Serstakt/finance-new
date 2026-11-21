@@ -1396,6 +1396,38 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   font-variant-numeric: tabular-nums;
 }
 
+/* Метка объёма на оси цены (как в TradingView): маленький тег со значением
+   столбика объёма под курсором; фон окрашен по направлению свечи. Вертикаль
+   задаётся из js (верх столбика на гистограммной шкале), translateY центрирует
+   тег на ней. pointer-events none — не мешает рисованию инструментов. */
+.tc-vol-axis {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  display: none;
+  padding: 2px 6px;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-vol-axis.show {
+  display: block;
+}
+
+.tc-vol-axis.up {
+  background: #26a69a;
+}
+
+.tc-vol-axis.down {
+  background: #ef5350;
+}
+
 /* Панель инструментов «Тест график»: разметка + индикаторы */
 .test-chart-toolbar {
   display: flex;
