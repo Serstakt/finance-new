@@ -107,12 +107,33 @@ const chart = {
       points: (opts.points || []).slice(), opts });
     return id;
   },
-  getOverlayById: id => overlayStore.get(id) || null,
-  removeOverlay: () => {
+  getOverlayById: id => {
+    const o = overlayStore.get(id);
+    return o && !o.removed ? o : null;
+  },
+  removeOverlay: id => {
     for (const o of overlayStore.values()) {
-      if (!o.removed) { o.removed = true; o.opts.onRemoved && o.opts.onRemoved({ overlay: o }); }
+      if (o.removed || (id !== undefined && o.id !== id)) continue;
+      o.removed = true;
+      o.opts.onRemoved && o.opts.onRemoved({ overlay: o });
     }
   },
+  // press-drag захват кисти/измерителя: конвертация координат контейнера
+  // в точки (шаг бара 8 px, сутки на бар) + доступ к DOM и перерисовка.
+  // Вне загруженных свечей timestamp нет — как в живой библиотеке.
+  getDom: () => ({
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 600, height: 400 }),
+  }),
+  convertFromPixel: (coords) => coords.map(c => {
+    const dataIndex = Math.round(c.x / 8);
+    const inRange = dataIndex >= 0 && dataIndex < applied.length;
+    return {
+      dataIndex,
+      timestamp: inRange ? Date.UTC(2026, 10, 18) + dataIndex * 86400000 : null,
+      value: 300 - c.y,
+    };
+  }),
+  updatePane: () => { updatePaneCalls++; },
   createIndicator: (name, isStack, pane) => {
     createdIndicators[name] = pane;
     indInstances[name] = { name, calcParams: [14] };
@@ -133,12 +154,19 @@ const chart = {
   subscribeAction: (type, cb) => { actions[type] = cb; },
   // сброс вида: возврат к последней свече после дефолтных масштаба/сдвига
   scrollToRealTime: () => { callOrder.push(['scrollToRealTime']); },
+  // Двойной клик не сбрасывает вид во время рисования фигуры
+  getChartStore: () => ({
+    getOverlayStore: () => ({ isDrawing: () => fakeDrawing }),
+  }),
 };
+let fakeDrawing = false;
 const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
+const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
+let updatePaneCalls = 0;
 const klinecharts = {
   init: () => chart,
-  registerOverlay: () => {},
+  registerOverlay: tpl => { registeredOverlays[tpl.name] = tpl; },
   registerIndicator: ind => { registeredIndicator = ind; },
 };
 
@@ -157,6 +185,7 @@ const setTimeoutCapturing = (cb, ms) => { timeouts.push({ cb, ms }); return time
 
 let domReadyCb = null;
 const docListeners = {}; // click/keydown и др. — закрытие контекстного меню
+const winListeners = {}; // mousemove/mouseup window — press-drag кисти/измерителя
 const sandbox = {
   document: {
     readyState: 'loading', hidden: false,
@@ -164,7 +193,7 @@ const sandbox = {
     createElement: tag => new El(tag),
     addEventListener: (t, cb) => { if (t === 'DOMContentLoaded') domReadyCb = cb; docListeners[t] = cb; },
   },
-  window: { fetchWithTimeout, addEventListener: () => {}, prompt: () => null },
+  window: { fetchWithTimeout, addEventListener: (t, cb) => { winListeners[t] = cb; }, prompt: () => null },
   localStorage, klinecharts,
   API_BASE: '',
   console, setInterval, clearInterval, setTimeout: setTimeoutCapturing,
@@ -500,6 +529,19 @@ const candle = (day, close, month = 11) => ({
   els['tc-chart-stage']._listeners.dblclick({ preventDefault: () => {} });
   assert(barSpace === 8 && offsetRight === 50, 'сброс: двойной клик возвращает дефолтный вид');
 
+  // 14a2) Двойной клик во время рисования фигуры вид НЕ сбрасывает —
+  //       иначе быстрый двухкликовый инструмент (линия/стрелка) сбивал
+  //       бы собственное рисование
+  barSpace = 25; offsetRight = 180;
+  fakeDrawing = true;
+  els['tc-chart-stage']._listeners.dblclick({ preventDefault: () => {} });
+  assert(barSpace === 25 && offsetRight === 180,
+    'сброс: во время рисования фигуры двойной клик не сбрасывает вид');
+  fakeDrawing = false;
+  els['tc-chart-stage']._listeners.dblclick({ preventDefault: () => {} });
+  assert(barSpace === 8 && offsetRight === 50,
+    'сброс: после завершения рисования двойной клик снова сбрасывает вид');
+
   // 14b) Правый клик — своё меню «Reset chart» вместо браузерного
   const stageEl = els['tc-chart-stage'];
   const menuEl = els['tc-ctx-menu'];
@@ -534,6 +576,218 @@ const candle = (day, close, month = 11) => ({
   stageEl._listeners.contextmenu({ clientX: 100, clientY: 100, preventDefault: () => {} });
   docListeners.click();
   assert(!menuEl._classes.has('show'), 'меню: клик вне меню закрыл его');
+
+  // 15) Полный инструментарий разметки (как в TradingView): кастомные
+  //     шаблоны зарегистрированы, встроенные создаются своими именами
+  assert(registeredOverlays['tc-arrow'] && registeredOverlays['tc-arrow'].totalStep === 3,
+    'стрелка: кастомный overlay (2 точки) зарегистрирован');
+  assert(registeredOverlays['tc-brush'] && registeredOverlays['tc-brush'].totalStep === 2,
+    'кисть: кастомный overlay зарегистрирован');
+  assert(registeredOverlays['tc-measure'] && registeredOverlays['tc-measure'].totalStep === 3,
+    'измеритель: кастомный overlay (2 точки) зарегистрирован');
+
+  const btnTool = () => new El('button');
+  const gazpMarkup = () => (JSON.parse(store.get('test_chart_markup') || '{}')['GAZP'] || []);
+  // press-drag: mousedown ловится на холсте (capture), move/up — на window
+  const stageMDn = (ev) => els['tc-chart-stage']._listeners.mousedown({
+    button: 0, preventDefault: () => {}, stopPropagation: () => {}, ...ev,
+  });
+  const stageMMove = (ev) => winListeners.mousemove(ev);
+  const stageMUp = (ev) => winListeners.mouseup(ev);
+
+  const btnH = btnTool();
+  sandbox.window.tcDrawOverlay('horizontalStraightLine', btnH);
+  assert(liveOverlays().some(o => o.name === 'horizontalStraightLine')
+    && btnH._classes.has('active') && statusOf().text.includes('по всей ширине'),
+    'горизонтальная линия: встроенный overlay создан, иконка активна, подсказка про ширину');
+  chart.removeOverlay(liveOverlays().find(o => o.name === 'horizontalStraightLine').id);
+
+  const btnV = btnTool();
+  sandbox.window.tcDrawOverlay('verticalStraightLine', btnV);
+  assert(liveOverlays().some(o => o.name === 'verticalStraightLine')
+    && statusOf().text.includes('по всей высоте'),
+    'вертикальная линия: создана, подсказка про высоту');
+  chart.removeOverlay(liveOverlays().find(o => o.name === 'verticalStraightLine').id);
+
+  const btnC = btnTool();
+  sandbox.window.tcDrawOverlay('priceChannelLine', btnC);
+  assert(liveOverlays().some(o => o.name === 'priceChannelLine') && statusOf().text.includes('3 раза'),
+    'канал: priceChannelLine создан, подсказка про 3 точки');
+  chart.removeOverlay(liveOverlays().find(o => o.name === 'priceChannelLine').id);
+
+  const btnA = btnTool();
+  sandbox.window.tcDrawOverlay('tc-arrow', btnA);
+  const arrowOv = liveOverlays().find(o => o.name === 'tc-arrow');
+  assert(arrowOv && statusOf().text.includes('стрелка'),
+    'стрелка: кастомный overlay создан через tcDrawOverlay');
+  chart.removeOverlay(arrowOv.id);
+
+  // 16) Геометрия figures шаблонов
+  const arrowFigs = registeredOverlays['tc-arrow'].createPointFigures({
+    coordinates: [{ x: 100, y: 200 }, { x: 180, y: 120 }],
+  });
+  const arrowTip = arrowFigs.find(f => f.type === 'polygon');
+  assert(arrowFigs.length === 2 && arrowFigs[0].type === 'line' && arrowTip,
+    'стрелка: figures — линия + наконечник-многоугольник');
+  assert(arrowTip.attrs.coordinates[0].x === 180 && arrowTip.attrs.coordinates[0].y === 120,
+    'стрелка: наконечник при конечной точке');
+
+  const brushFigs = registeredOverlays['tc-brush'].createPointFigures({
+    coordinates: [{ x: 1, y: 1 }, { x: 5, y: 2 }, { x: 9, y: 4 }],
+  });
+  assert(brushFigs.length === 1 && brushFigs[0].type === 'line'
+    && brushFigs[0].attrs.coordinates.length === 3,
+    'кисть: figures — ломаная через все точки');
+
+  const measFigs = registeredOverlays['tc-measure'].createPointFigures({
+    coordinates: [{ x: 100, y: 200 }, { x: 180, y: 120 }],
+    overlay: { points: [
+      { timestamp: Date.UTC(2026, 10, 18), value: 100 },
+      { timestamp: Date.UTC(2026, 10, 21), value: 110 },
+    ] },
+    barSpace: { bar: 8 }, precision: 2, thousandsSeparator: ' ',
+  });
+  const measRect = measFigs.find(f => f.type === 'rect');
+  const measTexts = measFigs.filter(f => f.type === 'text').map(f => f.attrs.text);
+  assert(measRect && measRect.attrs.x === 100 && measRect.attrs.y === 120
+    && measRect.attrs.width === 80 && measRect.attrs.height === 80,
+    'измеритель: прямоугольник растянут между двумя точками');
+  assert(measRect && measRect.styles.borderColor === '#26a69a',
+    'измеритель: рост цены — зелёная рамка');
+  assert(measTexts.some(t => t.includes('+10.00 (+10.00%)')),
+    'измеритель: дельта цены и проценты в подписи');
+  assert(measTexts.some(t => t.includes('10 баров') && t.includes('3д')),
+    'измеритель: число баров и длительность в подписи');
+
+  // 17) Кисть: press-drag — зажали, повели, отпустили
+  const brushBtn = btnTool();
+  sandbox.window.tcDrawOverlay('tc-brush', brushBtn);
+  assert(brushBtn._classes.has('active') && statusOf().text.includes('Кисть'),
+    'кисть: инструмент активирован с подсказкой');
+  stageMDn({ clientX: 100, clientY: 200 });
+  const brushOv = liveOverlays().find(o => o.name === 'tc-brush');
+  assert(brushOv && brushOv.points.length === 2,
+    'кисть: при нажатии создана с двумя стартовыми точками');
+  stageMMove({ clientX: 110, clientY: 210 });
+  assert(brushOv.points.length === 3 && updatePaneCalls > 0,
+    'кисть: движение добавляет точку и перерисовывает панель');
+  stageMMove({ clientX: 111, clientY: 210 });
+  assert(brushOv.points.length === 3,
+    'кисть: сдвиг меньше порога (2 px) точку не добавляет');
+  stageMMove({ clientX: 130, clientY: 180 });
+  assert(brushOv.points.length === 4,
+    'кисть: следующее движение добавляет ещё точку');
+  stageMUp({});
+  assert(!brushBtn._classes.has('active'),
+    'кисть: после отпускания иконка отжалась');
+  assert(gazpMarkup().length === 1 && gazpMarkup()[0].name === 'tc-brush'
+    && gazpMarkup()[0].points.length === 4,
+    'кисть: путь сохранён в localStorage по тикеру GAZP');
+  assert(Number.isFinite(gazpMarkup()[0].points[0].timestamp)
+    && Number.isFinite(gazpMarkup()[0].points[0].value),
+    'кисть: точки сериализованы как timestamp/value');
+
+  // 18) Кисть: клик без движения — объект удаляется, хлам не сохраняется
+  const brushBtn2 = btnTool();
+  sandbox.window.tcDrawOverlay('tc-brush', brushBtn2);
+  stageMDn({ clientX: 100, clientY: 200 });
+  const degId = liveOverlays().find(o => o.name === 'tc-brush' && o.id !== brushOv.id).id;
+  stageMUp({});
+  assert(chart.getOverlayById(degId) === null,
+    'кисть: клик без движения удалил объект');
+  assert(gazpMarkup().length === 1 && gazpMarkup()[0].points.length === 4,
+    'кисть: пустой клик не изменил сохранённую разметку');
+  assert(statusOf().text.includes('зажмите кнопку'),
+    'кисть: подсказка при пустом клике');
+
+  // 19) Измеритель: растягивание, временный характер, удаление кликом
+  const measBtn = btnTool();
+  sandbox.window.tcDrawOverlay('tc-measure', measBtn);
+  assert(measBtn._classes.has('active'), 'измеритель: инструмент активирован');
+  stageMDn({ clientX: 100, clientY: 150 });
+  const measOv = liveOverlays().find(o => o.name === 'tc-measure');
+  assert(measOv, 'измеритель: при нажатии создан');
+  stageMMove({ clientX: 180, clientY: 120 });
+  assert(measOv.points.length === 2 && measOv.points[1].value === 300 - 120,
+    'измеритель: вторая точка следует за курсором');
+  stageMUp({});
+  assert(!measBtn._classes.has('active') && liveOverlays().find(o => o.name === 'tc-measure'),
+    'измеритель: построен, иконка отжалась, объект ещё живёт');
+  // Клик по холсту — измерение исчезает и в localStorage не попадает
+  stageMDn({ clientX: 100, clientY: 150 });
+  assert(!liveOverlays().find(o => o.name === 'tc-measure'),
+    'измеритель: следующий клик по холсту убрал его (как в TradingView)');
+  assert(gazpMarkup().length === 1 && gazpMarkup()[0].name === 'tc-brush',
+    'измеритель: в localStorage не сохраняется — разметка состоит только из кисти');
+
+  // 20) Переключение инструмента снимает активную кисть/измеритель:
+  //     mousedown после выбора другого инструмента кисть не рисует
+  const brushBtn3 = btnTool();
+  sandbox.window.tcDrawOverlay('tc-brush', brushBtn3);
+  assert(brushBtn3._classes.has('active'), 'кисть: повторная активация');
+  const segBtn = btnTool();
+  sandbox.window.tcDrawOverlay('segment', segBtn);
+  stageMDn({ clientX: 200, clientY: 200 });
+  stageMMove({ clientX: 220, clientY: 220 });
+  stageMUp({});
+  assert(!liveOverlays().find(o => o.name === 'tc-brush' && o.id !== brushOv.id),
+    'переключение: активная кисть снята, mousedown рисует обычный segment');
+  chart.removeOverlay(liveOverlays().find(o => o.name === 'segment').id);
+
+  // 21) Точки за последней свечой (правое поле графика): захват идёт по
+  //     dataIndex (timestamp за границами данных библиотека не отдаёт),
+  //     сериализация синтезирует время с флагом f:1, восстановление
+  //     переводит время обратно в dataIndex — точка остаётся «в будущем»
+  const brushBtn4 = btnTool();
+  sandbox.window.tcDrawOverlay('tc-brush', brushBtn4);
+  stageMDn({ clientX: 100, clientY: 200 }); // dataIndex 13 — правее 2 свечей GAZP
+  // только что созданная кисть — ровно 2 точки (кисть из теста 17 уже с 4)
+  const futureOv = liveOverlays().find(o => o.name === 'tc-brush'
+    && o.points.length === 2 && o.points[0].dataIndex === 13);
+  assert(futureOv && futureOv.points[0].timestamp === undefined
+    && Number.isFinite(futureOv.points[0].vts),
+  'кисть: точка за последней свечой — dataIndex + синтезированное время, без timestamp');
+  stageMMove({ clientX: 130, clientY: 190 });
+  assert(futureOv.points.length === 3 && futureOv.points[2].dataIndex === 16,
+    'кисть: движение в правом поле добавляет точку с dataIndex 16');
+  stageMUp({});
+  const brushSpecs = gazpMarkup().filter(s => s.name === 'tc-brush');
+  const fSpec = brushSpecs[brushSpecs.length - 1];
+  const gazpLast = applied[applied.length - 1];
+  assert(fSpec && fSpec.points.length === 3 && fSpec.points.every(p => p.f === 1),
+    'кисть: путь целиком в правом поле сохранён с флагами f:1');
+  assert(fSpec.points[0].timestamp === gazpLast.timestamp + (13 - (applied.length - 1)) * 86400000,
+    'кисть: синтезированное время = последняя свеча + (dataIndex - lastIndex) * интервал ТФ');
+
+  // Измеритель у точек без timestamp считает длительность по vts
+  const measVtsFigs = registeredOverlays['tc-measure'].createPointFigures({
+    coordinates: [{ x: 0, y: 200 }, { x: 80, y: 240 }],
+    overlay: { points: [
+      { dataIndex: 0, vts: Date.UTC(2026, 10, 18), value: 100 },
+      { dataIndex: 10, vts: Date.UTC(2026, 10, 28), value: 90 },
+    ] },
+    barSpace: { bar: 8 }, precision: 2, thousandsSeparator: ' ',
+  });
+  const measVtsTexts = measVtsFigs.filter(f => f.type === 'text').map(f => f.attrs.text);
+  assert(measVtsTexts.some(t => t.includes('-10.00')),
+    'измеритель: дельта цены считается у точек без timestamp (по vts)');
+  assert(measVtsTexts.some(t => t.includes('10д')),
+    'измеритель: длительность считается у точек без timestamp (по vts)');
+
+  // Восстановление: f:1 → dataIndex, точка остаётся в правом поле
+  els['test-chart-ticker-input'].value = 'SBER';
+  fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  els['test-chart-ticker-input'].value = 'GAZP';
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  const restoredFuture = liveOverlays().find(o => o.name === 'tc-brush'
+    && o.points.some(p => p.dataIndex === 16 && p.timestamp === undefined));
+  assert(restoredFuture, 'кисть: f-точки восстановлены как dataIndex (16) без timestamp');
+  assert(statusOf().text.includes('разметка восстановлена'),
+    'статус: разметка GAZP с правопольными точками восстановлена');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');
