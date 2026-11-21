@@ -147,6 +147,177 @@
     });
   };
 
+  // Стрелка (как «Стрелка» в TradingView): отрезок из двух точек с
+  // треугольным наконечником во второй точке, ориентированным по
+  // направлению линии. Стандартный режим рисования KLineChart:
+  // клик — начало, второй клик — конец.
+  const ARROW_COLOR = '#2962ff';
+  const registerArrowOverlay = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerOverlay({
+      name: 'tc-arrow',
+      totalStep: 3, // 2 точки: начало → конец
+      needDefaultPointFigure: true,
+      createPointFigures: ({ coordinates }) => {
+        if (!coordinates || coordinates.length < 2) return [];
+        const [a, b] = coordinates;
+        // Наконечник: равнобедренный треугольник при вершине b,
+        // ось — вдоль a→b (длина 10 px, полуугол ~26°)
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        const len = 10, half = 0.45;
+        const wing = (off) => ({
+          x: b.x - len * Math.cos(ang + off),
+          y: b.y - len * Math.sin(ang + off),
+        });
+        return [
+          {
+            type: 'line',
+            attrs: { coordinates: [a, b] },
+            styles: { style: 'stroke', color: ARROW_COLOR, size: 1.6 },
+          },
+          {
+            type: 'polygon',
+            attrs: { coordinates: [b, wing(half), wing(-half)] },
+            styles: { style: 'fill', color: ARROW_COLOR },
+          },
+        ];
+      },
+    });
+  };
+
+  // Кисть (свободное рисование, как «Brush» в TradingView): ломаная из
+  // произвольного числа точек. Стандартный click-flow KLineChart не даёт
+  // промежуточных точек, поэтому захват пути делает сам tcDrawOverlay:
+  // зажали кнопку — создали overlay с одной точкой, повели — дописываем
+  // точки в живой инстанс (getOverlayById + updatePane), отпустили —
+  // готово. totalStep 2: точки ставятся программно и рисование не
+  // «ждёт» второго клика.
+  const BRUSH_COLOR = '#2962ff';
+  // Минимальная дистанция между соседними точками кисти (px) —
+  // ограничивает размер массива points при хранении в localStorage
+  const BRUSH_MIN_STEP_PX = 2;
+  const registerBrushOverlay = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerOverlay({
+      name: 'tc-brush',
+      totalStep: 2,
+      needDefaultPointFigure: false, // кружки на узлах кисти не нужны
+      createPointFigures: ({ coordinates }) => {
+        if (!coordinates || coordinates.length < 2) return [];
+        return [{
+          type: 'line',
+          attrs: { coordinates },
+          styles: { style: 'stroke', color: BRUSH_COLOR, size: 2 },
+        }];
+      },
+    });
+  };
+
+  // Формат цены с точностью инструмента и разделителем тысяч
+  // (precision/thousandsSeparator приходят в createPointFigures)
+  const formatPriceValue = (v, precision, thousandsSeparator) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '—';
+    const p = Number.isFinite(precision) ? precision : 2;
+    const fixed = Math.abs(n).toFixed(p);
+    const parts = fixed.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSeparator || ' ');
+    return (n < 0 ? '-' : '') + parts.join('.');
+  };
+
+  // Русское склонение числа баров: 1 бар, 2 бара, 5 баров, 21 бар
+  const pluralBars = (n) => {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return 'бар';
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'бара';
+    return 'баров';
+  };
+
+  // Измеритель (как «Measure» в TradingView): прямоугольник между двумя
+  // точками с дельтой цены (и %), числом баров и длительностью. Цвет —
+  // по направлению движения. Ставится программно тем же press-drag
+  // захватом, что и кисть. Постоянной разметкой не становится: клик по
+  // графику после измерения его убирает (поведение TradingView), в
+  // localStorage он не пишется (см. serializeOverlays).
+  const MEASURE_COLORS = {
+    up: { fill: 'rgba(38, 166, 154, 0.18)', border: '#26a69a' },
+    down: { fill: 'rgba(239, 83, 80, 0.18)', border: '#ef5350' },
+  };
+  // Человекочитаемая длительность между двумя метками времени («5д 3ч»)
+  const fmtTimeSpan = (ms) => {
+    if (!Number.isFinite(ms) || ms <= 0) return '';
+    const min = Math.round(ms / 60000);
+    if (min < 60) return `${min}м`;
+    const hours = Math.floor(min / 60);
+    if (hours < 48) return `${hours}ч ${min % 60}м`;
+    const days = Math.floor(hours / 24);
+    if (days < 61) return `${days}д`;
+    return `${(days / 30.44).toFixed(1)}М`;
+  };
+  const registerMeasureOverlay = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerOverlay({
+      name: 'tc-measure',
+      totalStep: 3, // 2 точки
+      needDefaultPointFigure: false,
+      createPointFigures: ({ coordinates, overlay, barSpace, precision, thousandsSeparator }) => {
+        if (!coordinates || coordinates.length < 2) return [];
+        const [a, b] = coordinates;
+        const [p0, p1] = overlay.points;
+        if (!p0 || !p1 || p0.value == null || p1.value == null) return [];
+        const up = p1.value >= p0.value;
+        const cs = MEASURE_COLORS[up ? 'up' : 'down'];
+        const fmtPrice = (v) => formatPriceValue(v, precision, thousandsSeparator);
+        const delta = p1.value - p0.value;
+        const sign = up ? '+' : '';
+        const pct = p0.value ? (delta / p0.value) * 100 : 0;
+        const bars = barSpace && barSpace.bar
+          ? Math.round(Math.abs(b.x - a.x) / barSpace.bar)
+          : 0;
+        // Точки в правом поле timestamp не имеют — длительность по vts
+        const ts0 = p0.timestamp ?? p0.vts ?? 0;
+        const ts1 = p1.timestamp ?? p1.vts ?? 0;
+        const span = fmtTimeSpan(Math.abs(ts1 - ts0));
+        const priceText = `${sign}${fmtPrice(delta)} (${sign}${pct.toFixed(2)}%)`;
+        const timeText = `${bars} ${pluralBars(bars)}${span ? ` · ${span}` : ''}`;
+        const cx = (a.x + b.x) / 2;
+        const top = Math.min(a.y, b.y);
+        const bottom = Math.max(a.y, b.y);
+        return [
+          {
+            type: 'rect',
+            attrs: {
+              x: Math.min(a.x, b.x),
+              y: top,
+              width: Math.abs(b.x - a.x),
+              height: Math.abs(b.y - a.y),
+            },
+            styles: {
+              style: 'stroke_fill',
+              color: cs.fill,
+              borderColor: cs.border,
+              size: 1,
+            },
+          },
+          // Дельта цены — плашкой у верхней грани, бары/длительность —
+          // у нижней (цвет плашки по направлению, как в TradingView).
+          // Фон по умолчанию у text-figure синий (#1677FF) — перекрываем.
+          { type: 'text', attrs: { x: cx, y: top + 16, text: priceText }, styles: { style: 'fill', color: '#fff', size: 12, backgroundColor: cs.border, borderColor: cs.border } },
+          { type: 'text', attrs: { x: cx, y: bottom - 8, text: timeText }, styles: { style: 'fill', color: '#fff', size: 12, backgroundColor: cs.border, borderColor: cs.border } },
+        ];
+      },
+    });
+  };
+
+  // Все кастомные overlay-шаблоны (прямоугольник, стрелка, кисть,
+  // измеритель). registerOverlay идемпотентен — безопасно звать повторно.
+  const registerCustomOverlays = () => {
+    registerRectOverlay();
+    registerArrowOverlay();
+    registerBrushOverlay();
+    registerMeasureOverlay();
+  };
+
   const setStatus = (text, isError = false, isWarn = false) => {
     const el = document.getElementById('test-chart-status');
     if (el) {
@@ -174,7 +345,7 @@
       setStatus('⚠ Библиотека KLineChart не загрузилась (CDN cdn.jsdelivr.net недоступен)', true);
       return null;
     }
-    registerRectOverlay();
+    registerCustomOverlays();
     registerVolumeIndicator();
     const el = document.getElementById('test-chart-kline');
     if (!el) return null;
@@ -340,15 +511,29 @@
     ctxMenuOpen = true;
   };
 
+  // Идёт ли сейчас рисование фигуры (progress-режим KLineChart): двойной
+  // клик во время построения — это просто второй клик инструмента, сброс
+  // вида в этот момент сбивал бы рисование (в TradingView двойной клик
+  // по графику во время рисования вид не сбрасывает)
+  const isOverlayDrawing = () => {
+    if (!chartInstance || typeof chartInstance.getChartStore !== 'function') return false;
+    try {
+      const store = chartInstance.getChartStore();
+      const overlayStore = store && typeof store.getOverlayStore === 'function'
+        ? store.getOverlayStore() : null;
+      return !!(overlayStore && typeof overlayStore.isDrawing === 'function' && overlayStore.isDrawing());
+    } catch (e) { return false; }
+  };
+
   const bindResetViewUi = () => {
     const stage = document.getElementById('tc-chart-stage');
     const menu = document.getElementById('tc-ctx-menu');
     if (!stage || stage.dataset.resetViewBound) return;
     stage.dataset.resetViewBound = '1';
-    // Двойной клик — сброс вида (как в TradingView)
+    // Двойной клик — сброс вида (как в TradingView), но не во время рисования
     stage.addEventListener('dblclick', (e) => {
       e.preventDefault();
-      resetChartView();
+      if (!isOverlayDrawing()) resetChartView();
     });
     // Правый клик — своё меню вместо браузерного
     stage.addEventListener('contextmenu', (e) => {
@@ -395,9 +580,17 @@
     overlayIds = overlayIds.filter(id => {
       const o = chartInstance.getOverlayById(id);
       if (!o) return false; // объект удалён (в т.ч. контекстным меню) — забываем id
+      if (o.name === 'tc-measure') return true; // жив, но временнЫй — не сохраняем
       const points = (o.points || [])
-        .filter(p => p && p.timestamp != null && p.value != null)
-        .map(p => ({ timestamp: p.timestamp, value: p.value }));
+        .filter(p => p && p.value != null && (p.timestamp != null || Number.isFinite(p.dataIndex)))
+        .map(p => {
+          // Обычная точка — по времени; точка за пределами данных —
+          // синтезированное время + флаг f:1 (см. блок stageEventPoint)
+          if (p.timestamp != null) return { timestamp: p.timestamp, value: p.value };
+          const vts = synthVirtualTs(p) ?? p.vts ?? null;
+          return vts == null ? null : { timestamp: vts, value: p.value, f: 1 };
+        })
+        .filter(Boolean);
       if (points.length) specs.push({ name: o.name, extendData: o.extendData ?? null, points });
       return true;
     });
@@ -450,12 +643,34 @@
     let restored = 0;
     for (const s of loadSavedOverlays(ticker)) {
       if (!s || !s.name || !Array.isArray(s.points) || !s.points.length) continue;
-      // points с timestamp/value рисуются сразу, без режима рисования:
-      // Overlay.setPoints сам переводит timestamp в dataIndex
+      // Измеритель — временнЫй объект, в localStorage попадать не должен
+      // (страховка на случай разметки из старых сборок)
+      if (s.name === 'tc-measure') continue;
+      // «Будущие» точки (f:1 — за последней свечой): timestampToDataIndex
+      // в 9.6 зажимает к ближайшему бару, поэтому переводим время в
+      // dataIndex сами — точка останется в правом поле графика
+      const points = s.points.map(p => {
+        if (!p || p.value == null || p.timestamp == null) return null;
+        if (p.f === 1) {
+          const list = chartInstance.getDataList();
+          const interval = barIntervalMs();
+          if (!list.length || !interval) return null;
+          const last = list[list.length - 1];
+          return {
+            dataIndex: (list.length - 1)
+              + Math.round((p.timestamp - last.timestamp) / interval),
+            value: p.value,
+          };
+        }
+        // points с timestamp/value рисуются сразу, без режима рисования:
+        // Overlay.setPoints сам переводит timestamp в dataIndex
+        return { timestamp: p.timestamp, value: p.value };
+      }).filter(Boolean);
+      if (!points.length) continue;
       const id = chartInstance.createOverlay({
         name: s.name,
         extendData: s.extendData ?? undefined,
-        points: s.points.map(p => ({ timestamp: p.timestamp, value: p.value })),
+        points,
         ...overlayCallbacks(),
       });
       if (id) { overlayIds.push(id); restored++; }
@@ -774,6 +989,9 @@
         lastTicker = null;
         instance.removeOverlay();
         overlayIds = [];
+        // press-drag объекты (измеритель) тоже ушли с холста — забываем id
+        measureLiveId = null;
+        stageToolOverlayId = null;
       }
 
       // Вид графика (масштаб + сдвиг) не должен прыгать при смене данных
@@ -832,13 +1050,224 @@
     else setStatus(`Таймфрейм: ${document.getElementById(`tc-tf-${value}`)?.textContent || value}`);
   };
 
+  // ---- Кисть и измеритель: press-drag захват на холсте (как в TV) ----
+  // KLineChart строит фигуры по кликам и промежуточных точек пути не
+  // даёт, поэтому для кисти и измерителя захват ведём сами: mousedown
+  // перехватывается на .tc-chart-stage в фазе CAPTURE (stopPropagation
+  // не даёт библиотеке начать прокрутку графика), mousemove/mouseup —
+  // на window, чтобы рисование не срывалось при выходе курсора за край.
+  // Объект создаётся сразу с ДВУМЯ совпадающими точками: он валиден
+  // (points.length >= totalStep - 1 → не «progress»-режим) и рисует
+  // прямоугольник нулевого размера, который дальше растягивается
+  // мутацией живого инстанса (getOverlayById + updatePane).
+
+  let armedStageTool = null;    // 'tc-brush' | 'tc-measure' — ожидает нажатия
+  let stageToolDrawing = false; // идёт press-drag захват
+  let stageToolOverlayId = null;
+  let measureLiveId = null;     // построенный измеритель — убирается следующим кликом
+  let lastCaptureXY = null;     // последняя точка кисти в px контейнера
+
+  const STAGE_TOOL_HINTS = {
+    'tc-brush': 'Кисть: зажмите кнопку мыши, нарисуйте линию и отпустите',
+    'tc-measure': 'Измеритель: зажмите кнопку мыши, растяните область и отпустите; клик по графику уберёт измерение',
+  };
+
+  // ---- Точки за пределами данных (правое поле за последней свечой) ----
+  // convertFromPixel за границами загруженных свечей отдаёт только
+  // dataIndex (timestamp = null): рендер KLineChart для таких точек
+  // использует dataIndex, а timestamp при рендере зажался бы к последнему
+  // бару (timestampToDataIndex → binarySearchNearest). Поэтому живая
+  // точка хранит dataIndex + синтезированное время vts (последняя свеча +
+  // (dataIndex - lastIndex) * интервал ТФ), сериализация пишет vts с
+  // флагом f:1, восстановление переводит время обратно в dataIndex.
+
+  const barIntervalMs = () => {
+    const list = chartInstance && chartInstance.getDataList ? chartInstance.getDataList() : [];
+    return list.length > 1
+      ? Math.max(1, list[list.length - 1].timestamp - list[list.length - 2].timestamp)
+      : null;
+  };
+
+  const synthVirtualTs = (p) => {
+    const list = chartInstance && chartInstance.getDataList ? chartInstance.getDataList() : [];
+    const interval = barIntervalMs();
+    if (!list.length || !interval || !Number.isFinite(p.dataIndex)) return null;
+    const last = list[list.length - 1];
+    return Math.round(last.timestamp + (p.dataIndex - (list.length - 1)) * interval);
+  };
+
+  // Экранное событие → точка графика (timestamp/value) + координаты в
+  // системе контейнера. absolute: true — в convertFromPixel y считается
+  // от верха контейнера графика (панель у KLineChart со своим offset).
+  const stageEventPoint = (e) => {
+    if (!chartInstance) return null;
+    const dom = typeof chartInstance.getDom === 'function' ? chartInstance.getDom()
+      : document.getElementById('test-chart-kline');
+    const rect = dom && typeof dom.getBoundingClientRect === 'function'
+      ? dom.getBoundingClientRect() : null;
+    if (!rect || typeof chartInstance.convertFromPixel !== 'function' || e.clientX == null) return null;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const pts = chartInstance.convertFromPixel([{ x, y }], { paneId: 'candle_pane', absolute: true });
+    const p = Array.isArray(pts) ? pts[0] : pts;
+    if (!p || !Number.isFinite(p.value) || !Number.isFinite(p.dataIndex)) return null;
+    const point = { value: p.value };
+    if (p.timestamp != null && Number.isFinite(p.timestamp)) {
+      point.timestamp = p.timestamp;
+    } else {
+      // Правое поле за последней свечой (или до первой): индекс +
+      // синтезированное время для длительности измерителя и сериализации
+      point.dataIndex = p.dataIndex;
+      const vts = synthVirtualTs(p);
+      if (vts == null) return null;
+      point.vts = vts;
+    }
+    return { point, x, y };
+  };
+
+  const removeStageOverlay = (id) => {
+    if (!chartInstance || id == null) return;
+    // onRemoved в overlayCallbacks сам вычистит overlayIds и сохранит разметку
+    chartInstance.removeOverlay(id);
+  };
+
+  const removeLiveMeasure = () => {
+    if (measureLiveId == null) return;
+    removeStageOverlay(measureLiveId);
+    measureLiveId = null;
+  };
+
+  const disarmStageTool = () => {
+    armedStageTool = null;
+    clearToolActive();
+  };
+
+  // Перерисовать панель с overlay после мутации точек. UpdateLevel.Overlay
+  // в 9.6.0 = 1 (числом: enum наружу не отдаётся).
+  const redrawOverlayPane = () => {
+    if (chartInstance && typeof chartInstance.updatePane === 'function') {
+      chartInstance.updatePane(1);
+    }
+  };
+
+  const onStageMouseDown = (e) => {
+    // Измеритель построен и инструмент не активен — клик его убирает
+    // (поведение TradingView), остальное событие пропускаем дальше.
+    if (!armedStageTool && measureLiveId != null) {
+      removeLiveMeasure();
+      return;
+    }
+    if (!armedStageTool || stageToolDrawing || !chartInstance) return;
+    if (e.button !== undefined && e.button !== 0) return; // только ЛКМ
+    const hit = stageEventPoint(e);
+    if (!hit) return; // вне данных (нет свечей/вне оси) — ведём себя как обычно
+    // Не даём KLineChart начать прокрутку/перетаскивание холста
+    e.preventDefault();
+    e.stopPropagation();
+    const name = armedStageTool;
+    const id = chartInstance.createOverlay({
+      name,
+      points: [hit.point, hit.point],
+      ...overlayCallbacks(),
+    });
+    if (!id) { disarmStageTool(); return; }
+    overlayIds.push(id);
+    if (name === 'tc-measure') measureLiveId = id;
+    stageToolOverlayId = id;
+    stageToolDrawing = true;
+    lastCaptureXY = { x: hit.x, y: hit.y };
+  };
+
+  const onStageMouseMove = (e) => {
+    if (!stageToolDrawing || !stageToolOverlayId || !chartInstance) return;
+    const ov = chartInstance.getOverlayById(stageToolOverlayId);
+    if (!ov) return;
+    const hit = stageEventPoint(e);
+    if (!hit) return;
+    if (armedStageTool === 'tc-brush') {
+      // Пишем точку не чаще, чем раз в BRUSH_MIN_STEP_PX — иначе
+      // массив points в localStorage распухает на каждый пиксель
+      const dx = hit.x - lastCaptureXY.x, dy = hit.y - lastCaptureXY.y;
+      if (dx * dx + dy * dy < BRUSH_MIN_STEP_PX * BRUSH_MIN_STEP_PX) return;
+      lastCaptureXY = { x: hit.x, y: hit.y };
+      ov.points.push(hit.point);
+    } else {
+      // Измеритель: вторая точка следует за курсором
+      if (ov.points.length < 2) ov.points.push(hit.point);
+      else ov.points[1] = hit.point;
+    }
+    redrawOverlayPane();
+  };
+
+  const onStageMouseUp = () => {
+    if (!stageToolDrawing) return;
+    stageToolDrawing = false;
+    const id = stageToolOverlayId;
+    stageToolOverlayId = null;
+    lastCaptureXY = null;
+    const name = armedStageTool;
+    disarmStageTool();
+    const ov = id != null && chartInstance ? chartInstance.getOverlayById(id) : null;
+    if (!ov) return;
+    // Объект создан с двумя совпадающими точками: «движения не было» =
+    // у кисти не появилась третья точка, у измерителя точки не разошлись
+    // (за последней свечой у точек нет timestamp — сравниваем dataIndex)
+    const [pt0, pt1] = ov.points || [];
+    const stretched = !!(pt0 && pt1
+      && (pt0.timestamp !== pt1.timestamp || pt0.dataIndex !== pt1.dataIndex
+        || pt0.value !== pt1.value));
+    if (name === 'tc-brush' && (!ov.points || ov.points.length < 3)) {
+      // Клик без движения — рисовать нечего
+      removeStageOverlay(id);
+      setStatus('Кисть: зажмите кнопку мыши и ведите курсор по графику');
+    } else if (name === 'tc-brush') {
+      // Готовый путь кисти — постоянная разметка, сохраняем по тикеру
+      persistOverlays();
+    } else if (name === 'tc-measure' && !stretched) {
+      measureLiveId = null;
+      removeStageOverlay(id);
+      setStatus('Измеритель: зажмите кнопку мыши и растяните область');
+    } else if (name === 'tc-measure') {
+      setStatus('Измерение готово — клик по графику уберёт его');
+    }
+  };
+
+  const bindStageTools = () => {
+    const stage = document.getElementById('tc-chart-stage');
+    if (!stage || stage.dataset.stageToolsBound) return;
+    stage.dataset.stageToolsBound = '1';
+    stage.addEventListener('mousedown', onStageMouseDown, true);
+    window.addEventListener('mousemove', onStageMouseMove);
+    window.addEventListener('mouseup', onStageMouseUp);
+  };
+
+
   // ---- Панель разметки: рисование нативных overlay-объектов KLineChart ----
   // Клик по иконке на вертикальной панели включает инструмент: следующий
   // клик(и) по графику ставят точки фигуры. Правый клик по готовой фигуре
-  // удаляет её (стандартное поведение KLineChart).
+  // удаляет её (стандартное поведение KLineChart). Кисть и измеритель —
+  // через press-drag захват (см. блок выше).
   window.tcDrawOverlay = function (name, btn) {
     const instance = getChartInstance();
     if (!instance) return;
+    // Переключение инструмента снимает активный press-drag захват:
+    // иначе mousedown после выбора другого инструмента рисовал бы кисть
+    armedStageTool = null;
+    // Кисти и измерителю нужны данные: точки привязываются к времени
+    if (name === 'tc-brush' || name === 'tc-measure') {
+      const hasData = typeof instance.getDataList !== 'function' || instance.getDataList().length > 0;
+      if (!hasData) {
+        setStatus('Сначала загрузите график — инструменту нужны свечи', true);
+        return;
+      }
+      setToolActive(btn);
+      // Активация инструмента убирает «висящее» измерение (как в TV),
+      // чтобы старый прямоугольник не остался на графике навсегда
+      removeLiveMeasure();
+      armedStageTool = name;
+      setStatus(STAGE_TOOL_HINTS[name]);
+      return;
+    }
     // Подсветка активного инструмента — как выбранная иконка в TradingView
     setToolActive(btn);
     if (name === 'text') {
@@ -856,7 +1285,11 @@
     const hints = {
       segment: 'Кликните по графику 2 раза — начало и конец отрезка',
       horizontalRayLine: 'Кликните по графику — уровень поставится на эту цену',
+      horizontalStraightLine: 'Кликните по графику — линия пройдёт по всей ширине на этой цене',
+      verticalStraightLine: 'Кликните по графику — линия пройдёт по всей высоте на этом времени',
       'tc-rect': 'Кликните по графику 2 раза — противоположные углы прямоугольника',
+      'tc-arrow': 'Кликните по графику 2 раза — стрелка от начала к концу',
+      priceChannelLine: 'Кликните по графику 3 раза — две точки задают границу канала, третья — его ширину',
       fibonacciLine: 'Кликните по графику 2 раза — уровни 0.236…∞ между ценами',
     };
     const id = instance.createOverlay({ name, ...overlayCallbacks() });
@@ -866,6 +1299,11 @@
 
   window.tcClearOverlays = function () {
     if (!chartInstance) return;
+    // Снимаем активный инструмент press-drag захвата (если был)
+    armedStageTool = null;
+    stageToolDrawing = false;
+    stageToolOverlayId = null;
+    measureLiveId = null;
     chartInstance.removeOverlay();
     overlayIds = [];
     clearToolActive();
@@ -1025,12 +1463,14 @@
   };
 
   document.addEventListener('DOMContentLoaded', () => {
-    registerRectOverlay();
+    registerCustomOverlays();
     registerVolumeIndicator();
     syncTfButtons();
-    // Сброс вида (двойной клик / правый клик → «Reset chart») — слушатели
-    // на .tc-chart-stage, защищены от повторного навешивания
+    // Сброс вида (двойной клик / правый клик → «Reset chart») и захват
+    // кисти/измерителя — слушатели на .tc-chart-stage, защищены от
+    // повторного навешивания
     bindResetViewUi();
+    bindStageTools();
     const input = document.getElementById('test-chart-ticker-input');
     const btn = document.getElementById('test-chart-load-btn');
     if (btn) btn.addEventListener('click', () => window.loadTestChartCandles());

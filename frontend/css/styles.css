@@ -1238,11 +1238,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   background: #131722;
   border-right: 1px solid #2a2e39;
   box-sizing: border-box;
+  /* Инструментов стало больше — на низких экранах даём прокрутку */
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .tc-draw-toolbar button {
   width: 34px;
   height: 34px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1279,6 +1283,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .tc-draw-toolbar .tc-draw-sep {
   width: 24px;
   height: 1px;
+  flex-shrink: 0;
   background: #2a2e39;
   margin: 4px 0;
 }
