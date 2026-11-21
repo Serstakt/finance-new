@@ -1544,6 +1544,117 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   color: #fff;
 }
 
+/* Сегмент типа графика (свечи/бары/линия/области) — склейка как у
+   ТФ-сегмента, иконки как на панели разметки */
+.tc-type-group {
+  display: flex;
+  margin-left: 4px;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tc-type-group button {
+  background: #2a2e39;
+  border: none;
+  border-right: 1px solid #363a45;
+  color: #d1d4dc;
+  width: 34px;
+  padding: 8px 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tc-type-group button:last-child {
+  border-right: none;
+}
+
+.tc-type-group button svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.tc-type-group button:hover {
+  background: #363a45;
+}
+
+.tc-type-group button.active {
+  background: #2962ff;
+  color: #fff;
+}
+
+/* Кластер шкалы цены («авто»/log/%) у правого края холста — как кнопки
+   TradingView в углу оси цены; поверх канваса, под контекстным меню */
+.tc-scale-cluster {
+  position: absolute;
+  right: 8px;
+  bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 6;
+}
+
+.tc-scale-btn {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(42, 46, 57, 0.9);
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tc-scale-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.tc-scale-btn:hover {
+  border-color: #4a5060;
+  background: #363a45;
+}
+
+.tc-scale-btn.active {
+  background: #2962ff;
+  border-color: #2962ff;
+  color: #fff;
+}
+
+/* Диалог настроек (заметка/периоды индикатора): подпись поля,
+   многострочное поле заметки и inline-ошибка валидации */
+.tc-settings-label {
+  font-size: 12px;
+  color: #787b86;
+  margin: -8px 0 10px;
+}
+
+.tc-settings-textarea {
+  resize: vertical;
+  min-height: 64px;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.tc-settings-error {
+  display: none;
+  font-size: 12px;
+  color: #ef5350;
+  margin: -6px 0 8px;
+}
+
 /* Dropdown индикаторов — в стиле прежнего #test-chart-interval */
 #tc-indicator-select {
   background: #2a2e39;
