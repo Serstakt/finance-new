@@ -2,15 +2,19 @@
 // с фолбэком на хранилище, автозагрузка последнего графика, сегмент ТФ,
 // догрузка истории при скролле влево (loadMore/applyMoreData), сохранение
 // viewport при смене данных, сброс вида (двойной клик / правый клик →
-// «Reset chart»: дефолтные масштаб/сдвиг + scrollToRealTime), индикаторы
-// (dropdown + чипы: добавить, настроить периоды, убрать), volume-гистограмма
+// «Reset chart»: дефолтные масштаб/сдвиг + scrollToRealTime; правый клик
+// по фигуре удаляет её без «Reset chart», Ctrl+Z убирает последнюю
+// фигуру), индикаторы (dropdown + чипы: добавить, настроить периоды,
+// убрать; в главное окно — стеком isStack: 9.6 при isStack=false затирает
+// индикаторов панели), volume-гистограмма
 // в главном окне (вкл. по умолчанию, draw с нормировкой по видимой области,
 // метка на оси под курсором), поллинг, сохранение разметки по тикеру
 // в localStorage, note бэкенда о деградации источника, диалог настроек
 // вместо window.prompt (заметка на графике и периоды индикатора: Enter
 // применяет, отмена/ошибки inline), тип графика (свечи/бары/линия/области
-// через candle.type) и режим шкалы цены (normal/log/percentage + кнопка
-// «авто» для автоподгона оси) с сохранением выбора в localStorage.
+// через candle.type) и режим шкалы цены (normal/log/percentage + кнопка-
+// переключатель «авто»: включить/выключить автоподгонку оси) с сохранением
+// выбора в localStorage.
 // Облик/поведение TradingView: фигуры без меток на осях (встроенные
 // шаблоны пере-регистрированы без needDefaultX/YAxisFigure), догоняющий
 // клик (быстрый последний клик фигуры, проглоченный окном dblclick 9.6,
@@ -119,6 +123,7 @@ let applied = []; const updated = []; const callOrder = [];
 let barSpace = 8, offsetRight = 50, moreState = null;
 let loadMoreCb = null;
 const removedIndicators = []; const overrides = []; const createdIndicators = {};
+const createdStacks = {}; // isStack индикаторов: 9.6 при isStack=false затирает панель
 const indInstances = {};
 // progress-рисование (догоняющий клик): активный progress-объект 9.6
 let fakeProgressInfo = null;
@@ -204,6 +209,7 @@ const chart = {
   updatePane: () => { updatePaneCalls++; },
   createIndicator: (name, isStack, pane) => {
     createdIndicators[name] = pane;
+    createdStacks[name] = isStack;
     indInstances[name] = { name, calcParams: [14] };
     return 'ind_' + name;
   },
@@ -225,8 +231,14 @@ const chart = {
   // тип графика/шкала: partial-стили запоминаем для проверок
   setStyles: s => { styleCalls.push(s); },
   // автоскейл: ось цены главной панели с флагом автоподгона (9.6
-  // снимает его при перетаскивании шкалы, setStyles с yAxis.type возвращает)
-  _candlePane: { getAxisComponent: () => ({ getAutoCalcTickFlag: () => autoCalcTickFlag }) },
+  // снимает его при перетаскивании шкалы, setStyles с yAxis.type
+  // возвращает, кнопка «авто»-переключатель снимает через set…Flag)
+  _candlePane: {
+    getAxisComponent: () => ({
+      getAutoCalcTickFlag: () => autoCalcTickFlag,
+      setAutoCalcTickFlag: f => { autoCalcTickFlag = f; },
+    }),
+  },
   // сброс вида/догоняющий клик: OverlayStore 9.6 (isDrawing для guard'а
   // dblclick, progress-инстанс для завершения фигуры последним кликом)
   getChartStore: () => ({ getOverlayStore: () => fakeOverlayStore }),
@@ -464,6 +476,12 @@ const candle = (day, close, month = 11) => ({
   sandbox.window.tcAddIndicator('MA');
   assert(createdIndicators['MA'].id === 'candle_pane', 'индикаторы: MA создан в главном окне');
   assert(els['tc-indicator-chips'].children.length === 3, 'индикаторы: второй чип добавлен');
+  // isStack=true для главного окна обязателен: в 9.6 IndicatorStore.addInstance
+  // при isStack=false делает paneInstances.clear() — MA затирал бы volume
+  assert(createdStacks['MA'] === true && createdStacks['VOL_MAIN'] === true,
+    'индикаторы: MA и volume в главное окно стеком (isStack) — не затирают друг друга');
+  assert(createdStacks['RSI'] === false,
+    'индикаторы: RSI в собственном под-окне — не стек');
 
   // 10a) Диалог настроек индикатора вместо window.prompt: клик по имени
   //      чипа открывает модальное окно с текущими периодами, «Применить»
@@ -723,6 +741,53 @@ const candle = (day, close, month = 11) => ({
   docListeners.click();
   assert(!menuEl._classes.has('show'), 'меню: клик вне меню закрыл его');
 
+  // 14c) Правый клик по фигуре удаляет её силами библиотеки (колбэк
+  //      onRightClick срабатывает на mousedown непосредственно перед
+  //      contextmenu) — «Reset chart» в этом случае не открывается
+  const delBtn = new El('button');
+  sandbox.window.tcDrawOverlay('segment', delBtn);
+  const ovDel = [...overlayStore.values()].reverse().find(o => o.name === 'segment');
+  assert(typeof ovDel.opts.onRightClick === 'function',
+    'меню: у фигур навешен колбэк onRightClick');
+  assert(ovDel.opts.onRightClick({ overlay: ovDel }) === false,
+    'меню: onRightClick возвращает false — библиотека удаляет фигуру штатно');
+  stageEl._listeners.contextmenu({ clientX: 200, clientY: 200, preventDefault: () => {} });
+  assert(!menuEl._classes.has('show'),
+    'меню: правый клик по фигуре не открывает «Reset chart»');
+  chart.removeOverlay(ovDel.id); // библиотека удалила фигуру этим же кликом
+
+  // Окно подавления истекло — правый клик мимо фигур снова открывает меню
+  await new Promise(r => setTimeout(r, 360));
+  stageEl._listeners.contextmenu({ clientX: 200, clientY: 200, preventDefault: () => {} });
+  assert(menuEl._classes.has('show'),
+    'меню: правый клик мимо фигур по-прежнему открывает «Reset chart»');
+  docListeners.click();
+
+  // 14d) Ctrl+Z — убрать последнюю нарисованную фигуру (как в TradingView)
+  const undoBtn = new El('button');
+  sandbox.window.tcDrawOverlay('segment', undoBtn);
+  const ovUndo = [...overlayStore.values()].reverse().find(o => o.name === 'segment');
+  ovUndo.points = [
+    { timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 0 },
+    { timestamp: Date.UTC(2026, 10, 20), value: 145, dataIndex: 1 },
+  ];
+  ovUndo.opts.onDrawEnd();
+  const beforeUndo = liveOverlays().length;
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(liveOverlays().length === beforeUndo - 1 && statusOf().text.includes('удалена'),
+    'Ctrl+Z: последняя фигура удалена, статус сообщает об этом');
+  // Фокус в поле ввода — сочетание не должно трогать разметку
+  docListeners.keydown({
+    ctrlKey: true, key: 'z', code: 'KeyZ',
+    target: els['test-chart-ticker-input'], preventDefault: () => {},
+  });
+  assert(liveOverlays().length === beforeUndo - 1,
+    'Ctrl+Z: при фокусе в поле ввода разметка не тронута');
+  // Без Ctrl — тоже
+  docListeners.keydown({ key: 'z', preventDefault: () => {} });
+  assert(liveOverlays().length === beforeUndo - 1,
+    'Ctrl+Z: без Ctrl разметка не тронута');
+
   // 15) Полный инструментарий разметки (как в TradingView): кастомные
   //     шаблоны зарегистрированы, встроенные создаются своими именами
   assert(registeredOverlays['tc-arrow'] && registeredOverlays['tc-arrow'].totalStep === 3,
@@ -976,19 +1041,30 @@ const candle = (day, close, month = 11) => ({
     'режим шкалы сохранён в localStorage');
 
   // Автомасштаб: перетаскивание шкалы цены сняло автоподгонку (ручной
-  // масштаб, как в TV) — отпускание кнопки гасит «авто», клик возвращает
+  // масштаб, как в TV) — отпускание кнопки гасит «авто»; кнопка «авто» —
+  // переключатель: возвращает автоподгонку и, что важнее, выключает её
+  // (тем же флагом, что и перетаскивание оси — шкала фиксируется)
   autoCalcTickFlag = false;
   winListeners.mouseup();
   assert(!els['tc-scale-auto']._classes.has('active'),
     'автоскейл: перетаскивание шкалы сняло автоподгонку, кнопка «авто» отжалась');
   styleCalls.length = 0;
-  sandbox.window.tcAutoSizeScale();
+  sandbox.window.tcAutoSizeScale(); // выключена → включить
   assert(styleCalls.length === 1 && styleCalls[0].yAxis.type === 'percentage',
     'автоскейл: «авто» возвращает автоподгонку setStyles с текущим режимом шкалы');
   autoCalcTickFlag = true; // setStyles в 9.6 сам возвращает флаг оси
-  sandbox.window.tcAutoSizeScale();
-  assert(els['tc-scale-auto']._classes.has('active') && statusOf().text.includes('уже'),
-    'автоскейл: при включённой автоподгонке повторный клик ничего не меняет');
+  sandbox.window.tcAutoSizeScale(); // включена → выключить
+  assert(autoCalcTickFlag === false && !els['tc-scale-auto']._classes.has('active')
+    && statusOf().text.includes('выключен'),
+    'автоскейл: повторный клик по «авто» выключает автоподгонку (шкала зафиксирована)');
+  sandbox.window.tcAutoSizeScale(); // выключена → снова включить
+  assert(styleCalls[styleCalls.length - 1].yAxis.type === 'percentage'
+    && statusOf().text.includes('включён'),
+    'автоскейл: зафиксированную шкалу можно вернуть под автоподгонку');
+  autoCalcTickFlag = true; // setStyles в 9.6 сам возвращает флаг оси
+  winListeners.mouseup(); // отпускание кнопки актуализирует состояние «авто»
+  assert(els['tc-scale-auto']._classes.has('active'),
+    'автоскейл: после возврата автоподгонки кнопка снова активна');
 
   // 22a) Выбор переживает «перезагрузку»: повторный DOMContentLoaded
   //      подтягивает тип/шкалу из localStorage и синхронизирует кнопки

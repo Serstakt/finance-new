@@ -30,7 +30,9 @@
 //     клик → контекстное меню «Reset chart» возвращает дефолтные масштаб
 //     и сдвиг от правого края (снимаются с инстанса сразу после init)
 //     и прокручивает график к последней свече (scrollToRealTime) —
-//     «улетевший» зум/сдвиг всегда можно вернуть;
+//     «улетевший» зум/сдвиг всегда можно вернуть. Правый клик по фигуре
+//     меню не открывает (библиотека этим же кликом удаляет фигуру),
+//     последнюю фигуру также убирает Ctrl+Z;
 //   - тип графика как в TradingView: сегмент «свечи/бары/линия/области»
 //     (candle.type 9.6: линия и области — area-тип, у линии заливка
 //     прозрачная; метки max/min у линий скрываются, как в TV);
@@ -38,7 +40,8 @@
 //     края холста (yAxis.type normal|log|percentage, режимы
 //     взаимоисключающие и только для панели свечей). Перетаскивание шкалы
 //     цены снимает автоподгонку оси (autoCalcTickFlag → ручной масштаб,
-//     как в TV), кнопка «авто» возвращает; тип и режим переживают
+//     как в TV), кнопка «авто» — переключатель: возвращает автоподгонку
+//     или замораживает шкалу по текущей области; тип и режим переживают
 //     перезагрузку (localStorage);
 //   - диалог настроек вместо window.prompt (чужеродный и блокирует
 //     вкладку): текст заметки и периоды индикатора вводятся в модальном
@@ -157,7 +160,8 @@
   };
 
   // Автоподгонка шкалы: перетаскивание оси цены снимает её (setExtremum),
-  // setStyles с yAxis.type возвращает
+  // setStyles с yAxis.type возвращает — кнопка «авто» переключает туда и
+  // обратно (см. tcAutoSizeScale ниже)
   const isAutoScaleOn = () => {
     const axis = candlePaneAxis();
     return !axis || axis.getAutoCalcTickFlag() !== false;
@@ -205,18 +209,35 @@
     setStatus(`Шкала цены: ${SCALE_LABELS[mode]}`);
   };
 
+  // Кнопка-переключатель (как «auto» на шкале цены в TradingView): если
+  // автоподгонка выключена — включает (setStyles с текущим режимом шкалы
+  // возвращает autoCalcTickFlag), если включена — выключает, замораживая
+  // шкалу по текущей видимой области: Axis.setAutoCalcTickFlag(false)
+  // работает так же, как перетаскивание оси (Axis.setExtremum → флаг
+  // false), но не меняет экстремум — шкала остаётся как есть и больше
+  // не подгоняется, пока кнопку не нажмут снова
   window.tcAutoSizeScale = function () {
     if (!getChartInstance()) return;
+    if (isAutoScaleOn()) {
+      const axis = candlePaneAxis();
+      if (!axis || typeof axis.setAutoCalcTickFlag !== 'function') {
+        // Внутреннее API оси недоступно — выключить автоподгонку нечем
+        setStatus('Автомасштаб: шкала уже подгоняется по видимой области');
+        return;
+      }
+      axis.setAutoCalcTickFlag(false);
+      // Перерисовать панель (UpdateLevel.Drawer в 9.6.0 = 3), чтобы ось
+      // перерисовалась не дожидаясь следующего тика/движения курсора
+      if (typeof chartInstance.updatePane === 'function') chartInstance.updatePane(3);
+      setStatus('Автомасштаб выключен: шкала зафиксирована по текущей области');
+    } else {
+      // setStyles с текущим режимом шкалы возвращает автоподгонку оси
+      applyScaleMode();
+      setStatus('Автомасштаб включён: шкала подгоняется по видимой области');
+    }
     // Актуализируем кнопку на случай, если состояние оси изменилось мимо
     // mouseup (например, из другого обработчика библиотеки)
     syncScaleButtons();
-    if (isAutoScaleOn()) {
-      setStatus('Автомасштаб: шкала уже подгоняется по видимой области');
-      return;
-    }
-    // setStyles с текущим режимом шкалы возвращает автоподгонку оси
-    applyScaleMode();
-    setStatus('Автомасштаб включён: шкала подгоняется по видимой области');
   };
 
 
@@ -718,9 +739,13 @@
         offsetRight: chartInstance.getOffsetRightDistance(),
       };
       // Volume-гистограмма включена по умолчанию (как в TradingView);
-      // выключается чипом, включается обратно через dropdown индикаторов
+      // выключается чипом, включается обратно через dropdown индикаторов.
+      // isStack=true обязателен: в 9.6 IndicatorStore.addInstance при
+      // isStack=false делает paneInstances.clear() — каждый следующий
+      // индикатор главного окна стирал бы предыдущих (гистограмма объёма
+      // исчезала при добавлении MA/EMA/BOLL…, чип при этом оставался)
       if (!indicators.has(VOL_MAIN)) {
-        const id = chartInstance.createIndicator(VOL_MAIN, false, { id: 'candle_pane' });
+        const id = chartInstance.createIndicator(VOL_MAIN, true, { id: 'candle_pane' });
         if (id) {
           indicators.set(VOL_MAIN, 'candle_pane');
           renderIndicatorChips();
@@ -801,6 +826,11 @@
   // на своём контейнере) — своё мы вешаем выше, на .tc-chart-stage.
 
   let ctxMenuOpen = false;
+  // Date.now() последнего правого клика, попавшего по фигуре: библиотека
+  // зовёт колбэк onRightClick на mousedown (удаляет объект/отменяет
+  // рисование), а contextmenu всплывает на холсте сразу после — по нему
+  // понимаем, что «Reset chart» в этот момент открывать не нужно
+  let lastOverlayRightClickAt = 0;
 
   const hideCtxMenu = () => {
     const menu = document.getElementById('tc-ctx-menu');
@@ -860,9 +890,17 @@
       e.preventDefault();
       if (!isOverlayDrawing() && Date.now() - lastDrawEndAt >= 350) resetChartView();
     });
-    // Правый клик — своё меню вместо браузерного
+    // Правый клик — своё меню вместо браузерного. Правый клик по фигуре
+    // библиотека обрабатывает сама (удаляет её / отменяет рисование —
+    // onRightClick сработал на mousedown непосредственно перед этим
+    // contextmenu): «Reset chart» в этом случае не открываем, а уже
+    // открытое меню прячем
     stage.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (Date.now() - lastOverlayRightClickAt < 350) {
+        hideCtxMenu();
+        return;
+      }
       showCtxMenu(e.clientX, e.clientY);
     });
     const item = menu && document.getElementById('tc-ctx-reset');
@@ -871,13 +909,46 @@
       // document-обработчик ниже — он только прячет меню)
       item.addEventListener('click', () => resetChartView());
     }
-    // Закрытие меню: клик где угодно, Escape, изменение размера окна
+    // Закрытие меню: клик где угодно, Escape, изменение размера окна.
+    // Ctrl+Z — убрать последнюю нарисованную фигуру (как в TradingView):
+    // только при видимом разделе, без открытого диалога, ввода в полях
+    // и незавершённого рисования
     document.addEventListener('click', () => { if (ctxMenuOpen) hideCtxMenu(); });
     document.addEventListener('keydown', (e) => {
       if (e && e.key === 'Escape' && ctxMenuOpen) hideCtxMenu();
+      if (!e || !e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      // «z» любой раскладки: key на русской раскладке — «я», code от неё не зависит
+      if (!(e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z' || e.key === 'я' || e.key === 'Я')) return;
+      const tag = e.target && e.target.tagName ? String(e.target.tagName).toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (dialogCtx || isOverlayDrawing() || stageToolDrawing) return;
+      if (!chartSectionVisible()) return;
+      if (undoLastOverlay()) {
+        e.preventDefault();
+        setStatus('Последняя фигура удалена (Ctrl+Z)');
+      } else {
+        setStatus('Отменять нечего: разметки на графике нет');
+      }
     });
     window.addEventListener('resize', () => { if (ctxMenuOpen) hideCtxMenu(); });
   };
+
+  // ---- Ctrl+Z: убрать последнюю нарисованную фигуру (как в TradingView) ----
+  // Дублирует правый клик по фигуре: на плотной разметке попасть точно
+  // по линии сложнее, чем нажать сочетание. onRemoved из overlayCallbacks
+  // сам вычистит overlayIds и сохранит разметку.
+  const undoLastOverlay = () => {
+    if (!chartInstance) return false;
+    for (let i = overlayIds.length - 1; i >= 0; i--) {
+      const id = overlayIds[i];
+      if (!chartInstance.getOverlayById(id)) continue; // удалён раньше (правый клик, «Очистить»)
+      if (id === measureLiveId) measureLiveId = null;
+      removeStageOverlay(id);
+      return true;
+    }
+    return false;
+  };
+  window.tcUndoLastOverlay = undoLastOverlay;
 
   // ---- Диалог настроек (текст заметки, периоды индикатора) ----
   // Замена window.prompt: тот выглядит чужеродно и блокирует вкладку.
@@ -1051,6 +1122,14 @@
     },
     onPressedMoveEnd: () => persistOverlays(),
     onDeselected: () => persistOverlays(),
+    onRightClick: () => {
+      // Правый клик попал по фигуре: библиотека на mousedown зовёт колбэк
+      // и удаляет объект (или отменяет рисование), если колбэк вернул не
+      // true. false — штатное удаление; момент запоминаем, чтобы следом
+      // всплывшее contextmenu не открывало «Reset chart»
+      lastOverlayRightClickAt = Date.now();
+      return false;
+    },
     onRemoved: (e) => {
       const id = e && e.overlay && e.overlay.id;
       if (id) overlayIds = overlayIds.filter(x => x !== id);
@@ -1964,7 +2043,11 @@
     if (!instance || !name) return;
     if (indicators.has(name)) { setStatus(`Индикатор ${name} уже включён`); return; }
     const pane = paneForIndicator(name);
-    const id = instance.createIndicator(name, false, pane);
+    // Стек для главного окна (см. комментарий к volume при init): в 9.6
+    // IndicatorStore.addInstance при isStack=false затирает индикаторов
+    // панели, поэтому MA/EMA/BOLL… добавляются поверх гистограммы, а не
+    // вместо неё. Под-окна каждый раз создаются новые — там не важно.
+    const id = instance.createIndicator(name, pane.id === 'candle_pane', pane);
     if (!id) { setStatus(`Индикатор ${name} не поддерживается библиотекой`, true); return; }
     indicators.set(name, pane.id);
     renderIndicatorChips();
