@@ -20,11 +20,22 @@ from .models import schemas
 FRONTEND_PATH = Path(__file__).parent.parent / "frontend"
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """Статика фронтенда без эвристического кэша браузера: правки CSS/JS
+    видны после обычной перезагрузки страницы (etag-ревалидация остаётся),
+    как у index.html, который и так отдаётся с Cache-Control: no-cache."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Монтируем статику фронтенда при старте, чтобы "/..." не перехватывал /api/*-маршруты."""
-    application.mount("/css", StaticFiles(directory=FRONTEND_PATH / "css"), name="css")
-    application.mount("/js", StaticFiles(directory=FRONTEND_PATH / "js"), name="js")
+    application.mount("/css", NoCacheStaticFiles(directory=FRONTEND_PATH / "css"), name="css")
+    application.mount("/js", NoCacheStaticFiles(directory=FRONTEND_PATH / "js"), name="js")
 
     # Фоновый цикл проверки ценовых алертов: алерты живут в таблице
     # price_alerts и проверяются сервером каждые 60 с — даже когда вкладка
