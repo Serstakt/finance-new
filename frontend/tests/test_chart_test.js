@@ -11,6 +11,12 @@
 // применяет, отмена/ошибки inline), тип графика (свечи/бары/линия/области
 // через candle.type) и режим шкалы цены (normal/log/percentage + кнопка
 // «авто» для автоподгона оси) с сохранением выбора в localStorage.
+// Облик/поведение TradingView: фигуры без меток на осях (встроенные
+// шаблоны пере-регистрированы без needDefaultX/YAxisFigure), догоняющий
+// клик (быстрый последний клик фигуры, проглоченный окном dblclick 9.6,
+// достраивает фигуру без лишнего клика «мимо»), guard сброса вида на
+// dblclick сразу после достройки, точность осей под-окон по размаху
+// шкалы (ось MACD «4,000.0000» → «4,000»).
 // Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
 // (node:vm без браузера).
 const fs = require('fs');
@@ -31,7 +37,7 @@ class El {
     this.id = ''; this.textContent = ''; this.value = ''; this.title = '';
     this.className = ''; this._classes = new Set(); this.style = {};
     this.children = []; this.parentNode = null; this.offsetParent = {};
-    this.dataset = {}; this._listeners = {};
+    this.dataset = {}; this._listeners = {}; this._listenerList = {};
   }
   get classList() {
     const cls = this._classes;
@@ -42,7 +48,16 @@ class El {
   }
   set innerHTML(v) { if (!v) this.children = []; }
   get innerHTML() { return 'x'; }
-  addEventListener(t, cb) { this._listeners[t] = cb; }
+  // Слушателей одного типа может быть несколько (на холсте висят и
+  // обработчик кисти/измерителя, и догоняющий клик фигуры) — «_listeners»
+  // оставлен как диспетчер, вызывающий всех зарегистрированных
+  addEventListener(t, cb) {
+    const list = (this._listenerList[t] = this._listenerList[t] || []);
+    if (!list.includes(cb)) list.push(cb);
+    this._listeners[t] = (...args) => {
+      for (const fn of this._listenerList[t] || []) fn(...args);
+    };
+  }
   appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
   querySelectorAll(sel) { return sel === '.widget-fallback' ? [] : []; }
 }
@@ -105,6 +120,22 @@ let barSpace = 8, offsetRight = 50, moreState = null;
 let loadMoreCb = null;
 const removedIndicators = []; const overrides = []; const createdIndicators = {};
 const indInstances = {};
+// progress-рисование (догоняющий клик): активный progress-объект 9.6
+let fakeProgressInfo = null;
+let progressCompleted = 0;
+const fakeOverlayStore = {
+  isDrawing: () => fakeDrawing,
+  getProgressInstanceInfo: () => fakeProgressInfo,
+  progressInstanceComplete: () => {
+    if (fakeProgressInfo) { fakeProgressInfo = null; progressCompleted++; }
+  },
+  updateProgressInstanceInfo: (paneId, appointPaneFlag) => {
+    if (fakeProgressInfo) {
+      fakeProgressInfo.paneId = paneId;
+      if (appointPaneFlag !== undefined) fakeProgressInfo.appointPaneFlag = appointPaneFlag;
+    }
+  },
+};
 
 const chart = {
   applyNewData: (d, more) => { applied = d.slice(); moreState = (more === undefined ? true : more); callOrder.push(['applyNewData', d.length]); },
@@ -125,8 +156,22 @@ const chart = {
   loadMore: cb => { loadMoreCb = cb; },
   createOverlay: opts => {
     const id = 'ov' + (++ovSeq);
-    overlayStore.set(id, { id, name: opts.name, extendData: opts.extendData,
-      points: (opts.points || []).slice(), opts });
+    const o = { id, name: opts.name, extendData: opts.extendData,
+      points: (opts.points || []).slice(), opts };
+    overlayStore.set(id, o);
+    if (!opts.points || !opts.points.length) {
+      // без точек — progress-режим 9.6 (кликами ждёт остальные точки);
+      // колбэки, как у реального OverlayImp, живут прямо на объекте
+      Object.assign(o, {
+        currentStep: 1,
+        totalStep: (registeredOverlays[opts.name] || {}).totalStep || 2,
+        onDrawEnd: opts.onDrawEnd,
+        isDrawing() { return this.currentStep !== -1; },
+        isStart() { return this.currentStep === 1; },
+        forceComplete() { this.currentStep = -1; },
+      });
+      fakeProgressInfo = { paneId: 'candle_pane', instance: o, appointPaneFlag: false };
+    }
     return id;
   },
   getOverlayById: id => {
@@ -137,6 +182,7 @@ const chart = {
     for (const o of overlayStore.values()) {
       if (o.removed || (id !== undefined && o.id !== id)) continue;
       o.removed = true;
+      if (fakeProgressInfo && fakeProgressInfo.instance === o) fakeProgressInfo = null;
       o.opts.onRemoved && o.opts.onRemoved({ overlay: o });
     }
   },
@@ -181,10 +227,15 @@ const chart = {
   // автоскейл: ось цены главной панели с флагом автоподгона (9.6
   // снимает его при перетаскивании шкалы, setStyles с yAxis.type возвращает)
   _candlePane: { getAxisComponent: () => ({ getAutoCalcTickFlag: () => autoCalcTickFlag }) },
-  // Двойной клик не сбрасывает вид во время рисования фигуры
-  getChartStore: () => ({
-    getOverlayStore: () => ({ isDrawing: () => fakeDrawing }),
-  }),
+  // сброс вида/догоняющий клик: OverlayStore 9.6 (isDrawing для guard'а
+  // dblclick, progress-инстанс для завершения фигуры последним кликом)
+  getChartStore: () => ({ getOverlayStore: () => fakeOverlayStore }),
+  // геометрия панелей (paneIdAtY для догоняющего клика: точка фигуры —
+  // только клик в панель свечей, не в под-окно или ось времени)
+  _drawPanes: [
+    { _id: 'candle_pane', getId: () => 'candle_pane', _bounding: { top: 0, height: 400 } },
+    { _id: 'x_axis_pane', getId: () => 'x_axis_pane', _bounding: { top: 400, height: 30 } },
+  ],
 };
 let fakeDrawing = false;
 let autoCalcTickFlag = true; // автоподгонка шкалы цены включена по умолчанию
@@ -604,6 +655,9 @@ const candle = (day, close, month = 11) => ({
   // 14) Сброс вида (как в TradingView): «улетевшие» зум/сдвиг возвращаются
   //     к дефолтам, снятым с инстанса при init, + scrollToRealTime.
   //     Дефолты в fake-инстансе: barSpace 8, offsetRight 50 (на момент init).
+  //     Пауза — выходим из guard-окна dblclick после достройки фигуры
+  //     в шаге 0b (как в браузере: dblclick приходит через десятки мс)
+  await new Promise(r => setTimeout(r, 360));
   barSpace = 25; offsetRight = 180; // масштаб/сдвиг «улетели»
   sandbox.window.tcResetChartView();
   assert(barSpace === 8 && offsetRight === 50, 'сброс: дефолтные масштаб (8) и сдвиг (50) возвращены');
@@ -948,6 +1002,141 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-type-area']._classes.has('active') && els['tc-scale-log']._classes.has('active')
     && els['tc-scale-auto']._classes.has('active'),
     'вид: после «перезагрузки» восстановлены область + log из localStorage');
+
+  // 23) Фигуры без меток на осях (как в TradingView): встроенные шаблоны
+  //     пере-регистрированы — осевые метки выключены, ручки точек остались;
+  //     геометрия фигур совпадает с библиотечной
+  for (const name of ['segment', 'horizontalStraightLine', 'verticalStraightLine',
+    'horizontalRayLine', 'priceChannelLine', 'fibonacciLine']) {
+    const tpl = registeredOverlays[name];
+    assert(tpl && tpl.needDefaultPointFigure === true
+      && tpl.needDefaultXAxisFigure === false && tpl.needDefaultYAxisFigure === false,
+      `оси: ${name} без осевых меток (синие теги при выделении), с ручками точек`);
+  }
+  const segFigs23 = registeredOverlays['segment'].createPointFigures({
+    coordinates: [{ x: 10, y: 20 }, { x: 60, y: 80 }],
+  });
+  assert(segFigs23.length === 1 && segFigs23[0].type === 'line',
+    'оси: segment — линия между двумя точками');
+  const rayFigs23 = registeredOverlays['horizontalRayLine'].createPointFigures({
+    coordinates: [{ x: 100, y: 50 }, { x: 200, y: 50 }],
+    bounding: { width: 300, height: 100 },
+  });
+  assert(rayFigs23[0].attrs.coordinates[1].x === 300,
+    'оси: горизонтальный луч тянется к правому краю');
+  const pclFigs23 = registeredOverlays['priceChannelLine'].createPointFigures({
+    coordinates: [{ x: 0, y: 100 }, { x: 100, y: 0 }, { x: 0, y: 60 }],
+    bounding: { width: 200, height: 200 },
+  });
+  assert(pclFigs23.length === 1 && pclFigs23[0].attrs.length === 3,
+    'оси: канал — граница, параллель и продолжение по третьей точке');
+  const fibFigs23 = registeredOverlays['fibonacciLine'].createPointFigures({
+    coordinates: [{ x: 100, y: 50 }, { x: 300, y: 100 }],
+    overlay: { points: [{ timestamp: 1, value: 100 }, { timestamp: 2, value: 50 }] },
+    bounding: { width: 400, height: 200 },
+    precision: { price: 2 }, thousandsSeparator: ' ',
+  });
+  assert(fibFigs23.length === 2 && fibFigs23[0].type === 'line' && fibFigs23[1].type === 'text'
+    && fibFigs23[0].attrs.length === 7 && fibFigs23[1].attrs.length === 7,
+    'оси: уровни Фибоначчи — 7 линий с подписями');
+  assert(fibFigs23[1].attrs[0].text.includes('100.00 (100.0%)'),
+    'оси: подпись уровня Фибоначчи 100% с ценой');
+
+  // 24) Догоняющий клик: быстрый последний клик фигуры (9.6 глотает его в
+  //     окне dblclick — ни click, ни dblclick) достраивает фигуру без
+  //     лишнего клика «мимо»: точка ставится тем же кликом, объект
+  //     переводится в готовые, инструмент отжимается, разметка сохраняется
+  //     (две свечи: точка клика уйдёт в правое поле, как в живом графике)
+  els['test-chart-ticker-input'].value = 'GAZP';
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  const btnQ = btnTool();
+  sandbox.window.tcDrawOverlay('segment', btnQ);
+  const ovQ = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined);
+  assert(ovQ && btnQ._classes.has('active'), 'догоняющий клик: инструмент активен, рисование ждёт точек');
+  // клик 1 библиотека приняла: первая точка встала, шаг продвинулся
+  ovQ.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
+  ovQ.currentStep = 2;
+  // клик 2 — проглочен (окно dblclick): нажатие и отпускание в одном месте
+  // (клик), дальше 6 px от нажатия он бы считался перетаскиванием холста
+  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 420, clientY: 160, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 421, clientY: 161 });
+  const swallowedTimer = timeouts.filter(t => t.ms === 60).pop();
+  assert(swallowedTimer, 'догоняющий клик: проверка проглоченного клика запланирована');
+  swallowedTimer.cb();
+  assert(ovQ.points.length === 2, 'догоняющий клик: вторая точка поставлена тем же кликом');
+  assert(ovQ.currentStep === -1, 'догоняющий клик: рисование завершено');
+  assert(progressCompleted === 1 && fakeProgressInfo === null,
+    'догоняющий клик: объект переведён из progress-режима в готовые');
+  assert(!btnQ._classes.has('active'), 'догоняющий клик: инструмент отжался без клика «мимо»');
+  const gazpSegs24 = gazpMarkup().filter(s => s.name === 'segment');
+  assert(gazpSegs24.length === 1 && gazpSegs24[0].points.length === 2,
+    'догоняющий клик: разметка сохранена сразу после последнего клика');
+  // 26) Двойной клик сразу после достроенной фигуры — часть рисования,
+  //     вид не сбрасывает (вне guard-окна сбрасывает — см. 14a)
+  barSpace = 25; offsetRight = 180;
+  els['tc-chart-stage']._listeners.dblclick({ preventDefault: () => {} });
+  assert(barSpace === 25 && offsetRight === 180,
+    'сброс: dblclick сразу после достроенной фигуры вид не сбрасывает');
+  chart.removeOverlay(ovQ.id);
+
+  // 25) Догоняющий клик — негативные сценарии
+  const progressCompleted25 = progressCompleted;
+  // a) клик дошёл до библиотеки (точка уже встала) — дубля не будет
+  const btnR25 = btnTool();
+  sandbox.window.tcDrawOverlay('segment', btnR25);
+  const ovR25 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined && o !== ovQ);
+  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 101, clientY: 101 });
+  ovR25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
+  ovR25.currentStep = 2;
+  timeouts.filter(t => t.ms === 60).pop().cb();
+  assert(ovR25.points.length === 1 && progressCompleted === progressCompleted25,
+    'догоняющий клик: обработанный библиотекой клик не дублируется');
+  chart.removeOverlay(ovR25.id);
+  // b) перетаскивание холста (drag дальше 6 px) кликом не считается
+  const btnS25 = btnTool();
+  sandbox.window.tcDrawOverlay('segment', btnS25);
+  const ovS25 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined && o !== ovQ);
+  ovS25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
+  ovS25.currentStep = 2;
+  const timeoutsBefore25 = timeouts.length;
+  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 260, clientY: 100 });
+  assert(timeouts.length === timeoutsBefore25,
+    'догоняющий клик: перетаскивание холста точку не ставит');
+  chart.removeOverlay(ovS25.id);
+  // c) клик вне панели свечей (ось времени/под-окно) точкой фигуры не будет:
+  //    шаг не продвинулся (клик проглочен), но панель чужая — не кормим
+  const btnT25 = btnTool();
+  sandbox.window.tcDrawOverlay('segment', btnT25);
+  const ovT25 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined && ![ovQ, ovR25, ovS25].includes(o));
+  ovT25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
+  ovT25.currentStep = 2;
+  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 300, clientY: 415, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 301, clientY: 415 });
+  timeouts.filter(t => t.ms === 60).pop().cb();
+  assert(ovT25.points.length === 1 && ovT25.currentStep === 2 && progressCompleted === progressCompleted25,
+    'догоняющий клик: клик вне панели свечей фигуру не достраивает');
+  chart.removeOverlay(ovT25.id);
+
+  // 27) Точность осей под-окон: размах шкалы MACD ~8000 → целые подписи
+  //     (библиотечная точность 4 печатала «4,000.0000», читавшееся как
+  //     «±4,000,000»); настройка — после первого кадра с экстремумом оси
+  chart._drawPanes.push({
+    _id: 'tc_ind_MACD', getId: () => 'tc_ind_MACD',
+    _axis: { getExtremum: () => ({ min: -4000, max: 4000 }) },
+  });
+  sandbox.window.tcAddIndicator('MACD');
+  assert(createdIndicators['MACD'] && createdIndicators['MACD'].id === 'tc_ind_MACD',
+    'MACD: создан в собственном под-окне');
+  const overridesBefore27 = overrides.length;
+  timeouts.filter(t => t.ms === 400).forEach(t => t.cb()); // «первый кадр»
+  assert(overrides.length > overridesBefore27,
+    'точность оси: отложенная настройка выполнена после раскладки');
+  assert(overrides.some(o => o.name === 'MACD' && o.precision === 0),
+    'точность оси: MACD ±4000 → подписи без дробной части (precision 0)');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

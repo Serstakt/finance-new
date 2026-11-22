@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <title>Финансовый терминал</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <!-- Версионный параметр — одноразовый сброс эвристического кэша браузеров,
+         закэшировавших статику до включения Cache-Control: no-cache на бэкенде;
+         дальше ревалидация по etag держит файлы свежими без него -->
+    <link rel="stylesheet" href="css/styles.css?v=20261121">
     <!-- ВАЖНО: внешние скрипты (Sortable, TradingView) загружаются АСИНХРОННО (defer).
          Обычный <script src="..."> блокирует разбор страницы: если CDN недоступен
          (блокировка провайдером/регионом, файрвол, антивирус, прокси), вкладка
@@ -399,106 +402,13 @@
     </div>
 
     <div id="test-chart-page" class="page">
+        <!-- Облик TradingView: график занимает почти весь экран. Поиск
+             символа, ТФ, тип графика и индикаторы стоят в одной шапке
+             карточки графика (как верхняя панель TV), справа в ней —
+             код · имя · ТФ и последняя цена с дельтой; «?» раскрывает
+             подсказку раздела, статус живёт поверх холста.
+             Логика в js/test_chart.js. -->
         <div class="test-chart-container">
-            <h2 class="portfolio-title">Тест график</h2>
-            <p class="test-chart-hint">
-                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой ~15 мин)
-                и крипто-пары Binance (реальное время). Последняя свеча
-                обновляется автоматически. Разметка сохраняется по тикеру
-                (в этом браузере) и переживает смену тикера и перезагрузку.
-                Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
-                крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
-                Тип графика (свечи/бары/линия/области) — кнопки рядом с
-                таймфреймом; шкала цены (log, %, авто) — кнопки у правого
-                края холста. Сбросить масштаб и сдвиг: двойной клик по
-                графику или правый клик → <b>Reset chart</b>.
-            </p>
-            <!-- Ввод тикера — по образцу формы добавления в watchlist:
-                 поле + кнопка, отправка по Enter (см. js/test_chart.js).
-                 Таймфреймы — сегмент кнопок как в TradingView (tcSetInterval). -->
-            <div class="test-chart-controls">
-                <input id="test-chart-ticker-input" placeholder="SBER, GAZP, BINANCE:BTCUSDT…" title="Тикер акции Мосбиржи или пара Binance с префиксом BINANCE:" />
-                <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
-                <div class="tc-tf-group" id="test-chart-tf" title="Таймфрейм">
-                    <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
-                    <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
-                    <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
-                    <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
-                </div>
-                <!-- Тип графика как в TradingView: сегмент иконок
-                     свечи/бары/линия/области (tcSetChartType, js/test_chart.js) -->
-                <div class="tc-type-group" id="test-chart-type" title="Тип графика">
-                    <button type="button" id="tc-type-candles" onclick="tcSetChartType('candles')" title="Свечи">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M8 3v3M8 18v3"/>
-                            <rect x="5.5" y="6" width="5" height="12" rx="1"/>
-                            <path d="M16 5v3M16 16v3"/>
-                            <rect x="13.5" y="8" width="5" height="8" rx="1"/>
-                        </svg>
-                    </button>
-                    <button type="button" id="tc-type-bars" onclick="tcSetChartType('bars')" title="Бары (OHLC)">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M7 4v16"/>
-                            <path d="M4 7.5h3"/>
-                            <path d="M7 14h3"/>
-                            <path d="M17 6v14"/>
-                            <path d="M14 9.5h3"/>
-                            <path d="M17 16h3"/>
-                        </svg>
-                    </button>
-                    <button type="button" id="tc-type-line" onclick="tcSetChartType('line')" title="Линия">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
-                        </svg>
-                    </button>
-                    <button type="button" id="tc-type-area" onclick="tcSetChartType('area')" title="Области">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
-                            <path d="M3 20v-3.5l6-6.5 4.5 4L21 5.5V20Z" fill="currentColor" fill-opacity="0.18" stroke="none"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-            <!-- Панель индикаторов: dropdown всех встроенных; клик по
-                 названию включённого — настройка периодов (как в TradingView).
-                 Инструменты разметки переехали в вертикальную колонку слева
-                 от графика (см. блок tc-chart-area ниже). -->
-            <div class="test-chart-toolbar">
-                <span class="tc-group-label">Индикаторы:</span>
-                <select id="tc-indicator-select" title="Добавить индикатор">
-                    <option value="">+ индикатор…</option>
-                    <optgroup label="На графике цены">
-                        <option value="MA">MA</option>
-                        <option value="EMA">EMA</option>
-                        <option value="BOLL">BOLL</option>
-                        <option value="SAR">SAR</option>
-                        <option value="BBI">BBI</option>
-                        <option value="VOL_MAIN">Объем (гистограмма)</option>
-                    </optgroup>
-                    <optgroup label="В под-окнах">
-                        <option value="VOL">VOL</option>
-                        <option value="MACD">MACD</option>
-                        <option value="RSI">RSI</option>
-                        <option value="KDJ">KDJ</option>
-                        <option value="WR">WR</option>
-                        <option value="CCI">CCI</option>
-                        <option value="DMI">DMI</option>
-                        <option value="OBV">OBV</option>
-                        <option value="ROC">ROC</option>
-                        <option value="DMA">DMA</option>
-                        <option value="BIAS">BIAS</option>
-                        <option value="TRIX">TRIX</option>
-                    </optgroup>
-                </select>
-                <span id="tc-indicator-chips" class="tc-ind-chips"></span>
-            </div>
-            <div class="test-chart-status" id="test-chart-status"></div>
-            <!-- Облик TradingView: узкая вертикальная колонка инструментов
-                 слева (инлайн-SVG без CDN: клик включает режим рисования —
-                 следующий клик(и) по графику ставят точки фигуры; правый
-                 клик по готовой фигуре удаляет её), над графиком — шапка
-                 символа (код · имя · ТФ + последняя цена с дельтой), поверх
-                 графика — легенда OHLCV под курсором. Логика в js/test_chart.js. -->
             <div class="tc-chart-area">
                 <div class="tc-draw-toolbar" title="Инструменты разметки">
                     <!-- Линии -->
@@ -591,9 +501,86 @@
                     </button>
                 </div>
                 <div class="tc-chart-main">
-                    <!-- Шапка символа как в TradingView: SBER · Сбербанк · 1д
-                         + последняя цена с цветной дельтой (js/test_chart.js) -->
+                    <!-- Шапка карточки графика (как верхняя панель TradingView):
+                         поиск символа + ТФ + тип + индикаторы, справа —
+                         SBER · Сбербанк · 1д + последняя цена с дельтой (js/test_chart.js) -->
                     <div class="tc-symbol-header" id="tc-symbol-header">
+                        <!-- Ввод тикера — по образцу формы добавления в watchlist:
+                             поле + кнопка, отправка по Enter. Таймфреймы —
+                             сегмент кнопок (tcSetInterval), тип графика —
+                             сегмент иконок (tcSetChartType) -->
+                        <div class="test-chart-controls">
+                            <input id="test-chart-ticker-input" placeholder="SBER, GAZP, BINANCE:BTCUSDT…" title="Тикер акции Мосбиржи или пара Binance с префиксом BINANCE:" />
+                            <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
+                            <div class="tc-tf-group" id="test-chart-tf" title="Таймфрейм">
+                                <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
+                                <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
+                                <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
+                                <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
+                            </div>
+                            <div class="tc-type-group" id="test-chart-type" title="Тип графика">
+                                <button type="button" id="tc-type-candles" onclick="tcSetChartType('candles')" title="Свечи">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M8 3v3M8 18v3"/>
+                                        <rect x="5.5" y="6" width="5" height="12" rx="1"/>
+                                        <path d="M16 5v3M16 16v3"/>
+                                        <rect x="13.5" y="8" width="5" height="8" rx="1"/>
+                                    </svg>
+                                </button>
+                                <button type="button" id="tc-type-bars" onclick="tcSetChartType('bars')" title="Бары (OHLC)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M7 4v16"/>
+                                        <path d="M4 7.5h3"/>
+                                        <path d="M7 14h3"/>
+                                        <path d="M17 6v14"/>
+                                        <path d="M14 9.5h3"/>
+                                        <path d="M17 16h3"/>
+                                    </svg>
+                                </button>
+                                <button type="button" id="tc-type-line" onclick="tcSetChartType('line')" title="Линия">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
+                                    </svg>
+                                </button>
+                                <button type="button" id="tc-type-area" onclick="tcSetChartType('area')" title="Области">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
+                                        <path d="M3 20v-3.5l6-6.5 4.5 4L21 5.5V20Z" fill="currentColor" fill-opacity="0.18" stroke="none"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Индикаторы: dropdown всех встроенных; клик по названию
+                             включённого — настройка периодов (как в TradingView) -->
+                        <div class="test-chart-toolbar">
+                            <span class="tc-group-label">Индикаторы:</span>
+                            <select id="tc-indicator-select" title="Добавить индикатор">
+                                <option value="">+ индикатор…</option>
+                                <optgroup label="На графике цены">
+                                    <option value="MA">MA</option>
+                                    <option value="EMA">EMA</option>
+                                    <option value="BOLL">BOLL</option>
+                                    <option value="SAR">SAR</option>
+                                    <option value="BBI">BBI</option>
+                                    <option value="VOL_MAIN">Объем (гистограмма)</option>
+                                </optgroup>
+                                <optgroup label="В под-окнах">
+                                    <option value="VOL">VOL</option>
+                                    <option value="MACD">MACD</option>
+                                    <option value="RSI">RSI</option>
+                                    <option value="KDJ">KDJ</option>
+                                    <option value="WR">WR</option>
+                                    <option value="CCI">CCI</option>
+                                    <option value="DMI">DMI</option>
+                                    <option value="OBV">OBV</option>
+                                    <option value="ROC">ROC</option>
+                                    <option value="DMA">DMA</option>
+                                    <option value="BIAS">BIAS</option>
+                                    <option value="TRIX">TRIX</option>
+                                </optgroup>
+                            </select>
+                            <span id="tc-indicator-chips" class="tc-ind-chips"></span>
+                        </div>
                         <span class="tc-sym-code" id="tc-sym-code">—</span>
                         <span class="tc-sym-name" id="tc-sym-name" style="display:none"></span>
                         <span class="tc-sym-tf" id="tc-sym-tf"></span>
@@ -601,6 +588,23 @@
                             <span class="tc-sym-price" id="tc-sym-price">—</span>
                             <span class="tc-sym-change" id="tc-sym-change"></span>
                         </span>
+                        <!-- Подсказка раздела, свёрнутая в «?» (как в TradingView
+                             панель занимает весь экран, текста-шапки нет) -->
+                        <div class="tc-hint-wrap">
+                            <button type="button" class="tc-hint-btn" id="tc-hint-btn" title="Подсказка по разделу" aria-label="Подсказка по разделу">?</button>
+                            <div class="tc-hint-pop" role="tooltip">
+                                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой
+                                ~15 мин) и крипто-пары Binance (реальное время). Последняя
+                                свеча обновляется автоматически. Разметка сохраняется по
+                                тикеру (в этом браузере) и переживает смену тикера и
+                                перезагрузку. Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
+                                крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
+                                Тип графика (свечи/бары/линия/области) — кнопки рядом с
+                                таймфреймом; шкала цены (log, %, авто) — кнопки у правого
+                                края холста. Сбросить масштаб и сдвиг: двойной клик по
+                                графику или правый клик → <b>Reset chart</b>.
+                            </div>
+                        </div>
                     </div>
                     <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
                          (см. defer-скрипт внизу страницы): если CDN недоступен,
@@ -609,6 +613,10 @@
                         <div id="test-chart-kline" class="test-chart-wrapper">
                             <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
                         </div>
+                        <!-- Статус загрузки/поллинга/ошибок — поверх нижнего края
+                             холста (как сообщения в TradingView), высоты макета
+                             не занимает (js/test_chart.js setStatus) -->
+                        <div class="test-chart-status" id="test-chart-status"></div>
                         <!-- Легенда OHLCV как в TradingView: значения окрашены
                              по направлению свечи и обновляются под курсором
                              (subscribeAction onCrosshairChange) -->
@@ -701,7 +709,7 @@
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
-<script defer src="js/test_chart.js"></script>
+<script defer src="js/test_chart.js?v=20261121"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
      показываем предупреждение вместо «вечной загрузки» -->

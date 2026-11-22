@@ -43,7 +43,24 @@
 //   - диалог настроек вместо window.prompt (чужеродный и блокирует
 //     вкладку): текст заметки и периоды индикатора вводятся в модальном
 //     окне в стиле приложения — Enter применяет, Escape/клик по фону
-//     отменяет, ошибки валидации показываются inline.
+//     отменяет, ошибки валидации показываются inline;
+//   - фигура фиксируется последним кликом, как в TradingView: быстрый
+//     (до 500 мс после предыдущего) клик KLineChart 9.6 проглатывает —
+//     окно двойного клика в SyntheticEvent съедает mouseup, не
+//     диспетчеризуя ни click, ни dblclick. Недостроенную фигуру доигрываем
+//     сами: через мгновение после отпускания кнопки видно, дошла ли точка
+//     до рисования, и если нет — точка ставится этим же кликом;
+//   - оси не подсвечиваются от нарисованного: встроенные шаблоны фигур
+//     (segment и др.) пере-регистрируются без осевых меток
+//     (needDefaultXAxisFigure/YAxisFigure=false) — у TradingView при
+//     выделении фигуры теги на осях не появляются;
+//   - точность подписей осей под-окон подбирается по размаху шкалы
+//     (у библиотечных индикаторов по умолчанию precision 4 — ось MACD
+//     печатает «4,000.0000», читающееся как «±4,000,000»);
+//   - компоновка как в TradingView: график занимает почти весь экран —
+//     поиск символа, ТФ, тип и индикаторы стоят в одной шапке карточки
+//     графика, подсказка раздела свёрнута в кнопку «?», статус живёт
+//     поверх холста и высоты не съедает.
 
 (() => {
   let chartInstance = null;
@@ -52,6 +69,7 @@
   let pollTimer = null;
   let pollKey = null; // 'TICKER|interval' — поллинг останавливается, если данные сменились
   let overlayIds = []; // id созданных overlay — для сериализации разметки
+  let lastDrawEndAt = 0; // Date.now() последнего завершения фигуры — guard сброса вида на dblclick
   let currentInterval = 24; // активный ТФ (60|24|7|31)
   // Активные индикаторы: name -> paneId. В 9.6 removeIndicator требует
   // (paneId, name) — поэтому храним оба.
@@ -455,13 +473,168 @@
     });
   };
 
+  // ---- Фигуры без меток на осях (как в TradingView) ----
+  // Встроенные шаблоны KLineChart 9.6 (segment и др.) включают
+  // needDefaultXAxisFigure/needDefaultYAxisFigure: при выделении фигуры на
+  // ценовой и временной осях появляются синие теги её точек. У TradingView
+  // оси от нарисованного не подсвечиваются, поэтому шаблоны пере-регистрируются
+  // под теми же именами (registerOverlay заменяет встроенный) с выключенными
+  // осевыми фигурами. Кружки-ручки точек (needDefaultPointFigure) остаются —
+  // за них фигуру можно перетаскивать. Геометрия фигур и хелперы скопированы
+  // из исходников библиотеки v9.6.0 (klinecharts, Apache-2.0) без изменений.
+
+  // y = k·x + b по двум точкам (extension/figure/line.ts)
+  const getLinearSlopeIntercept = (c1, c2) => {
+    const difX = c1.x - c2.x;
+    if (difX !== 0) {
+      const k = (c1.y - c2.y) / difX;
+      return [k, c1.y - k * c1.x];
+    }
+    return null;
+  };
+
+  // Параллельные линии канала (extension/overlay/parallelStraightLine.ts)
+  const getParallelLines = (coordinates, bounding, extendParallelLineCount = 0) => {
+    const lines = [];
+    if (coordinates.length > 1) {
+      if (coordinates[0].x === coordinates[1].x) {
+        const startY = 0;
+        const endY = bounding.height;
+        lines.push({ coordinates: [{ x: coordinates[0].x, y: startY }, { x: coordinates[0].x, y: endY }] });
+        if (coordinates.length > 2) {
+          lines.push({ coordinates: [{ x: coordinates[2].x, y: startY }, { x: coordinates[2].x, y: endY }] });
+          const distance = coordinates[0].x - coordinates[2].x;
+          for (let i = 0; i < extendParallelLineCount; i++) {
+            const d = distance * (i + 1);
+            lines.push({ coordinates: [{ x: coordinates[0].x + d, y: startY }, { x: coordinates[0].x + d, y: endY }] });
+          }
+        }
+      } else {
+        const startX = 0;
+        const endX = bounding.width;
+        const [k, b] = getLinearSlopeIntercept(coordinates[0], coordinates[1]);
+        lines.push({ coordinates: [{ x: startX, y: startX * k + b }, { x: endX, y: endX * k + b }] });
+        if (coordinates.length > 2) {
+          const b1 = coordinates[2].y - k * coordinates[2].x;
+          lines.push({ coordinates: [{ x: startX, y: startX * k + b1 }, { x: endX, y: endX * k + b1 }] });
+          const distance = b - b1;
+          for (let i = 0; i < extendParallelLineCount; i++) {
+            const b2 = b + distance * (i + 1);
+            lines.push({ coordinates: [{ x: startX, y: startX * k + b2 }, { x: endX, y: endX * k + b2 }] });
+          }
+        }
+      }
+    }
+    return lines;
+  };
+
+  const registerCleanAxisOverlays = () => {
+    if (typeof klinecharts === 'undefined') return;
+    const handles = { // ручки точек остаются, метки осей — выключены
+      needDefaultPointFigure: true,
+      needDefaultXAxisFigure: false,
+      needDefaultYAxisFigure: false,
+    };
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'segment',
+      totalStep: 3,
+      createPointFigures: ({ coordinates }) => coordinates.length === 2
+        ? [{ type: 'line', attrs: { coordinates } }]
+        : [],
+    });
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'horizontalStraightLine',
+      totalStep: 2,
+      createPointFigures: ({ coordinates, bounding }) => [{
+        type: 'line',
+        attrs: { coordinates: [{ x: 0, y: coordinates[0].y }, { x: bounding.width, y: coordinates[0].y }] },
+      }],
+    });
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'verticalStraightLine',
+      totalStep: 2,
+      createPointFigures: ({ coordinates, bounding }) => [{
+        type: 'line',
+        attrs: { coordinates: [{ x: coordinates[0].x, y: 0 }, { x: coordinates[0].x, y: bounding.height }] },
+      }],
+    });
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'horizontalRayLine',
+      totalStep: 3,
+      createPointFigures: ({ coordinates, bounding }) => {
+        const coordinate = { x: 0, y: coordinates[0].y };
+        if (coordinates[1] !== undefined && coordinates[0].x < coordinates[1].x) {
+          coordinate.x = bounding.width;
+        }
+        return [{ type: 'line', attrs: { coordinates: [coordinates[0], coordinate] } }];
+      },
+      performEventPressedMove: ({ points, performPoint }) => {
+        points[0].value = performPoint.value;
+        points[1].value = performPoint.value;
+      },
+      performEventMoveForDrawing: ({ currentStep, points, performPoint }) => {
+        if (currentStep === 2) {
+          points[0].value = performPoint.value;
+        }
+      },
+    });
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'priceChannelLine',
+      totalStep: 4,
+      createPointFigures: ({ coordinates, bounding }) => [
+        { type: 'line', attrs: getParallelLines(coordinates, bounding, 1) },
+      ],
+    });
+    klinecharts.registerOverlay({
+      ...handles,
+      name: 'fibonacciLine',
+      totalStep: 3,
+      createPointFigures: ({ coordinates, bounding, overlay, precision, thousandsSeparator }) => {
+        const points = overlay.points;
+        if (!coordinates || !coordinates.length) return [];
+        const lines = [];
+        const texts = [];
+        const startX = 0;
+        const endX = bounding.width;
+        if (coordinates.length > 1 && points[0].value !== undefined && points[1].value !== undefined) {
+          const percents = [1, 0.786, 0.618, 0.5, 0.382, 0.236, 0];
+          const yDif = coordinates[0].y - coordinates[1].y;
+          const valueDif = points[0].value - points[1].value;
+          const pricePrecision = precision && Number.isFinite(precision.price) ? precision.price : 2;
+          percents.forEach(percent => {
+            const y = coordinates[1].y + yDif * percent;
+            const value = formatPriceValue((points[1].value ?? 0) + valueDif * percent, pricePrecision, thousandsSeparator);
+            lines.push({ coordinates: [{ x: startX, y }, { x: endX, y }] });
+            texts.push({
+              x: startX,
+              y,
+              text: `${value} (${(percent * 100).toFixed(1)}%)`,
+              baseline: 'bottom',
+            });
+          });
+        }
+        return [
+          { type: 'line', attrs: lines },
+          { type: 'text', isCheckEvent: false, attrs: texts },
+        ];
+      },
+    });
+  };
+
   // Все кастомные overlay-шаблоны (прямоугольник, стрелка, кисть,
-  // измеритель). registerOverlay идемпотентен — безопасно звать повторно.
+  // измеритель) + пере-регистрация встроенных без осевых меток.
+  // registerOverlay идемпотентен — безопасно звать повторно.
   const registerCustomOverlays = () => {
     registerRectOverlay();
     registerArrowOverlay();
     registerBrushOverlay();
     registerMeasureOverlay();
+    registerCleanAxisOverlays();
   };
 
   const setStatus = (text, isError = false, isWarn = false) => {
@@ -680,10 +853,12 @@
     const menu = document.getElementById('tc-ctx-menu');
     if (!stage || stage.dataset.resetViewBound) return;
     stage.dataset.resetViewBound = '1';
-    // Двойной клик — сброс вида (как в TradingView), но не во время рисования
+    // Двойной клик — сброс вида (как в TradingView), но не во время
+    // рисования и не сразу после достроенной фигуры: быстрый двойной клик —
+    // часть двухкликового инструмента (последняя точка или degenerate-фигура)
     stage.addEventListener('dblclick', (e) => {
       e.preventDefault();
-      if (!isOverlayDrawing()) resetChartView();
+      if (!isOverlayDrawing() && Date.now() - lastDrawEndAt >= 350) resetChartView();
     });
     // Правый клик — своё меню вместо браузерного
     stage.addEventListener('contextmenu', (e) => {
@@ -865,9 +1040,12 @@
   // Колбэки жизненного цикла overlay → автосохранение. onDrawEnd — фигура
   // достроена, onPressedMoveEnd — точку перетащили, onDeselected — сняли
   // выделение (страховка после правок), onRemoved — удаление любым способом
-  // (контекстное меню по правому клику, «Очистить»).
+  // (контекстное меню по правому клику, «Очистить»). lastDrawEndAt — guard
+  // сброса вида: двойной клик сразу после достройки фигуры (двухкликовые
+  // инструменты) — часть рисования, а не «Reset chart».
   const overlayCallbacks = () => ({
     onDrawEnd: () => {
+      lastDrawEndAt = Date.now();
       clearToolActive();
       persistOverlays();
     },
@@ -1057,12 +1235,14 @@
     el.style.top = `${Math.round(volScale.top + volScale.height - vol * volScale.unitPx)}px`;
   };
 
-  // Легенда + цена из текущих данных графика (последняя свеча)
+  // Легенда + цена из текущих данных графика (последняя свеча). Заодно
+  // пересчитываем точность осей под-окон — шкалы сдвинулись с новыми данными
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
     const list = chartInstance.getDataList();
     renderLegend(list.length ? list[list.length - 1] : null);
     updateSymbolQuote(list);
+    for (const name of indicators.keys()) tuneSubPaneAxisPrecision(name);
   };
 
   const pollOnce = async (ticker, interval) => {
@@ -1481,6 +1661,139 @@
     }
   };
 
+  // ---- Догоняющий клик: фигура фиксируется последним кликом (как в TV) ----
+  // KLineChart 9.6 строит фигуры по кликам, но SyntheticEvent держит окно
+  // двойного клика (~500 мс): второй mouseup в этом окне дальше ~5 px от
+  // первого не диспетчеризуется вовсе — ни click, ни dblclick. Быстрый
+  // последний клик фигуры пропадает, рисование «застревает» и кажется,
+  // что нужен лишний клик мимо. Догоняем сами: после отпускания кнопки
+  // (клик = нажатие и отжатие ближе ~6 px, не drag) ждём мгновение и
+  // смотрим, дошла ли точка до рисования; если нет — ставим её этим же
+  // кликом и завершаем фигуру штатными шагами библиотеки.
+
+  // Максимальное смещение нажатия→отжатия, при котором это клик (px)
+  const STAGE_CLICK_MAX_DRAG_PX = 6;
+  // Задержка проверки: обработка mouseup у библиотеки синхронная, к этому
+  // моменту её решение (принять клик / проглотить) уже принято
+  const STAGE_CLICK_SETTLE_MS = 60;
+  // Шаг рисования с флагом «рисование окончено» в Overlay 9.6
+  const OVERLAY_DRAW_STEP_FINISHED = -1;
+
+  let stageClickDownXY = null; // координаты нажатой кнопки — отсекаем drag
+
+  const overlayStoreApi = () => {
+    try {
+      const store = typeof chartInstance.getChartStore === 'function'
+        ? chartInstance.getChartStore() : null;
+      return store && typeof store.getOverlayStore === 'function'
+        ? store.getOverlayStore() : null;
+    } catch (e) { return null; }
+  };
+
+  // Активное рисование (progress-режим): { paneId, instance } или null
+  const progressDrawingInfo = () => {
+    const store = overlayStoreApi();
+    const info = store && typeof store.getProgressInstanceInfo === 'function'
+      ? store.getProgressInstanceInfo() : null;
+    const ov = info && info.instance;
+    return ov && typeof ov.isDrawing === 'function' && ov.isDrawing() ? info : null;
+  };
+
+  // Панель графика под вертикальной координатой: клик в под-окно
+  // индикатора или ось времени последней точкой фигуры быть не может
+  const paneIdAtY = (y) => {
+    try {
+      for (const p of (chartInstance._drawPanes || [])) {
+        const b = p._bounding;
+        const id = typeof p.getId === 'function' ? p.getId() : p._id;
+        if (b && id && y >= b.top && y <= b.top + b.height) return id;
+      }
+    } catch (e) { /* геометрия панелей недоступна */ }
+    return null;
+  };
+
+  // Поставить точку в недостроенную фигуру и продвинуть шаг рисования —
+  // ровно то, что делает библиотека в своём обработчике клика
+  // (eventMoveForDrawing → performEventMoveForDrawing → nextStep)
+  const feedDrawingPoint = (info, srcPoint) => {
+    const store = overlayStoreApi();
+    const ov = info.instance;
+    const point = {};
+    if (srcPoint.timestamp !== undefined) point.timestamp = srcPoint.timestamp;
+    if (srcPoint.dataIndex !== undefined) point.dataIndex = srcPoint.dataIndex;
+    if (srcPoint.value !== undefined) point.value = srcPoint.value;
+    // Первый клик вообще: назначаем панель, как делает библиотека
+    if (typeof ov.isStart === 'function' && ov.isStart()
+      && store && typeof store.updateProgressInstanceInfo === 'function'
+      && info.paneId != null) {
+      store.updateProgressInstanceInfo(info.paneId, true);
+    }
+    ov.points[ov.currentStep - 1] = point;
+    if (typeof ov.performEventMoveForDrawing === 'function') {
+      ov.performEventMoveForDrawing({
+        currentStep: ov.currentStep,
+        mode: ov.mode,
+        points: ov.points,
+        performPointIndex: ov.currentStep - 1,
+        performPoint: point,
+      });
+    }
+    if (ov.currentStep === ov.totalStep - 1) ov.currentStep = OVERLAY_DRAW_STEP_FINISHED;
+    else ov.currentStep += 1;
+    if (!ov.isDrawing()) {
+      // Фигура достроена: переводим из progress-режима в готовые объекты,
+      // onDrawEnd снимет подсветку инструмента и сохранит разметку
+      if (store && typeof store.progressInstanceComplete === 'function') {
+        store.progressInstanceComplete();
+      }
+      if (typeof ov.onDrawEnd === 'function') ov.onDrawEnd({ overlay: ov });
+      // Панель перерисовываем сами: в штатном потоке библиотеки это делает
+      // обработчик клика, который у проглоченного клика не вызывался
+      redrawOverlayPane();
+    }
+  };
+
+  // Клик «пропал»: если шаг рисования не изменился с момента отжатия —
+  // это проглоченное окно dblclick (библиотека, приняв клик, продвигает
+  // currentStep), ставим точку сами. Длину points не проверяем: слот
+  // последней точки уже занят превью от mousemove, длина всегда
+  // totalStep - 1, тогда как currentStep честно отличает проглоченный
+  // клик от принятого.
+  const completeSwallowedDrawingClick = (stepBefore, hit) => {
+    if (!chartInstance || !hit || stepBefore == null
+      || stepBefore === OVERLAY_DRAW_STEP_FINISHED) return;
+    const info = progressDrawingInfo();
+    if (!info) return;
+    const ov = info.instance;
+    if (ov.currentStep !== stepBefore) return; // клик дошёл — шаг продвинут
+    if (paneIdAtY(hit.y) !== info.paneId) return;
+    feedDrawingPoint(info, hit.point);
+    redrawOverlayPane();
+  };
+
+  const onStageClickDown = (e) => {
+    stageClickDownXY = e && (e.button === undefined || e.button === 0)
+      ? { x: e.clientX, y: e.clientY }
+      : null;
+  };
+
+  const onStageClickUp = (e) => {
+    const down = stageClickDownXY;
+    stageClickDownXY = null;
+    if (!down || !e || (e.button !== undefined && e.button !== 0)) return;
+    // Перетаскивание (прокрутка холста, двигание точки фигуры) — не клик
+    const dx = e.clientX - down.x;
+    const dy = e.clientY - down.y;
+    if (dx * dx + dy * dy > STAGE_CLICK_MAX_DRAG_PX * STAGE_CLICK_MAX_DRAG_PX) return;
+    // Press-drag кисти/измерителя живёт своей жизнью (см. блок выше)
+    if (armedStageTool || stageToolDrawing) return;
+    const info = progressDrawingInfo();
+    if (!info) return;
+    const stepBefore = info.instance.currentStep;
+    const hit = stageEventPoint(e);
+    setTimeout(() => completeSwallowedDrawingClick(stepBefore, hit), STAGE_CLICK_SETTLE_MS);
+  };
+
   const bindStageTools = () => {
     const stage = document.getElementById('tc-chart-stage');
     if (!stage || stage.dataset.stageToolsBound) return;
@@ -1488,6 +1801,10 @@
     stage.addEventListener('mousedown', onStageMouseDown, true);
     window.addEventListener('mousemove', onStageMouseMove);
     window.addEventListener('mouseup', onStageMouseUp);
+    // Клик по холсту (capture): координаты нажатия/отжатия для догоняющего
+    // клика — figура фиксируется последним кликом без лишнего «мимо»
+    stage.addEventListener('mousedown', onStageClickDown, true);
+    stage.addEventListener('mouseup', onStageClickUp, true);
   };
 
 
@@ -1580,6 +1897,31 @@
   // В 9.6.0 removeIndicator требует (paneId, name?) — раньше передавали имя
   // как paneId, и выключение индикатора было no-op.
 
+  // ---- Точность подписей осей под-окон (как в TradingView) ----
+  // У индикаторов KLineChart без своей precision значение по умолчанию — 4:
+  // ось MACD по BTC печатает «4,000.0000», при беглом взгляде читающееся
+  // как «±4,000,000». Подбираем десятичность по размаху шкалы под-окна:
+  // сотни и больше — целые, десятки — один знак, единицы — два, доли —
+  // четыре. Главную панель не трогаем (у свечей своя точность инструмента).
+  const SUB_PANE_PRECISION_SPANS = [[100, 0], [10, 1], [0.2, 2], [0, 4]];
+
+  const tuneSubPaneAxisPrecision = (name) => {
+    if (!chartInstance) return;
+    const paneId = indicators.get(name);
+    if (!paneId || paneId === 'candle_pane') return;
+    try {
+      const inst = chartInstance.getIndicatorByPaneId(paneId, name);
+      const pane = (chartInstance._drawPanes || [])
+        .find(p => (typeof p.getId === 'function' ? p.getId() : p._id) === paneId);
+      const axis = pane && pane._axis;
+      const ext = axis && typeof axis.getExtremum === 'function' ? axis.getExtremum() : null;
+      if (!inst || !ext || !Number.isFinite(ext.min) || !Number.isFinite(ext.max)) return;
+      const span = Math.abs(ext.max - ext.min);
+      const precision = (SUB_PANE_PRECISION_SPANS.find(([min]) => span >= min) || [0, 4])[1];
+      if (inst.precision !== precision) chartInstance.overrideIndicator({ name, precision });
+    } catch (e) { /* internals 9.6 недоступны — остаётся библиотечная точность */ }
+  };
+
   const paneForIndicator = (name) => MAIN_PANE_INDICATORS.has(name)
     ? { id: 'candle_pane' }
     : { id: `tc_ind_${name}`, height: 90 };
@@ -1626,6 +1968,9 @@
     if (!id) { setStatus(`Индикатор ${name} не поддерживается библиотекой`, true); return; }
     indicators.set(name, pane.id);
     renderIndicatorChips();
+    // Точность оси под-окна — после первого расчёта и раскладки: экстремум
+    // оси появляется с первым кадром, раньше его просто нет
+    setTimeout(() => tuneSubPaneAxisPrecision(name), 400);
     const select = document.getElementById('tc-indicator-select');
     if (select) select.value = '';
     setStatus(name === VOL_MAIN
