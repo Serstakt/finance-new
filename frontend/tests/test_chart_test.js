@@ -14,13 +14,15 @@
 // применяет, отмена/ошибки inline), тип графика (свечи/бары/линия/области
 // через candle.type) и режим шкалы цены (normal/log/percentage + кнопка-
 // переключатель «авто»: включить/выключить автоподгонку оси) с сохранением
-// выбора в localStorage.
+// выбора в localStorage, точность инструмента по данным (дешёвые тикеры
+// типа SHIBUSDT: шапка/легенда/метки max/min не схлопываются в «0.00»).
 // Облик/поведение TradingView: фигуры без меток на осях (встроенные
 // шаблоны пере-регистрированы без needDefaultX/YAxisFigure), догоняющий
 // клик (быстрый последний клик фигуры, проглоченный окном dblclick 9.6,
 // достраивает фигуру без лишнего клика «мимо»), guard сброса вида на
 // dblclick сразу после достройки, точность осей под-окон по размаху
-// шкалы (ось MACD «4,000.0000» → «4,000»).
+// шкалы (ось MACD «4,000.0000» → «4,000»), статус-тост с автоскрытием
+// (info 6 с / warn 15 с / ошибка сама не гаснет, фаза затухания).
 // Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
 // (node:vm без браузера).
 const fs = require('fs');
@@ -230,6 +232,8 @@ const chart = {
   scrollToRealTime: () => { callOrder.push(['scrollToRealTime']); },
   // тип графика/шкала: partial-стили запоминаем для проверок
   setStyles: s => { styleCalls.push(s); },
+  // точность инструмента (ось цены, метки max/min свечи): 9.6 — {price, volume}
+  setPrecision: p => { precisions.push(p); },
   // автоскейл: ось цены главной панели с флагом автоподгона (9.6
   // снимает его при перетаскивании шкалы, setStyles с yAxis.type
   // возвращает, кнопка «авто»-переключатель снимает через set…Flag)
@@ -252,6 +256,7 @@ const chart = {
 let fakeDrawing = false;
 let autoCalcTickFlag = true; // автоподгонка шкалы цены включена по умолчанию
 const styleCalls = [];
+const precisions = []; // точность инструмента: setPrecision({price, volume}) 9.6
 const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
 const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
@@ -273,7 +278,8 @@ const fetchWithTimeout = async url => {
 const timers = []; const timeouts = [];
 const setInterval = cb => { timers.push({ cb }); return timers.length; };
 const clearInterval = () => {};
-const setTimeoutCapturing = (cb, ms) => { timeouts.push({ cb, ms }); return timeouts.length; };
+const setTimeoutCapturing = (cb, ms) => { timeouts.push({ cb, ms, done: false }); return timeouts.length; };
+const clearTimeoutCapturing = id => { if (timeouts[id - 1]) timeouts[id - 1].done = true; };
 
 let domReadyCb = null;
 const docListeners = {}; // click/keydown и др. — закрытие контекстного меню
@@ -288,7 +294,8 @@ const sandbox = {
   window: { fetchWithTimeout, addEventListener: (t, cb) => { winListeners[t] = cb; }, prompt: () => null },
   localStorage, klinecharts,
   API_BASE: '',
-  console, setInterval, clearInterval, setTimeout: setTimeoutCapturing,
+  console, setInterval, clearInterval,
+  setTimeout: setTimeoutCapturing, clearTimeout: clearTimeoutCapturing,
 };
 vm.createContext(sandbox);
 const SRC = path.join(__dirname, '..', 'js', 'test_chart.js');
@@ -344,6 +351,8 @@ const candle = (day, close, month = 11) => ({
     'легенда: O/H/L/C/Vol последней свечи');
   assert(els['tc-legend']._classes.has('up') && !els['tc-legend']._classes.has('down'),
     'легенда: класс направления up (close >= open)');
+  assert(precisions.length === 0,
+    'точность: обычные цены (2 знака) — setPrecision не зовётся, дефолт 9.6 совпадает');
 
   // 0a3) Кроссхейр: легенда следует за курсором, с курсора — на последнюю
   actions['onCrosshairChange']({ kLineData: applied[0] }); // курсор на свечу 18-го
@@ -426,6 +435,21 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-sym-price'].textContent === '318.00' && els['tc-sym-change'].textContent === '+3.00 (+0.95%)',
     'шапка: цена и дельта пересчитаны для новых данных');
 
+  // 5a) Статус-тост (как сообщения в TradingView): обычное сообщение само
+  //     гаснет — таймер 6 с, фаза затухания, затем очистка текста
+  const infoToast = timeouts[timeouts.length - 1]; // последний статус — info «разметка восстановлена»
+  assert(infoToast && infoToast.ms === 6000, 'тост: обычному сообщению заведён таймер автоскрытия 6 с');
+  assert(timeouts.some(t => t.ms === 15000),
+    'тост: предупреждение (note бэкенда из шага 1) держится дольше — 15 с');
+  infoToast.cb();
+  assert(els['test-chart-status']._classes.has('fade-out') && statusOf().text.length > 0,
+    'тост: перед очисткой — фаза затухания, текст ещё на месте');
+  const fadeClear = timeouts.filter(t => t.ms === 300).pop();
+  assert(fadeClear != null, 'тост: после затухания запланирована очистка текста');
+  fadeClear.cb();
+  assert(statusOf().text === '' && !els['test-chart-status']._classes.has('fade-out'),
+    'тост: после затухания текст очищен, класс снят');
+
   // 6) Догрузка истории при скролле влево (loadMore)
   const oldestTs = applied[0].timestamp; // свеча за 19-е
   fetchQueue = [{
@@ -449,8 +473,9 @@ const candle = (day, close, month = 11) => ({
   // 8) Сбой сети: _loading разблокируется отложенным applyMoreData([], true)
   fetchQueue = []; // fetch бросит 'no queued response'
   await loadMoreCb(applied[0].timestamp); await flush();
-  assert(timeouts.length === 1 && timeouts[0].ms === 3000, 'loadMore сбой: запланирована отложенная разблокировка (3 с)');
-  timeouts[0].cb();
+  const unlock = timeouts.filter(t => t.ms === 3000);
+  assert(unlock.length === 1, 'loadMore сбой: запланирована отложенная разблокировка (3 с)');
+  unlock[0].cb();
   assert(moreState === true, 'loadMore сбой: после разблокировки доборка снова включена');
 
   // 9) Смена ТФ того же тикера: сегмент кнопок, без дубликатов разметки
@@ -631,6 +656,32 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-sym-price'].textContent === '95,500.00', 'шапка: цена с разделением разрядов');
   assert(els['tc-sym-change'].textContent === '' && !els['tc-sym-change']._classes.has('up'),
     'шапка: дельты нет, когда предыдущей свечи нет');
+  assert(precisions.length === 0,
+    'точность: BTC с целыми ценами в тестовых данных — пол 2 знака, setPrecision не звался');
+
+  // 11a) Дешёвый инструмент (BINANCE:SHIBUSDT ~0.0000154): точность
+  //      определяется по данным — 2 знака давали «O 0.00 H 0.00 …»
+  const sat = (day, close) => ({
+    begin: `2026-11-${String(day).padStart(2, '0')}T00:00:00Z`,
+    open: close, high: close, low: close, close, volume: 1,
+  });
+  els['test-chart-ticker-input'].value = 'BINANCE:SHIBUSDT';
+  fetchQueue = [{
+    symbol: 'BINANCE:SHIBUSDT', interval: 24,
+    // 0.0000154 → 7 знаков; 0.000000154 библиотека печатает «1.54e-7» —
+    // экспонента: 7 порядков + 2 разряда мантиссы = 9 знаков (максимум)
+    candles: [sat(18, 0.000000154), sat(19, 0.0000154)],
+  }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  assert(precisions.length === 1 && precisions[0].price === 9 && precisions[0].volume === 0,
+    'точность: для SHIB setPrecision({price: 9}) вызван один раз');
+  assert(els['tc-sym-price'].textContent === '0.000015400',
+    'точность: шапка показывает 0.000015400 вместо «0.00»');
+  assert(els['tc-leg-o'].textContent === '0.000015400' && els['tc-leg-c'].textContent === '0.000015400',
+    'точность: легенда O/C не схлопывается в нули');
+  assert(els['tc-sym-change'].textContent.startsWith('+0.000015246'),
+    'точность: дельта с теми же знаками, что и цена');
 
   // 12) Ошибка загрузки неизвестного тикера — статус ошибки
   els['test-chart-ticker-input'].value = 'ZZZZ';
@@ -638,8 +689,12 @@ const candle = (day, close, month = 11) => ({
     { symbol: 'MOEX:ZZZZ', interval: 7, error: 'Тикер не найден' }, // slice
     { symbol: 'MOEX:ZZZZ', interval: 7, error: 'Тикер не найден' }, // фолбэк
   ];
+  const toastTimersBefore = timeouts.length;
   await sandbox.window.loadTestChartCandles();
   assert(statusOf().err && statusOf().text.includes('не найден'), 'неизвестный тикер: ошибка в статусе');
+  // +1 — только info «Загрузка свечей…»; сама ошибка таймер автоскрытия не заводит
+  assert(timeouts.length === toastTimersBefore + 1,
+    'тост: ошибка сама не гаснет — таймер автоскрытия не заведён');
 
   // 13) Скрытый раздел: автозагрузка откладывается до показа (navigateTo).
   //     klinecharts.init при 0×0 ломает раскладку панелей — свечи сжимаются
@@ -651,8 +706,8 @@ const candle = (day, close, month = 11) => ({
   domReadyCb(); // повторный DOMContentLoaded → autoLoadLastChart при скрытом разделе
   await flush();
   assert(els['test-chart-ticker-input'].value === 'GAZP', 'отложка: тикер подставлен в поле');
-  assert(applied.length === 1 && applied[applied.length - 1].close === 95500,
-    'отложка: старый график ещё на месте, свечи не перезагружены');
+  assert(applied.length === 2 && applied[applied.length - 1].close === 0.0000154,
+    'отложка: старый график ещё на месте (SHIB из шага 11a), свечи не перезагружены');
   assert(fetchUrls.length === urlsBeforePending,
     'отложка: запрос свечей не ушёл, пока раздел скрыт');
   assert(!statusOf().text.includes('GAZP'),
@@ -669,6 +724,8 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 2 && applied[applied.length - 1].close === 143,
     'отложка: после показа раздела график GAZP загружен');
   assert(els['tc-sym-name'].textContent === 'Газпром', 'отложка: имя инструмента показано в шапке');
+  assert(precisions.length === 2 && precisions[1].price === 2 && precisions[1].volume === 0,
+    'точность: возврат к «дорогому» инструменту — setPrecision вернул 2 знака');
 
   // 14) Сброс вида (как в TradingView): «улетевшие» зум/сдвиг возвращаются
   //     к дефолтам, снятым с инстанса при init, + scrollToRealTime.

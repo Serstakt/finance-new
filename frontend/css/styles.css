@@ -1208,6 +1208,14 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   padding: 2px 8px;
   pointer-events: none;
   z-index: 6;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+/* Тост-автоскрытие (js/test_chart.js setStatus): перед очисткой текста
+   плавно гасим, как сообщения в TradingView */
+.test-chart-status.fade-out {
+  opacity: 0;
 }
 
 .test-chart-status:empty {

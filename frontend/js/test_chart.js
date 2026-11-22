@@ -658,13 +658,34 @@
     registerCleanAxisOverlays();
   };
 
+  // Статус — тост, как сообщения в TradingView: висит поверх холста, но не
+  // вечно. Обычные сообщения гаснут через 6 с, предупреждения (деградация
+  // источника) держатся дольше — 15 с, ошибки не скрываются сами (их должен
+  // заменить следующий статус — так «Ошибка: …» не потеряется незаметно).
+  // Активный поллинг каждые 8 с перезапускает таймер — живой график держит
+  // свой «обновлено HH:MM:SS» видимым, затухает после последнего обновления.
+  const STATUS_TTL_MS = { info: 6000, warn: 15000 };
+  const STATUS_FADE_MS = 300;
+  let statusHideTimer = null;
+
   const setStatus = (text, isError = false, isWarn = false) => {
     const el = document.getElementById('test-chart-status');
-    if (el) {
-      el.textContent = text;
-      el.classList.toggle('error', isError);
-      el.classList.toggle('warn', !isError && isWarn);
-    }
+    if (!el) return;
+    if (statusHideTimer) { clearTimeout(statusHideTimer); statusHideTimer = null; }
+    el.classList.remove('fade-out');
+    el.textContent = text;
+    el.classList.toggle('error', isError);
+    el.classList.toggle('warn', !isError && isWarn);
+    if (isError || !text) return;
+    statusHideTimer = setTimeout(() => {
+      statusHideTimer = null;
+      el.classList.add('fade-out');
+      statusHideTimer = setTimeout(() => {
+        statusHideTimer = null;
+        el.textContent = '';
+        el.classList.remove('fade-out', 'warn');
+      }, STATUS_FADE_MS);
+    }, isWarn ? STATUS_TTL_MS.warn : STATUS_TTL_MS.info);
   };
 
   // Префикс биржи выбирает источник данных на бэкенде: MOEX: (акции ISS) или
@@ -1207,10 +1228,19 @@
 
   const TF_LABELS = { 60: '1ч', 24: '1д', 7: '1н', 31: '1М' };
 
+  // Точность инструмента — как в TradingView, определяется автоматически по
+  // данным: максимум десятичных знаков среди цен загруженных свечей
+  // (BINANCE:SHIBUSDT ~0.0000154 → 7 знаков, SBER → 2). Одна переменная
+  // кормит и шапку/легенду (fmtNum), и сам график — setPrecision({price})
+  // меняет ось цены, метки max/min свечи и подписи фигур.
+  let pricePrecision = 2;
+  // Тики мельче 1e-10 у биржевых инструментов не встречаются
+  const PRICE_PRECISION_CAP = 10;
+
   const fmtNum = (v) => {
     const n = Number(v);
     return Number.isFinite(n)
-      ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      ? n.toLocaleString('en-US', { minimumFractionDigits: pricePrecision, maximumFractionDigits: pricePrecision })
       : '—';
   };
 
@@ -1221,6 +1251,41 @@
     if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
     if (n >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
     return String(n);
+  };
+
+  // Десятичные разряды числа: «315.55» → 2; малые числа библиотека печатает
+  // экспонентой («1.54e-7» → 7 порядков + 2 разряда мантиссы = 9)
+  const countDecimals = (n) => {
+    const s = String(Math.abs(n));
+    if (s.includes('e-')) {
+      const [mantissa, exp] = s.split('e-');
+      const mantissaDecimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
+      return Number(exp) + mantissaDecimals;
+    }
+    return s.includes('.') ? s.split('.')[1].length : 0;
+  };
+
+  // Пересчёт точности под свежие данные. setPrecision перестраивает график
+  // целиком — зовём только при смене значения (в 9.6 аргумент — {price,
+  // volume}, ось цены свечной панели и метки max/min читают .price).
+  const applyPricePrecision = (list) => {
+    if (!chartInstance || !list || !list.length) return;
+    let max = 0;
+    for (const k of list) {
+      for (const v of [k.open, k.high, k.low, k.close]) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) {
+          const d = countDecimals(n);
+          if (d > max) max = d;
+        }
+      }
+    }
+    // Пол 2 знаков: у большинства инструментов источник и так отдаёт 2+,
+    // а инструменты с целочисленным тиком получают прежний вид «308.00»
+    const p = Math.min(Math.max(max, 2), PRICE_PRECISION_CAP);
+    if (p === pricePrecision) return;
+    pricePrecision = p;
+    try { chartInstance.setPrecision({ price: pricePrecision, volume: 0 }); } catch (e) {}
   };
 
   // Тикер для шапки: без технического префикса источника (BINANCE:BTCUSDT → BTCUSDT)
@@ -1270,7 +1335,7 @@
     const pct = (delta / prev.close) * 100;
     const up = delta >= 0;
     const sign = up ? '+' : '';
-    changeEl.textContent = `${sign}${delta.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
+    changeEl.textContent = `${sign}${delta.toFixed(pricePrecision)} (${sign}${pct.toFixed(2)}%)`;
     changeEl.classList.toggle('up', up);
     changeEl.classList.toggle('down', !up);
   };
@@ -1315,10 +1380,12 @@
   };
 
   // Легенда + цена из текущих данных графика (последняя свеча). Заодно
-  // пересчитываем точность осей под-окон — шкалы сдвинулись с новыми данными
+  // пересчитываем точность инструмента (шкала могла уйти с новыми данными)
+  // и точность осей под-окон — шкалы сдвинулись с новыми данными
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
     const list = chartInstance.getDataList();
+    applyPricePrecision(list);
     renderLegend(list.length ? list[list.length - 1] : null);
     updateSymbolQuote(list);
     for (const name of indicators.keys()) tuneSubPaneAxisPrecision(name);
