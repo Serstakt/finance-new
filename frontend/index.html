@@ -601,8 +601,10 @@
                                 крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
                                 Тип графика (свечи/бары/линия/области) — кнопки рядом с
                                 таймфреймом; шкала цены (log, %, авто) — кнопки у правого
-                                края холста. Сбросить масштаб и сдвиг: двойной клик по
-                                графику или правый клик → <b>Reset chart</b>.
+                                края холста, «авто» включается и выключается. Сбросить
+                                масштаб и сдвиг: двойной клик по графику или правый клик →
+                                <b>Reset chart</b>. Нарисованное: правый клик по фигуре
+                                удаляет её, <b>Ctrl+Z</b> убирает последнюю.
                             </div>
                         </div>
                     </div>
@@ -636,7 +638,7 @@
                              цены снимает автоподгонку (ручной масштаб),
                              кнопка «авто» возвращает её (js/test_chart.js) -->
                         <div class="tc-scale-cluster">
-                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: подгонять шкалу цены по видимой области (снимается перетаскиванием шкалы)">
+                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: включить/выключить подгонку шкалы цены по видимой области (снимается и перетаскиванием шкалы)">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <path d="M12 4v16"/>
                                     <path d="m8 8 4-4 4 4"/>
