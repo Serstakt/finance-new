@@ -614,9 +614,11 @@
                         <div class="tc-hint-wrap">
                             <button type="button" class="tc-hint-btn" id="tc-hint-btn" title="Подсказка по разделу" aria-label="Подсказка по разделу">?</button>
                             <div class="tc-hint-pop" role="tooltip">
-                                Свечи Мосбиржи (ISS, без авторизации — данные с задержкой
-                                ~15 мин) и крипто-пары Binance (реальное время). Последняя
-                                свеча обновляется автоматически. Разметка сохраняется по
+                                Свечи Мосбиржи (Algopack apim по токену — данные без
+                                задержки; при сбое токена анонимный ISS отдаёт их
+                                с задержкой ~15 мин) и крипто-пары Binance (реальное
+                                время). Последняя свеча обновляется автоматически.
+                                Разметка сохраняется по
                                 тикеру (в этом браузере) и переживает смену тикера и
                                 перезагрузку. Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
                                 крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
@@ -739,7 +741,7 @@
 <script defer src="js/main.js"></script>
 <script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
-<script defer src="js/test_chart.js?v=20261121"></script>
+<script defer src="js/test_chart.js?v=20261123"></script>
 
 <!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
      показываем предупреждение вместо «вечной загрузки» -->

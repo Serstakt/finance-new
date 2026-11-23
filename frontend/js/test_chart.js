@@ -1,6 +1,7 @@
-// Раздел «Тест график»: свечи MOEX ISS (user status NOT AUTHORIZED —
-// данные с задержкой ~15 мин) и крипто-пары Binance (BINANCE:BTCUSDT,
-// реальное время) рисуются библиотекой KLineChart.
+// Раздел «Тест график»: свечи Мосбиржи (при заданном MOEX_API_TOKEN —
+// авторизованный ISS Algopack apim.moex.com, без задержки; при сбое токена
+// — анонимный iss.moex.com с лагом ~15 мин) и крипто-пары Binance
+// (BINANCE:BTCUSDT, реальное время) рисуются библиотекой KLineChart.
 // Ввод тикера — по образцу формы добавления в watchlist: поле + кнопка,
 // отправка по Enter. Данные идут через бэкенд: GET /api/candles/{symbol}.
 //
@@ -63,11 +64,15 @@
 //   - компоновка как в TradingView: график занимает почти весь экран —
 //     поиск символа, ТФ, тип и индикаторы стоят в одной шапке карточки
 //     графика, подсказка раздела свёрнута в кнопку «?», статус живёт
-//     поверх холста и высоты не съедает;
-//   - отсчёт до закрытия бара как тег «287,45 · 00:32:41» в TV: раз в
-//     секунду в шапку рядом с ценой дописывается остаток времени до
-//     закрытия последней свечи (lastTs + интервал бара; недельным и
-//     месячным барам отсчёт не показывается — как в TV);
+//     поверх холста и высоты не съедает; размеры как у виджета TradingView
+//     на Watchlist — область графика вровень с краями экрана, без рамки
+//     и внешних отступов, холст догоняет resize окна и смену высоты шапки
+//     после загрузки данных (у библиотеки слежения за контейнером нет);
+//   - отсчёт до закрытия бара как тег «287,45 · 00:32:41» в TV, на всех
+//     ТФ: раз в секунду в шапку рядом с ценой дописывается остаток до
+//     следующей границы сетки ТФ (календарная проекция от последней
+//     свечи; после закрытия рынка — до открытия следующего бара, у
+//     недельных/месячных с префиксом дней «Nд ЧЧ:ММ:СС»);
 //   - undo/redo разметки: стек операций создать/удалить/сдвинуть/очистить
 //     (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и две стрелки в шапке) — удалённая
 //     правым кликом фигура возвращается, как в TradingView;
@@ -83,15 +88,18 @@
 //   - кисть/измеритель и клики рисования — на Pointer Events (мышь,
 //     тач-устройства и стилус одним потоком событий, touch-action: none
 //     гасит браузерные жесты на холсте);
-//   - поллинг Binance 5 с (ближе к потоку TV), MOEX 60 с (ISS и так
-//     отдаёт данные с задержкой ~15 мин).
+//   - поллинг Binance 5 с (ближе к потоку TV), MOEX 15 с через apim
+//     (токен Algopack, без задержки) или 60 с через анонимный ISS —
+//     период подбирается по source в ответе бэкенда.
 
 (() => {
   let chartInstance = null;
   let lastTicker = null; // последний успешно введённый тикер (сохранение разметки, guard поллинга)
+  let lastSource = null; // источник свежих свечей ('apim'|'iss'|'binance') — из candles-ответа
   let lastTs = null; // timestamp последней свечи — точка инкремента поллинга
   let pollTimer = null;
   let pollKey = null; // 'TICKER|interval' — поллинг останавливается, если данные сменились
+  let pollPeriod = null; // активный период таймера поллинга (мс) — смена источника перезапускает его
   let overlayIds = []; // id созданных overlay — для сериализации разметки
   let lastDrawEndAt = 0; // Date.now() последнего завершения фигуры — guard сброса вида на dblclick
   let currentInterval = 24; // активный ТФ (60|24|7|31)
@@ -100,9 +108,12 @@
   const indicators = new Map();
 
   // Периоды поллинга: у Binance реальные тики — 5 с (ближе к потоку
-  // TradingView, без websockets); ISS и так отдаёт котировки с задержкой
-  // ~15 мин — чаще 60 с смысла нет.
-  const POLL_MS = { binance: 5000, moex: 60000 };
+  // TradingView, без websockets). MOEX зависит от источника свечей:
+  // apim (токен Algopack, данные без задержки) — 15 с; анонимный ISS
+  // отдаёт котировки с лагом ~15 мин — чаще 60 с смысла нет. Источник
+  // известен из ответа бэкенда (source: 'apim'|'iss') и может смениться
+  // на ходу (отказ токена → откат на ISS) — pollOnce перезапускает поллинг.
+  const POLL_MS = { binance: 5000, moex: 60000, moexApim: 15000 };
   // Разметка в localStorage: { TICKER: [{ name, extendData, points: [{timestamp, value}] }] }
   const MARKUP_LS_KEY = 'test_chart_markup';
   // Последний открытый график (автозагрузка при открытии страницы)
@@ -179,6 +190,64 @@
         ? pane.getAxisComponent() : null;
       return axis && typeof axis.getAutoCalcTickFlag === 'function' ? axis : null;
     } catch (e) { return null; }
+  };
+
+  // ---- Плотность меток оси цены (как в TradingView) ----
+  // KLineChart 9.6 делит диапазон шкалы на 8 частей: в Axis._calcTickInterval
+  // жёстко вшит делитель 8, настройки плотности у стилей yAxis нет — на
+  // панелях обычной высоты выходит 6-8 меток, цены стоят ~80 px друг от
+  // друга и шкала выглядит «пустой». Метод перекрывается на самом инстансе
+  // оси (own property затеняет prototype-метод; имена методов в собранном
+  // бандле не минифицируются — проверено на klinecharts.min.js 9.6.0).
+  // Делим на 16: меток 12-16, как у TradingView; встроенный фильтр
+  // optimalTicks (соседние метки ближе 2× размера шрифта ≈ 24 px отбрасываются)
+  // такие зазоры не режет, а на низкой панели он же мягко деградирует
+  // плотность к прежней — естественный ограничитель.
+  const Y_AXIS_TICK_DIVISOR = 16;
+
+  // «Округление» шага тиков до 1/2/…/8 × 10^k и его десятичность — копии
+  // nice() и getPrecision() из исходников библиотеки v9.6.0
+  // (common/utils/number.ts, Apache-2.0): они не экспортируются, а
+  // перекрытый _calcTickInterval обязан вернуть шаг того же вида, что и
+  // оригинал, иначе ось (log/%, малые цены) поедет
+  const niceTickStep = (value) => {
+    const exponent = Math.floor(Math.log10(value));
+    const exp10 = Math.pow(10, exponent);
+    const f = value / exp10; // 1 <= f < 10
+    let nf = 0;
+    if (f < 1.5) nf = 1;
+    else if (f < 2.5) nf = 2;
+    else if (f < 3.5) nf = 3;
+    else if (f < 4.5) nf = 4;
+    else if (f < 5.5) nf = 5;
+    else if (f < 6.5) nf = 6;
+    else nf = 8;
+    return exponent >= -20
+      ? Number((nf * exp10).toFixed(exponent < 0 ? -exponent : 0))
+      : nf * exp10;
+  };
+  const tickStepPrecision = (value) => {
+    const s = String(value);
+    const e = s.indexOf('e');
+    if (e > 0) {
+      const p = Number(s.slice(e + 1));
+      return p < 0 ? -p : 0;
+    }
+    const dot = s.indexOf('.');
+    return dot < 0 ? 0 : s.length - 1 - dot;
+  };
+
+  // Перекрытие метода расчёта шага тиков — идемпотентно, зовётся один раз
+  // сразу после init (ось главной панели живёт всю жизнь графика,
+  // пересоздаётся только вместе с инстансом)
+  const densifyPriceAxisTicks = () => {
+    const axis = candlePaneAxis();
+    if (!axis || typeof axis._calcTickInterval !== 'function' || axis._tcDensified) return;
+    axis._tcDensified = true;
+    axis._calcTickInterval = function (range) {
+      const interval = niceTickStep(range / Y_AXIS_TICK_DIVISOR);
+      return [interval, tickStepPrecision(interval)];
+    };
   };
 
   // Автоподгонка шкалы: перетаскивание оси цены снимает её (setExtremum),
@@ -814,6 +883,9 @@
       // состояние уже прочитано из localStorage на DOMContentLoaded
       applyChartType();
       applyScaleMode();
+      // Плотные метки оси цены (см. блок densifyPriceAxisTicks) — до
+      // первой загрузки данных, чтобы ось сразу строилась с делителем 16
+      densifyPriceAxisTicks();
       // Дефолтный вид для сброса: снимаем до первого applyNewData и до
       // restoreViewport пользовательских зума/сдвига — это чистые дефолты
       defaultViewport = {
@@ -1111,6 +1183,9 @@
       }
     });
     window.addEventListener('resize', () => { if (ctxMenuOpen) hideCtxMenu(); });
+    // Окно изменилось — холст переложится под новый размер (у библиотеки
+    // своего слежения за контейнером нет, см. блок resizeChartSoon)
+    window.addEventListener('resize', resizeChartSoon);
   };
 
   // ---- Undo/redo разметки (стрелки в шапке, как в TradingView) ----
@@ -1542,11 +1617,23 @@
   const stopPolling = () => {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     pollKey = null;
+    pollPeriod = null;
   };
 
-  const sourceNote = (ticker) => isBinanceTicker(ticker)
-    ? 'данные Binance (реальное время)'
-    : 'данные ISS с задержкой ~15 мин';
+  // Период поллинга MOEX — по фактическому источнику свечей: apim без
+  // задержки опрашивается чаще (15 с), лагающий анонимный ISS — раз в минуту
+  const moexPollPeriod = () => (lastSource === 'apim' ? POLL_MS.moexApim : POLL_MS.moex);
+
+  // Примечание об источнике в статусе графика — по фактическому источнику
+  // последней подкачки (source из ответа бэкенда), не по тикеру: MOEX-акции
+  // с токеном Algopack идут через apim без задержки, а анонимный ISS —
+  // с лагом ~15 мин; source может смениться на ходу (отказ токена)
+  const sourceNote = (ticker) => {
+    if (isBinanceTicker(ticker)) return 'данные Binance (реальное время)';
+    return lastSource === 'apim'
+      ? 'данные MOEX Algopack (реальное время)'
+      : 'данные ISS с задержкой ~15 мин';
+  };
 
   // ---- Шапка символа и легенда OHLCV (облик TradingView) ----
   // Шапка над графиком: код · имя (name из candles-ответа бэкенда) · ТФ +
@@ -1557,16 +1644,59 @@
   const TF_LABELS = { 60: '1ч', 24: '1д', 7: '1н', 31: '1М' };
 
   // ---- Отсчёт до закрытия свечи (тег «287,45 · 00:32:41» в TradingView) ----
-  // Последняя свеча закрывается в lastTs + интервал бара; раз в секунду
-  // остаток дописывается в шапку рядом с ценой («· 00:32:41»). Недельным
-  // и месячным барам (более суток до закрытия) отсчёт не показываем —
-  // как в TradingView; скрытый раздел и фоновая вкладка не тикают.
+  // Закрытие текущего бара — следующая граница сетки ТФ ПОСЛЕ текущего
+  // момента, построенная КАЛЕНДАРНЫМ шагом от открытия последней свечи
+  // (+1 час, +1 сутки, +1 неделя к понедельнику, +1 месяц к 1-му числу).
+  // Наивный «lastTs + интервал между двумя последними свечами» ломается
+  // на разрывах сессий и выходных: часовые бары после закрытия рынка
+  // уходят в минус (отсчёт пропадает), суточные свечи через выходные
+  // дают интервал 96 ч, месячные дрейфуют (в месяце 28–31 день).
+  // Проекция по календарю показывает отсчёт на ВСЕХ ТФ, как в TradingView:
+  // после закрытия рынка он идёт к следующей границе (на часовых — «до
+  // открытия следующего бара»), а у баров длиннее суток в метке появляется
+  // префикс дней «Nд ЧЧ:ММ:СС». Скрытый раздел и фоновая вкладка не тикают.
 
   let countdownTimer = null;
 
+  // Календарный шаг сетки ТФ от метки ts к следующей границе. Шаг от
+  // самой метки свечи (а не от «сейчас») сохраняет привязку сетки к её
+  // часовому поясу: у Binance метки UTC («…Z») — сутки прибавляются к
+  // полуночи UTC, у ISS — к локальной; у недельных и месячных баров
+  // сдвиг на часовые пояса не теряется.
+  const calendarStep = (ts) => {
+    const d = new Date(ts);
+    switch (currentInterval) {
+      case 60: // часовые бары открываются в начале часа
+        d.setMinutes(0, 0, 0);
+        return d.getTime() + 3600000;
+      case 24: // суточные — в полночь
+        d.setHours(0, 0, 0, 0);
+        return d.getTime() + 86400000;
+      case 31: // месячные — 1-го числа следующего месяца
+        return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+      default: // 7: недельные открываются в понедельник (0 = пн)
+        d.setHours(0, 0, 0, 0);
+        return d.getTime() - ((d.getDay() + 6) % 7) * 86400000 + 7 * 86400000;
+    }
+  };
+
+  // Ближайшая граница впереди: один шаг закрывает текущий бар; если его
+  // закрытие уже позади (разрыв сессий, остывшие данные) — шагаем дальше
+  // до границы в будущем (лимит — страховка от вечного цикла)
+  const nextBarCloseTs = () => {
+    if (lastTs == null) return null;
+    let ts = calendarStep(lastTs);
+    for (let i = 0; ts <= Date.now() && i < 1000; i++) ts = calendarStep(ts);
+    return ts;
+  };
+
+  // «00:32:41», при остатке больше суток — «2д 07:14:35» (в TradingView
+  // отсчёт недельных/месячных баров тоже идёт, с префиксом дней)
   const fmtCountdown = (ms) => {
     const s = Math.max(0, Math.floor(ms / 1000));
-    return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+    const days = Math.floor(s / 86400);
+    const core = `${pad2(Math.floor((s % 86400) / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+    return days > 0 ? `${days}д ${core}` : core;
   };
 
   const renderCountdown = () => {
@@ -1574,9 +1704,9 @@
     if (!el) return;
     let text = '';
     if (lastTs != null && chartSectionVisible() && !document.hidden) {
-      const interval = barIntervalMs();
-      const remain = interval ? lastTs + interval - Date.now() : null;
-      if (remain != null && remain > 0 && remain <= 86400000) text = `· ${fmtCountdown(remain)}`;
+      const closeTs = nextBarCloseTs();
+      const remain = closeTs != null ? closeTs - Date.now() : null;
+      if (remain != null && remain > 0) text = `· ${fmtCountdown(remain)}`;
     }
     if (el.textContent !== text) el.textContent = text;
   };
@@ -1739,10 +1869,28 @@
     el.style.top = `${Math.round(volScale.top + volScale.height - vol * volScale.unitPx)}px`;
   };
 
+  // ---- Пересчёт размеров холста ----
+  // KLineChart 9.6 не следит за контейнером сам (ни ResizeObserver, ни
+  // слушателя window-resize внутри библиотеки): холст перераскладывается
+  // только явным resize(). Без этого после загрузки данных шапка карточки
+  // при появлении цены/легенды могла сменить высоту переноса строк — холст
+  // оставался в старых габаритах и ось времени уезжала за край окна.
+  let resizeChartTimer = null;
+
+  const resizeChartSoon = () => {
+    if (!chartInstance || typeof chartInstance.resize !== 'function') return;
+    if (resizeChartTimer != null) clearTimeout(resizeChartTimer);
+    resizeChartTimer = setTimeout(() => {
+      resizeChartTimer = null;
+      if (chartInstance && typeof chartInstance.resize === 'function') chartInstance.resize();
+    }, 50);
+  };
+
   // Легенда + цена из текущих данных графика (последняя свеча). Заодно
   // пересчитываем точность инструмента (шкала могла уйти с новыми данными)
   // и точность осей под-окон — шкалы сдвинулись с новыми данными;
-  // отсчёт до закрытия бара перезапускается вместе с lastTs
+  // отсчёт до закрытия бара перезапускается вместе с lastTs; высота шапки
+  // с обновлёнными значениями могла смениться — догоняем размер холста
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
     const list = chartInstance.getDataList();
@@ -1751,6 +1899,7 @@
     updateSymbolQuote(list);
     renderCountdown();
     for (const name of indicators.keys()) tuneSubPaneAxisPrecision(name);
+    resizeChartSoon();
   };
 
   const pollOnce = async (ticker, interval) => {
@@ -1765,6 +1914,18 @@
       const response = await window.fetchWithTimeout(url, {}, 30000);
       const data = await response.json();
       if (data.error || !data.candles || !data.candles.length) return;
+
+      // Источник подкачки мог смениться (apim отклонил токен — бэкенд
+      // откатился на анонимный ISS, и наоборот): запоминаем и перезапускаем
+      // поллинг с периодом нового источника — ISS не дёргаем каждые 15 с.
+      // Текущий тик дорабатывает до конца: clearInterval не мешает уже
+      // идущему колбэку, свечи из ответа терять не хотелось бы
+      if (data.source && data.source !== lastSource) {
+        lastSource = data.source;
+        if (!isBinanceTicker(ticker) && moexPollPeriod() !== pollPeriod) {
+          startPolling(ticker, interval);
+        }
+      }
 
       let changed = 0;
       for (const c of data.candles) {
@@ -1794,7 +1955,8 @@
     stopPolling();
     const key = `${ticker}|${interval}`;
     pollKey = key;
-    const period = isBinanceTicker(ticker) ? POLL_MS.binance : POLL_MS.moex;
+    const period = isBinanceTicker(ticker) ? POLL_MS.binance : moexPollPeriod();
+    pollPeriod = period;
     pollTimer = setInterval(() => {
       // Данные сменились (ввели другой тикер/ТФ) — этот таймер больше не нужен
       if (pollKey !== key) { stopPolling(); return; }
@@ -1889,6 +2051,12 @@
         data = await response.json();
       }
 
+      // Источник свежей подкачки ('apim'|'iss'|'binance'): заметка в статусе
+      // и период поллинга MOEX подстраиваются по нему. В пути фолбэка
+      // (отдача накопленного хранилища) source нет — данные могут быть
+      // устаревшими, прежнее значение сбрасываем
+      lastSource = data.source || null;
+
       if (data.error) {
         setStatus(`Ошибка: ${data.error}`, true);
         return;
@@ -1956,7 +2124,7 @@
 
       const liveNote = isBinanceTicker(ticker)
         ? `автообновление каждые ${POLL_MS.binance / 1000} с`
-        : `автообновление каждые ${POLL_MS.moex / 1000} с`;
+        : `автообновление каждые ${moexPollPeriod() / 1000} с`;
       // note бэкенда — деградация: источник недоступен, отдаём накопленную
       // историю (может быть устаревшей). Показываем предупреждением.
       const base = `График ${ticker} · свечей: ${klineData.length} · ${sourceNote(ticker)} · ${liveNote}`;

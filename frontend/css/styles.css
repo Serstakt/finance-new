@@ -1137,8 +1137,11 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Компоновка как в TradingView: график занимает почти весь экран —
    заголовка и подсказки над ним нет (подсказка свёрнута в «?» шапки
    карточки), контейнер растягивает область графика на всю высоту. */
+/* Без внешних отступов — как виджет TradingView на Watchlist: холст встаёт
+   вровень с краями области под шапкой-меню (те же габариты, что у
+   #chart-container той страницы: от нижнего края меню до низа окна). */
 .test-chart-container {
-  padding: 8px 12px 12px 12px;
+  padding: 0;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
@@ -1233,16 +1236,17 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 
 /* Область графика в духе TradingView: слева узкая колонка инструментов
-   разметки, справа — шапка-тулбар и сам холст. Рамку и скругление несёт
-   вся область целиком, как единая панель; растянута на весь экран. */
+   разметки, справа — шапка-тулбар и сам холст. Без рамки и скругления —
+   как виджет TradingView на Watchlist: область растянута вровень с
+   краями экрана, габариты холста совпадают с #chart-container той
+   страницы (от нижнего края меню до низа окна, вся ширина).
+   overflow: hidden гасит распухание холста при перерисовке. */
 .tc-chart-area {
   display: flex;
   align-items: stretch;
   flex: 1;
   min-height: 380px;
   width: 100%;
-  border: 1px solid #2a2e39;
-  border-radius: 8px;
   overflow: hidden;
   background: #131722;
 }

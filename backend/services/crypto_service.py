@@ -578,6 +578,7 @@ async def fetch_binance_candles(
     return {
         "symbol": f"BINANCE:{symbol}",
         "interval": interval,
+        "source": "binance",
         "candles": result,
     }
 

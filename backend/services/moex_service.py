@@ -50,7 +50,9 @@ async def fetch_moex_candles(
 
     С токеном MOEX_API_TOKEN запрос идёт на apim.moex.com с заголовком
     Authorization: Bearer (котировки без задержки); если токен не принят —
-    откат на анонимный iss.moex.com.
+    откат на анонимный iss.moex.com. Какой источник реально отдал данные,
+    видно по полю source ответа: 'apim' | 'iss' (фронт показывает его
+    в статусе графика и подбирает период поллинга).
 
     ISS отдаёт не более 500 свечей за запрос, поэтому история собирается
     пагинацией параметром start (0, 500, 1000, …) до конца доступных данных
@@ -149,6 +151,7 @@ async def fetch_moex_candles(
     return {
         "symbol": f"MOEX:{ticker}",
         "interval": interval,
+        "source": "apim" if use_apim else "iss",
         "candles": result,
     }
 
