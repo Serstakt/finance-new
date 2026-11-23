@@ -163,11 +163,12 @@
         <div id="chart-container">
             <!-- График KLineChart — переехал из раздела «Тест график»
                  (логика в js/watchlist_chart.js): слева вертикальная панель
-                 инструментов разметки, шапка с ТФ/типом графика/индикаторами
-                 и холст свечей. Область занимает ровно тот слот, в котором
-                 раньше стоял виджет TradingView: вся ширина, от верха
-                 #chart-container до панели «Новости». Тикер берётся из
-                 выбранной строки watchlist — поле ввода здесь не нужно. -->
+                 инструментов разметки, шапка с тикером/ТФ/типом графика/
+                 индикаторами и холст свечей. Область занимает ровно тот слот,
+                 в котором раньше стоял виджет TradingView: вся ширина, от
+                 верха #chart-container до панели «Новости». Тикер
+                 подставляется из выбранной строки watchlist и вводится
+                 вручную в поле шапки (Enter — загрузить). -->
             <div id="wl-chart-area" class="tc-chart-area">
                 <div class="tc-draw-toolbar" title="Инструменты разметки">
                     <!-- Линии -->
@@ -260,10 +261,10 @@
                     </button>
                 </div>
                 <div class="tc-chart-main">
-                    <!-- Шапка графика (как верхняя панель TradingView):
-                         ТФ + тип + undo/redo разметки + индикаторы, справа —
-                         код · имя · ТФ + последняя цена с дельтой
-                         (js/watchlist_chart.js) -->
+                <!-- Шапка графика (как верхняя панель TradingView):
+                     тикер (поле ввода) · ТФ + тип + undo/redo разметки +
+                     индикаторы; имя инструмента — в легенде на графике
+                     (js/watchlist_chart.js) -->
                     <div class="tc-symbol-header" id="tc-symbol-header">
                         <!-- Таймфреймы — сегмент кнопок (tcSetInterval),
                              тип графика — дропдаун как в TradingView:
@@ -271,8 +272,14 @@
                              в меню — «иконка + название» (tcSetChartType;
                              пункты строит js/watchlist_chart.js:
                              buildTypeDropdown, подсветку ведёт
-                             syncTypeButtons) -->
+                             syncTypeButtons). Перед ТФ — поле тикера:
+                             значение подставляется из выбранной в списке
+                             строки, свой код загружается по Enter
+                             (js/watchlist_chart.js) -->
                         <div class="tc-controls">
+                            <input type="text" class="tc-sym-input" id="tc-sym-input" placeholder="Тикер"
+                                autocomplete="off" spellcheck="false" maxlength="24"
+                                title="Тикер: например SBER или BINANCE:BTCUSDT. Enter — загрузить, Escape — вернуть текущий">
                             <div class="tc-tf-group" title="Таймфрейм">
                                 <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
                                 <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
@@ -301,8 +308,10 @@
                                 </button>
                             </div>
                         </div>
-                        <!-- Индикаторы: dropdown всех встроенных; клик по названию
-                             включённого — настройка периодов (как в TradingView) -->
+                        <!-- Индикаторы: dropdown всех встроенных. Строки
+                             включённых (название с параметрами, значения,
+                             ×-закрытие) живут прямо на графике — см.
+                             #tc-ind-legends в .tc-chart-stage -->
                         <div class="tc-indicator-toolbar">
                             <span class="tc-group-label">Индикаторы:</span>
                             <select id="tc-indicator-select" title="Добавить индикатор">
@@ -330,14 +339,13 @@
                                     <option value="TRIX">TRIX</option>
                                 </optgroup>
                             </select>
-                            <span id="tc-indicator-chips" class="tc-ind-chips"></span>
                         </div>
-                        <span class="tc-sym-code" id="tc-sym-code">—</span>
-                        <span class="tc-sym-name" id="tc-sym-name" style="display:none"></span>
-                        <span class="tc-sym-tf" id="tc-sym-tf"></span>
-                        <!-- Текущую цену показывает цветной тег на шкале цены
-                             (рисует библиотека), цену в шапке убрали; отсчёт
-                             до закрытия бара стоит под этим тегом —
+                        <!-- Имя инструмента живёт в легенде OHLCV на графике
+                             (перед «Откр», как в TradingView); код тикера —
+                             поле tc-sym-input слева, дублирующий ТФ убран
+                             (ТФ виден на сегменте). Текущую цену показывает
+                             цветной тег на шкале цены (рисует библиотека),
+                             отсчёт до закрытия бара стоит под этим тегом —
                              см. .tc-sym-countdown в #tc-chart-stage -->
                     </div>
                     <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно:
@@ -351,10 +359,11 @@
                              холста (как сообщения в TradingView), высоты макета
                              не занимает (js/watchlist_chart.js setStatus) -->
                         <div class="wl-chart-status" id="watchlist-chart-status"></div>
-                        <!-- Легенда OHLCV как в TradingView: подписи Откр/Макс/
-                             Мин/Закр, следом — изменение к предыдущей свече в
-                             числах и процентах (переехало из шапки справа
-                             вверху, updateSymbolQuote пишет в tc-leg-change);
+                        <!-- Легенда OHLCV как в TradingView: имя инструмента
+                             (name из candles-ответа бэкенда, applySymbolName),
+                             следом подписи Откр/Макс/Мин/Закр и изменение к
+                             предыдущей свече в числах и процентах
+                             (updateSymbolQuote пишет в tc-leg-change);
                              значения окрашены по направлению свечи и
                              обновляются под курсором (subscribeAction
                              onCrosshairChange). Объем — второй строкой, виден
@@ -362,6 +371,7 @@
                              (js/watchlist_chart.js: syncVolumeLegend). -->
                         <div class="tc-legend" id="tc-legend">
                             <div class="tc-leg-row">
+                                <span class="tc-leg-name" id="tc-sym-name" style="display:none"></span>
                                 <span class="tc-leg-item"><span class="tc-leg-label">Откр</span><span class="tc-leg-val" id="tc-leg-o"></span></span>
                                 <span class="tc-leg-item"><span class="tc-leg-label">Макс</span><span class="tc-leg-val" id="tc-leg-h"></span></span>
                                 <span class="tc-leg-item"><span class="tc-leg-label">Мин</span><span class="tc-leg-val" id="tc-leg-l"></span></span>
@@ -370,12 +380,20 @@
                             </div>
                             <div class="tc-leg-row" id="tc-leg-volume-row">
                                 <span class="tc-leg-item"><span class="tc-leg-label">Объем</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
+                                <!-- Закрытие гистограммы объёма — рядом с её
+                                     названием в легенде на графике (как у
+                                     остальных индикаторов), а не в шапке -->
+                                <span class="tc-leg-close" id="tc-leg-volume-close" style="display:none" title="Убрать гистограмму объёма">×</span>
                             </div>
                         </div>
-                        <!-- Метка объёма на оси цены (как в TradingView): тег
-                             со значением столбика под курсором; позиция и цвет
-                             задаются из js/watchlist_chart.js (renderVolumeAxisLabel) -->
-                        <div class="tc-vol-axis" id="tc-vol-axis"></div>
+                        <!-- Легенды индикаторов прямо на графике (как в
+                             TradingView): строка «ИМЯ(параметры) значения ×»
+                             на каждой панели — имя открывает периоды, ×
+                             убирает индикатор; содержимое и позиции
+                             (верх панели индикатора) задаёт
+                             js/watchlist_chart.js (renderIndicatorLegends,
+                             updateIndicatorLegendPositions) -->
+                        <div class="tc-ind-legends" id="tc-ind-legends"></div>
                         <!-- Поле «цена + отсчёт» на шкале цены — одна плашка
                              в цвет направления последней свечи: сверху цена,
                              отсчёт до закрытия бара — строкой ниже. Встроенный
@@ -387,20 +405,28 @@
                             <span class="tc-axis-price" id="tc-sym-price"></span>
                             <span class="tc-sym-countdown" id="tc-sym-countdown"></span>
                         </div>
-                        <!-- Кластер шкалы цены как в TradingView: «авто», log
-                             и % у правого края холста. Перетаскивание шкалы
-                             цены снимает автоподгонку (ручной масштаб),
-                             кнопка «авто» возвращает её (js/watchlist_chart.js) -->
-                        <div class="tc-scale-cluster">
-                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: включить/выключить подгонку шкалы цены по видимой области (снимается и перетаскиванием шкалы)">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <path d="M12 4v16"/>
-                                    <path d="m8 8 4-4 4 4"/>
-                                    <path d="m8 16 4 4 4-4"/>
+                        <!-- Настройки шкалы цены — кнопка-шестерёнка с
+                             дропдауном у правого края холста: «авто»
+                             (переключатель автоподгонки), log и % (режимы
+                             шкалы, как в TradingView). Раньше все три кнопки
+                             стояли столбиком поверх оси цены и закрывали её
+                             значения. Перетаскивание шкалы цены снимает
+                             автоподгонку (ручной масштаб), пункт «авто»
+                             возвращает её (js/watchlist_chart.js:
+                             buildScaleDropdown, tcAutoSizeScale,
+                             tcSetScaleMode) -->
+                        <div class="tc-scale-dropdown" id="tc-scale-dropdown">
+                            <button type="button" class="tc-scale-btn" id="tc-scale-toggle" aria-haspopup="menu" aria-expanded="false" title="Настройки шкалы цены">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                                    <circle cx="12" cy="12" r="3"/>
                                 </svg>
                             </button>
-                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">log</button>
-                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">%</button>
+                            <div class="tc-scale-menu" id="tc-scale-menu" role="menu">
+                                <button type="button" class="tc-scale-item" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: включить/выключить подгонку шкалы цены по видимой области (снимается и перетаскиванием шкалы)">Автомасштаб</button>
+                                <button type="button" class="tc-scale-item" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">Логарифмическая шкала</button>
+                                <button type="button" class="tc-scale-item" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">Проценты</button>
+                            </div>
                         </div>
                         <!-- Контекстное меню правого клика (как в TradingView):
                              Reset chart + «Скопировать цену» (цена под курсором),

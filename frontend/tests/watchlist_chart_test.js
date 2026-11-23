@@ -1,23 +1,28 @@
 // Тест графика раздела Watchlist (js/watchlist_chart.js, переехал из
 // «Тест график» на место виджета TradingView): оконная загрузка (?slice=1)
 // с фолбэком на хранилище, загрузка тикера, выбранного в списке
-// (wlChartLoad + отложка до показа раздела), сегмент ТФ,
+// (wlChartLoad + отложка до показа раздела) и введённого в поле шапки
+// (Enter — тот же путь, что клик по строке; Escape возвращает текущий),
+// сегмент ТФ (без дублирующей ТФ-подписи в шапке),
 // догрузка истории при скролле влево (loadMore/applyMoreData), сохранение
 // viewport при смене данных, сброс вида (двойной клик / правый клик →
 // «Reset chart»: дефолтные масштаб/сдвиг + scrollToRealTime; правый клик
 // по фигуре удаляет её без «Reset chart», Ctrl+Z убирает последнюю
-// фигуру), индикаторы (dropdown + чипы: добавить, настроить периоды,
-// убрать; в главное окно — стеком isStack: 9.6 при isStack=false затирает
+// фигуру), индикаторы (dropdown + легенды на графике «ИМЯ(параметры)
+// значения ×»: добавить, настроить периоды, убрать с легенды; в главное
+// окно — стеком isStack: 9.6 при isStack=false затирает
 // индикаторов панели), volume-гистограмма
 // в главном окне (вкл. по умолчанию, draw с нормировкой по видимой области,
-// метка на оси под курсором), поллинг, сохранение разметки по тикеру
+// метка на оси под курсором, ×-закрытие в строке «Объем» легенды),
+// поллинг, сохранение разметки по тикеру
 // в localStorage, note бэкенда о деградации источника, диалог настроек
 // вместо window.prompt (заметка на графике и периоды индикатора: Enter
 // применяет, отмена/ошибки inline), тип графика (свечи/бары/линия/области
-// через candle.type) и режим шкалы цены (normal/log/percentage + кнопка-
-// переключатель «авто»: включить/выключить автоподгонку оси) с сохранением
-// выбора в localStorage, точность инструмента по данным (дешёвые тикеры
-// типа SHIBUSDT: шапка/легенда/метки max/min не схлопываются в «0.00»).
+// через candle.type) и режим шкалы цены (normal/log/percentage, спрятанный
+// в дропдаун шестерёнки, + пункт-переключатель «авто»: включить/выключить
+// автоподгонку оси) с сохранением выбора в localStorage, точность
+// инструмента по данным (дешёвые тикеры типа SHIBUSDT: шапка/легенда/метки
+// max/min не схлопываются в «0.00»).
 // Облик/поведение TradingView: фигуры без меток на осях (встроенные
 // шаблоны пере-регистрированы без needDefaultX/YAxisFigure), догоняющий
 // клик (быстрый последний клик фигуры, проглоченный окном dblclick 9.6,
@@ -84,11 +89,11 @@ const els = {
   'watchlist-chart-status': new El('div'),
   'watchlist-kline': new El('div'),
   'tc-indicator-select': new El('select'),
-  'tc-indicator-chips': new El('span'),
-  // шапка символа + легенда OHLCV (облик TradingView)
-  'tc-sym-code': new El('span'),
+  // легенды индикаторов прямо на графике (шапка без чипов)
+  'tc-ind-legends': new El('div'),
+  // шапка символа: поле тикера слева + имя справа, легенда OHLCV
+  'tc-sym-input': new El('input'),
   'tc-sym-name': new El('span'),
-  'tc-sym-tf': new El('span'),
   'tc-leg-change': new El('span'),
   'tc-sym-countdown': new El('span'),
   'tc-legend': new El('div'),
@@ -97,7 +102,8 @@ const els = {
   'tc-leg-l': new El('span'),
   'tc-leg-c': new El('span'),
   'tc-leg-v': new El('span'),
-  'tc-vol-axis': new El('div'),
+  'tc-leg-volume-row': new El('div'),
+  'tc-leg-volume-close': new El('span'),
   // сброс вида: холст + контекстное меню «Reset chart» (+ новые пункты:
   // скопировать цену, снимок PNG, удалить всю разметку)
   'tc-chart-stage': new El('div'),
@@ -109,11 +115,14 @@ const els = {
   // undo/redo разметки (стрелки в шапке как в TradingView)
   'tc-undo': new El('button'),
   'tc-redo': new El('button'),
-  // тип графика (сегмент иконок) + шкала цены (log/%/авто)
+  // тип графика (сегмент иконок) + шкала цены (дропдаун шестерёнки)
   'tc-type-candles': new El('button'),
   'tc-type-bars': new El('button'),
   'tc-type-line': new El('button'),
   'tc-type-area': new El('button'),
+  'tc-scale-dropdown': new El('div'),
+  'tc-scale-toggle': new El('button'),
+  'tc-scale-menu': new El('div'),
   'tc-scale-log': new El('button'),
   'tc-scale-pct': new El('button'),
   'tc-scale-auto': new El('button'),
@@ -235,7 +244,13 @@ const chart = {
   createIndicator: (name, isStack, pane) => {
     createdIndicators[name] = pane;
     createdStacks[name] = isStack;
-    indInstances[name] = { name, calcParams: [14] };
+    // figures/result — как у живого инстанса 9.6: легенды на графике
+    // печатают значения по ключам figures из result (по бару под курсором)
+    indInstances[name] = {
+      name, calcParams: [14],
+      figures: [{ key: 'f1', title: 'F: ' }],
+      result: applied.map((_, i) => ({ f1: 10 + i })),
+    };
     return 'ind_' + name;
   },
   removeIndicator: (paneId, name) => {
@@ -375,13 +390,14 @@ const candle = (day, close, month = 11) => ({
     && styleCalls[1].yAxis && styleCalls[1].yAxis.type === 'normal',
     'вид при init: применены дефолтные тип (свечи) и режим шкалы (обычная)');
 
-  // 0a) Шапка символа (облик TradingView): код · имя · ТФ + цена с дельтой
-  assert(els['tc-sym-code'].textContent === 'SBER', 'шапка: код SBER');
+  // 0a) Шапка символа (облик TradingView): тикер — в поле ввода слева
+  //     (перед ТФ), дублирующие подписи (ТФ, имя) убраны; имя инструмента —
+  //     в легенде на графике перед «Откр»
+  assert(els['tc-sym-input'].value === 'SBER', 'шапка: тикер SBER подставлен в поле ввода');
   assert(els['tc-sym-name'].textContent === 'Сбербанк' && els['tc-sym-name'].style.display !== 'none',
-    'шапка: имя инструмента из candles-ответа показано');
-  assert(els['tc-sym-tf'].textContent === '1д', 'шапка: ТФ подписан как 1д');
+    'легенда: имя инструмента из candles-ответа показано перед «Откр»');
   assert(els['tc-leg-change'].textContent === '+3.00 (+0.98%)' && els['tc-leg-change']._classes.has('up'),
-    'шапка: дельта +3.00 (+0.98%) зелёным');
+    'легенда: дельта +3.00 (+0.98%) зелёным');
 
   // 0a2) Легенда OHLCV по последней свече, цвет по направлению
   assert(els['tc-leg-o'].textContent === '303.00' && els['tc-leg-h'].textContent === '313.00' &&
@@ -448,8 +464,8 @@ const candle = (day, close, month = 11) => ({
     'фолбэк: второй запрос без slice (полный, через хранилище)');
   assert(st1.warn && !st1.err, 'note бэкенда — warn, не error');
   assert(st1.text.includes('накопленную историю'), 'текст note попал в статус');
-  assert(els['tc-sym-code'].textContent === 'GAZP' && els['tc-sym-name'].style.display === 'none',
-    'шапка: без имени в ответе имя скрыто, код сменился на GAZP');
+  assert(els['tc-sym-input'].value === 'GAZP' && els['tc-sym-name'].style.display === 'none',
+    'легенда: без имени в ответе имя скрыто, тикер GAZP в поле ввода');
 
   // 2) Поллинг: обновление последней свечи + дописывание новой
   fetchQueue = [{
@@ -570,20 +586,23 @@ const candle = (day, close, month = 11) => ({
   assert(liveOverlays().length === 1, 'смена ТФ: разметка осталась на графике (без дублей)');
 
   // 10) Индикаторы: добавление в нужные панели, настройка периодов, удаление
-  //     (чип volume-гистограммы включён по умолчанию и всегда в списке)
+  //     (легенды на графике вместо чипов: гистограмма живёт строкой «Объем»
+  //     легенды OHLCV, остальные — строками «ИМЯ(параметры) значения ×»)
   assert(createdIndicators['VOL_MAIN'] && createdIndicators['VOL_MAIN'].id === 'candle_pane',
     'volume: гистограмма включена по умолчанию в главном окне');
-  assert(els['tc-indicator-chips'].children.some(c => c.children[0].textContent === 'Объем'),
-    'volume: чип гистограммы показан среди включённых индикаторов (подпись «Объем»)');
+  assert(els['tc-leg-volume-row'].style.display === '' && els['tc-leg-volume-close'].style.display === '',
+    'volume: строка «Объем» в легенде OHLCV с ×-закрытием показана');
+  assert(els['tc-ind-legends'].children.length === 0,
+    'легенды: гистограмма не имеет своей строки на графике (только «Объем» в легенде)');
   assert(JSON.stringify(registeredIndicator.calc()) === '[]',
     'volume: без result-значений — ценовая шкала главной панели не растягивается');
   sandbox.window.tcAddIndicator('RSI');
   assert(createdIndicators['RSI'] && createdIndicators['RSI'].id === 'tc_ind_RSI',
     'индикаторы: RSI создан в собственном под-окне');
-  assert(els['tc-indicator-chips'].children.length === 2, 'индикаторы: чип добавлен (вместе с volume)');
+  assert(els['tc-ind-legends'].children.length === 1, 'индикаторы: легенда RSI на графике');
   sandbox.window.tcAddIndicator('MA');
   assert(createdIndicators['MA'].id === 'candle_pane', 'индикаторы: MA создан в главном окне');
-  assert(els['tc-indicator-chips'].children.length === 3, 'индикаторы: второй чип добавлен');
+  assert(els['tc-ind-legends'].children.length === 2, 'индикаторы: вторая легенда добавлена');
   // isStack=true для главного окна обязателен: в 9.6 IndicatorStore.addInstance
   // при isStack=false делает paneInstances.clear() — MA затирал бы volume
   assert(createdStacks['MA'] === true && createdStacks['VOL_MAIN'] === true,
@@ -591,14 +610,31 @@ const candle = (day, close, month = 11) => ({
   assert(createdStacks['RSI'] === false,
     'индикаторы: RSI в собственном под-окне — не стек');
 
-  // 10a) Диалог настроек индикатора вместо window.prompt: клик по имени
-  //      чипа открывает модальное окно с текущими периодами, «Применить»
-  //      вызывает overrideIndicator, ошибка валидации остаётся inline
+  // 10a0) Легенды на графике: название с параметрами, строка значений,
+  //       ×-закрытие рядом с названием; значения следуют за кроссхейром
+  const legendRow = (ind) => els['tc-ind-legends'].children.find(c => c.dataset.ind === ind);
+  assert(legendRow('MA').children[0].textContent === 'MA(14)'
+    && legendRow('RSI').children[0].textContent === 'RSI(14)',
+    'легенды: название с параметрами «MA(14)»/«RSI(14)»');
+  assert(legendRow('RSI').children[2].textContent === '×',
+    'легенды: ×-закрытие стоит рядом с названием на графике');
+  const legendVals = (ind) => legendRow(ind).children[1].textContent;
+  assert(legendVals('MA') !== '' && legendVals('RSI') !== '',
+    'легенды: строки значений заполнены из figures/result инстанса');
+  actions['onCrosshairChange']({ kLineData: applied[applied.length - 1] });
+  const lastVals10 = { ma: legendVals('MA'), rsi: legendVals('RSI') };
+  actions['onCrosshairChange']({ kLineData: applied[0] });
+  assert(legendVals('MA') !== lastVals10.ma && legendVals('RSI') !== lastVals10.rsi,
+    'легенды: значения следуют за кроссхейром');
+
+  // 10a) Диалог настроек индикатора вместо window.prompt: клик по названию
+  //      в легенде на графике открывает модальное окно с текущими
+  //      периодами, «Применить» вызывает overrideIndicator (легенда
+  //      перерисовывается с новыми параметрами), ошибка валидации — inline
   const btnTool = () => new El('button');
-  const chipRsi = els['tc-indicator-chips'].children.find(c => c.children[0].textContent === 'RSI');
   const modalEl = els['tc-settings-modal'];
-  chipRsi.children[0]._listeners.click();
-  assert(modalEl._classes.has('active'), 'диалог: клик по имени индикатора открыл модальное окно');
+  legendRow('RSI').children[0]._listeners.click();
+  assert(modalEl._classes.has('active'), 'диалог: клик по названию в легенде открыл модальное окно');
   assert(els['tc-settings-title'].textContent.includes('RSI'), 'диалог: имя индикатора в заголовке');
   assert(els['tc-settings-input'].value === '14' && els['tc-settings-input'].style.display !== 'none',
     'диалог: текущие периоды подставлены в однострочное поле');
@@ -610,9 +646,11 @@ const candle = (day, close, month = 11) => ({
   assert(!modalEl._classes.has('active'), 'диалог: после применения окно закрыто');
   assert(indInstances['RSI'].calcParams.length === 1 && indInstances['RSI'].calcParams[0] === 21,
     'индикаторы: параметры RSI реально обновлены в инстансе');
+  assert(legendRow('RSI').children[0].textContent === 'RSI(21)',
+    'легенды: параметры в названии обновились после overrideIndicator');
 
   // Неверные периоды: inline-ошибка, окно не закрывается, override нет
-  chipRsi.children[0]._listeners.click();
+  legendRow('RSI').children[0]._listeners.click();
   els['tc-settings-input'].value = 'abc';
   els['tc-settings-apply']._listeners.click();
   assert(modalEl._classes.has('active') && els['tc-settings-error'].style.display !== 'none'
@@ -661,13 +699,14 @@ const candle = (day, close, month = 11) => ({
   modalEl._listeners.click({ target: modalEl });
   assert(!modalEl._classes.has('active'), 'заметка: клик по фону отменил диалог');
 
-  chipRsi.children[1]._listeners.click(); // × — убрать
+  legendRow('RSI').children[2]._listeners.click(); // × на легенде — убрать
   assert(JSON.stringify(removedIndicators[0]) === JSON.stringify(['tc_ind_RSI', 'RSI']),
     'индикаторы: удаление передаёт (paneId, name) как требует API 9.6');
-  assert(els['tc-indicator-chips'].children.length === 2, 'индикаторы: чип удалён (volume остался)');
+  assert(els['tc-ind-legends'].children.length === 1,
+    'индикаторы: легенда удалена с графика (MA и volume остались)');
 
-  // 10a) Volume-гистограмма: draw с нормировкой по видимой области и
-  //      метка на оси, следующая за кроссхейром (облик TradingView)
+  // 10a) Volume-гистограмма: draw с нормировкой по видимой области
+  //      (значение под курсором — только в легенде «Объем»)
   const volRects = [];
   const volCtx = {
     fillStyle: null,
@@ -696,32 +735,32 @@ const candle = (day, close, month = 11) => ({
   volDraw({ from: 0, to: 0 }); // виден один бар — нормировка по нему
   assert(JSON.stringify(volRects[0]) === JSON.stringify([-4, 80, 8, 20, 'rgba(38, 166, 154, 0.5)']),
     'volume: нормировка пересчитана по максимуму видимой области');
-  volDraw({ from: 0, to: 2 }); // вернуть полную геометрию для метки на оси
 
-  // Метка на оси: значение и верх столбика под курсором, цвет по свече
-  actions['onCrosshairChange']({ kLineData: volList[0], paneId: 'candle_pane' });
-  assert(els['tc-vol-axis'].textContent === '100' && els['tc-vol-axis'].style.top === '90px' &&
-    els['tc-vol-axis']._classes.has('show') && els['tc-vol-axis']._classes.has('up') &&
-    !els['tc-vol-axis']._classes.has('down'),
-    'volume: метка на оси — 100 на высоте столбика, зелёная');
-  actions['onCrosshairChange']({ kLineData: volList[1], paneId: 'candle_pane' });
-  assert(els['tc-vol-axis'].textContent === '200' && els['tc-vol-axis'].style.top === '80px' &&
-    els['tc-vol-axis']._classes.has('down') && !els['tc-vol-axis']._classes.has('up'),
-    'volume: метка следует за курсором, красная на столбике вниз');
-  actions['onCrosshairChange']({ kLineData: volList[0] }); // paneId нет — курсор ушёл с графика
-  assert(!els['tc-vol-axis']._classes.has('show') && els['tc-vol-axis'].textContent === '',
-    'volume: уход курсора прячет метку на оси');
+  // Значение под курсором показывает только строка «Объем» легенды OHLCV —
+  // метки на оси цены у объёма больше нет (дублировала легенду)
+  assert(els['tc-vol-axis'] === undefined,
+    'volume: метки на оси цены нет — значение объёма только в легенде');
 
   sandbox.window.tcRemoveIndicator('VOL_MAIN');
   assert(JSON.stringify(removedIndicators[removedIndicators.length - 1]) ===
       JSON.stringify(['candle_pane', 'VOL_MAIN']),
     'volume: удаление передаёт (candle_pane, VOL_MAIN)');
-  actions['onCrosshairChange']({ kLineData: volList[0], paneId: 'candle_pane' });
-  assert(!els['tc-vol-axis']._classes.has('show'), 'volume: метка скрыта, пока гистограмма выключена');
+  assert(els['tc-leg-volume-row'].style.display === 'none' && els['tc-leg-volume-close'].style.display === 'none',
+    'volume: строка «Объем» с × скрыта, пока гистограмма выключена');
   sandbox.window.tcAddIndicator('VOL_MAIN');
   assert(createdIndicators['VOL_MAIN'] && createdIndicators['VOL_MAIN'].id === 'candle_pane' &&
     statusOf().text.includes('Гистограмма объёма включена'),
     'volume: включается обратно через dropdown в главном окне');
+  assert(els['tc-leg-volume-row'].style.display === '' && els['tc-leg-volume-close'].style.display === '',
+    'volume: строка «Объем» с × вернулась вместе с гистограммой');
+  // × в строке «Объем» — закрытие гистограммы прямо с легенды на графике
+  els['tc-leg-volume-close']._listeners.click();
+  assert(JSON.stringify(removedIndicators[removedIndicators.length - 1]) ===
+      JSON.stringify(['candle_pane', 'VOL_MAIN']),
+    'volume: × в строке «Объем» убирает гистограмму');
+  assert(els['tc-leg-volume-row'].style.display === 'none',
+    'volume: строка «Объем» скрыта после закрытия с легенды');
+  sandbox.window.tcAddIndicator('VOL_MAIN'); // вернуть для последующих проверок
 
   // 11) Binance: период поллинга 5 с (ближе к потоку TV), UTC-метки парсятся
   fetchQueue = [{
@@ -732,9 +771,8 @@ const candle = (day, close, month = 11) => ({
   await flush();
   assert(Number.isFinite(applied[applied.length - 1].timestamp), 'Binance: UTC begin парсится в timestamp');
   assert(statusOf().text.includes('5 с'), 'Binance: статус обещает автообновление 5 с');
-  assert(els['tc-sym-code'].textContent === 'BTCUSDT' && els['tc-sym-name'].textContent === 'Bitcoin',
-    'шапка: префикс BINANCE: скрыт, имя монеты показано');
-  assert(els['tc-sym-tf'].textContent === '1н', 'шапка: ТФ 1н для interval=7');
+  assert(els['tc-sym-input'].value === 'BINANCE:BTCUSDT' && els['tc-sym-name'].textContent === 'Bitcoin',
+    'шапка: тикер с префиксом BINANCE: в поле (готов к повторному вводу), имя монеты показано');
   assert(els['tc-leg-c'].textContent === '95,500.00', 'легенда: цена с разделением разрядов');
   assert(els['tc-leg-change'].textContent === '' && !els['tc-leg-change']._classes.has('up'),
     'шапка: дельты нет, когда предыдущей свечи нет');
@@ -799,7 +837,7 @@ const candle = (day, close, month = 11) => ({
   await flush();
   assert(applied.length === 2 && applied[applied.length - 1].close === 143,
     'отложка: после показа раздела график GAZP загружен');
-  assert(els['tc-sym-name'].textContent === 'Газпром', 'отложка: имя инструмента показано в шапке');
+  assert(els['tc-sym-name'].textContent === 'Газпром', 'отложка: имя инструмента показано в легенде');
   assert(precisions.length === 2 && precisions[1].price === 2 && precisions[1].volume === 0,
     'точность: возврат к «дорогому» инструменту — setPrecision вернул 2 знака');
 
@@ -1161,7 +1199,7 @@ const candle = (day, close, month = 11) => ({
     'статус: разметка GAZP с правопольными точками восстановлена');
 
   // 22) Тип графика и режим шкалы цены (как в TradingView): сегмент типов
-  //     (candle.type 9.6), кластер шкалы (yAxis.type) с сохранением выбора
+  //     (candle.type 9.6), дропдаун шкалы (yAxis.type) с сохранением выбора
   styleCalls.length = 0;
   sandbox.window.tcSetChartType('line');
   const lineStyles = styleCalls[styleCalls.length - 1].candle;
@@ -1226,6 +1264,17 @@ const candle = (day, close, month = 11) => ({
   winListeners.pointerup(); // отпускание кнопки актуализирует состояние «авто»
   assert(els['tc-scale-auto']._classes.has('active'),
     'автоскейл: после возврата автоподгонки кнопка снова активна');
+
+  // Дропдаун шкалы: шестерёнка открывает меню (пункты auto/log/% больше не
+  // стоят столбиком на оси цены), клик мимо и Escape закрывают
+  els['tc-scale-toggle']._listeners.click({ stopPropagation: () => {} });
+  assert(els['tc-scale-menu']._classes.has('open'), 'шкала: шестерёнка открыла меню настроек');
+  docListeners.click(); // клик мимо (target без closest — вне дропдауна)
+  assert(!els['tc-scale-menu']._classes.has('open'), 'шкала: клик мимо закрыл меню');
+  els['tc-scale-toggle']._listeners.click({ stopPropagation: () => {} });
+  assert(els['tc-scale-menu']._classes.has('open'), 'шкала: меню снова открыто');
+  docListeners.keydown({ key: 'Escape' });
+  assert(!els['tc-scale-menu']._classes.has('open'), 'шкала: Escape закрыл меню');
 
   // 22a) Выбор переживает «перезагрузку»: повторный DOMContentLoaded
   //      подтягивает тип/шкалу из localStorage и синхронизирует кнопки
@@ -1486,6 +1535,24 @@ const candle = (day, close, month = 11) => ({
   docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
   assert(statusOf().text.includes('Отменять нечего'),
     'undo/redo: пустой стек — статус «Отменять нечего»');
+
+  // 28i) Поле тикера в шапке: Enter загружает введённый код тем же путём,
+  //      что клик по строке списка (нормализация регистра/пробелов),
+  //      Escape возвращает загруженный тикер, пустой ввод — подсказка
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром', candles: [candle(19, 141)] }];
+  els['tc-sym-input'].value = '  gazp '; // регистр и пробелы срезает нормализация
+  els['tc-sym-input']._listeners.keydown({ key: 'Enter', preventDefault: () => {} });
+  await flush();
+  assert(applied.length === 1 && applied[applied.length - 1].close === 141,
+    'поле тикера: Enter загрузил GAZP тем же путём, что выбор в списке');
+  assert(els['tc-sym-input'].value === 'GAZP', 'поле тикера: ввод нормализован (регистр, пробелы)');
+  els['tc-sym-input'].value = 'MTSS';
+  els['tc-sym-input']._listeners.keydown({ key: 'Escape' });
+  assert(els['tc-sym-input'].value === 'GAZP', 'поле тикера: Escape вернул загруженный тикер');
+  els['tc-sym-input'].value = '   ';
+  els['tc-sym-input']._listeners.keydown({ key: 'Enter', preventDefault: () => {} });
+  assert(statusOf().err && statusOf().text.includes('Введите тикер'),
+    'поле тикера: пустой ввод — подсказка в статусе, загрузки нет');
 
   // 12) Источник свечей (source из ответа бэкенда): статус и период
   //     поллинга MOEX подстраиваются — apim (токен Algopack, без

@@ -3,9 +3,10 @@
 // авторизованный ISS Algopack apim.moex.com, без задержки; при сбое токена
 // — анонимный iss.moex.com с лагом ~15 мин) и крипто-пары Binance
 // (BINANCE:BTCUSDT, реальное время) рисуются библиотекой KLineChart.
-// Тикер берётся из выбранной строки watchlist: ui.js createChart(symbol)
-// зовёт window.wlChartLoad(symbol) — поле ввода здесь не нужно.
-// Данные идут через бэкенд: GET /api/candles/{symbol}.
+// Тикер приходит из выбранной строки watchlist (ui.js createChart(symbol)
+// зовёт window.wlChartLoad(symbol)) и вводится вручную в поле шапки
+// графика: значение подставляется из списка, свой код загружается по
+// Enter. Данные идут через бэкенд: GET /api/candles/{symbol}.
 //
 // Поведение в духе TradingView:
 //   - начальная загрузка — последнее окно истории (~600 баров, бэкенд
@@ -22,14 +23,14 @@
 //   - выбранный в списке тикер загружается сразу при показе раздела,
 //     выбранный ТФ переживает перезагрузку (localStorage);
 //   - облик TradingView: вертикальная панель инструментов разметки слева
-//     (иконки SVG инлайном), шапка символа (код · имя · ТФ + последняя
-//     цена с дельтой, имя приходит в candles-ответе бэкенда), легенда
-//     OHLCV в углу холста следует за кроссхейром (subscribeAction
+//     (иконки SVG инлайном), шапка символа (тикер — поле ввода, ТФ,
+//     тип, индикаторы), легенда OHLCV в углу холста (имя инструмента +
+//     O/H/L/C/Vol) следует за кроссхейром (subscribeAction
 //     onCrosshairChange, в 9.6 payload несёт kLineData);
 //   - volume-гистограмма включена по умолчанию: полупрозрачные столбики
 //     в главном окне (кастомный индикатор VOL_MAIN, нормировка по максимуму
-//     видимой области), своя метка на оси цены под курсором и легенда
-//     «Объем» (значение обновляется вместе с OHLC);
+//     видимой области), строка «Объем» в легенде (значение обновляется
+//     вместе с OHLC; метки на оси цены у объёма нет — дублировала легенду);
 //   - сброс вида как в TradingView: двойной клик по графику или правый
 //     клик → контекстное меню «Reset chart» возвращает дефолтные масштаб
 //     и сдвиг от правого края (снимаются с инстанса сразу после init)
@@ -40,12 +41,13 @@
 //   - тип графика как в TradingView: сегмент «свечи/бары/линия/области»
 //     (candle.type 9.6: линия и области — area-тип, у линии заливка
 //     прозрачная; метки max/min у линий скрываются, как в TV);
-//   - шкала цены как в TradingView: кластер «log / % / авто» у правого
-//     края холста (yAxis.type normal|log|percentage, режимы
-//     взаимоисключающие и только для панели свечей). Перетаскивание шкалы
-//     цены снимает автоподгонку оси (autoCalcTickFlag → ручной масштаб,
-//     как в TV), кнопка «авто» — переключатель: возвращает автоподгонку
-//     или замораживает шкалу по текущей области; тип и режим переживают
+//   - шкала цены как в TradingView: режимы normal|log|percentage
+//     (yAxis.type, взаимоисключающие и только для панели свечей) спрятаны
+//     в дропдаун шестерёнки у правого края холста — столбик из трёх кнопок
+//     закрывал значения оси цены. Перетаскивание шкалы цены снимает
+//     автоподгонку оси (autoCalcTickFlag → ручной масштаб, как в TV),
+//     пункт «авто» — переключатель: возвращает автоподгонку или
+//     замораживает шкалу по текущей области; тип и режим переживают
 //     перезагрузку (localStorage);
 //   - диалог настроек вместо window.prompt (чужеродный и блокирует
 //     вкладку): текст заметки и периоды индикатора вводятся в модальном
@@ -64,13 +66,18 @@
 //   - точность подписей осей под-окон подбирается по размаху шкалы
 //     (у библиотечных индикаторов по умолчанию precision 4 — ось MACD
 //     печатает «4,000.0000», читающееся как «±4,000,000»);
-//   - компоновка как в TradingView: ТФ, тип и индикаторы стоят в одной
-//     шапке, подсказка свёрнута в кнопку «?», статус живёт поверх холста
+//   - компоновка как в TradingView: тикер (поле ввода), ТФ, тип и
+//     индикаторы стоят в одной шапке, статус живёт поверх холста
 //     и высоты не съедает; размеры ровно как у прежнего виджета TradingView
 //     — область графика занимает тот же слот #chart-container (вся ширина,
 //     без рамки и внешних отступов), холст догоняет resize окна, тягу
 //     ресайзера панели списка и смену высоты шапки после загрузки данных
 //     (у библиотеки слежения за контейнером нет);
+//   - легенды индикаторов прямо на графике (как в TradingView): строка
+//     «ИМЯ(параметры) значения ×» на каждой панели — имя открывает
+//     периоды, × убирает индикатор (закрытие не в шапке рядом со списком,
+//     а рядом с названием на холсте); значения следуют за кроссхейром,
+//     встроенный тултип индикаторов отключён (наслаивался бы на легенды);
 //   - отсчёт до закрытия бара как тег «287,45 · 00:32:41» в TV, на всех
 //     ТФ: раз в секунду обновляется остаток до следующей границы сетки
 //     ТФ (календарная проекция от последней свечи; после закрытия
@@ -279,6 +286,51 @@
     });
   };
 
+  // ---- Дропдаун шкалы цены (шестерёнка у правого края холста) ----
+  // Автомасштаб, log и % спрятаны в меню, чтобы не закрывать значения
+  // оси цены (столбик кнопок наслаивался на шкалу). Пункты живут в
+  // разметке с прежними id (tc-scale-auto/log/pct) — onclick-атрибуты
+  // применяют режим, syncScaleButtons ведёт подсветку активного. Закрытие:
+  // выбор пункта, клик мимо и Escape — общие document-обработчики из
+  // bindResetViewUi (hideScaleMenu), как у дропдауна типа графика.
+
+  const hideScaleMenu = () => {
+    const menu = document.getElementById('tc-scale-menu');
+    if (!menu || !menu.classList.contains('open')) return false;
+    menu.classList.remove('open');
+    const toggle = document.getElementById('tc-scale-toggle');
+    if (toggle && typeof toggle.setAttribute === 'function') {
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    return true;
+  };
+
+  const buildScaleDropdown = () => {
+    const root = document.getElementById('tc-scale-dropdown');
+    const toggle = document.getElementById('tc-scale-toggle');
+    const menu = document.getElementById('tc-scale-menu');
+    if (!root || !toggle || !menu || root.dataset.scaleDropdownBound) return;
+    root.dataset.scaleDropdownBound = '1';
+    // Триггер: открыть/закрыть меню. Заодно гасим контекстное меню графика,
+    // если открыто; stopPropagation не даёт общему «клик мимо — закрыть»
+    // тут же погасить только что открытое меню
+    toggle.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (ctxMenuOpen) hideCtxMenu();
+      if (menu.classList.contains('open')) {
+        hideScaleMenu();
+        return;
+      }
+      menu.classList.add('open');
+      if (typeof toggle.setAttribute === 'function') {
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+    // Выбор пункта: режим применит onclick-атрибут кнопки (клик всплывает
+    // из неё в меню) — здесь только закрываем меню
+    menu.addEventListener('click', () => hideScaleMenu());
+  };
+
   // Ось цены главной панели — внутреннее API 9.6 (как getChartStore в
   // isOverlayDrawing): нужен только флаг автоподгона; недоступен —
   // считаем автоскейл включённым
@@ -438,8 +490,8 @@
   // главного индикатора — миллионы объёма растянули бы ценовую шкалу.
   // Всё рисование — в draw: столбики нормируются по максимуму ВИДИМОЙ
   // области и пересчитываются на каждом кадре (скролл/зум меняют высоты,
-  // как в TV). Геометрия запоминается в volScale — по ней HTML-метка
-  // tc-vol-axis ставится на верх столбика под курсором.
+  // как в TV). Значение под курсором показывает строка «Объем» легенды
+  // OHLCV — метки на оси цены у объёма нет (дублировала легенду).
 
   const VOL_MAIN = 'VOL_MAIN';
   // Самый высокий столбик — 20% высоты ценовой панели (пропорции TV)
@@ -448,21 +500,18 @@
     up: 'rgba(38, 166, 154, 0.5)',
     down: 'rgba(239, 83, 80, 0.5)',
   };
-  let volScale = null; // { top, height, unitPx } — панель и px на единицу объёма
 
   const registerVolumeIndicator = () => {
     if (typeof klinecharts === 'undefined') return;
     klinecharts.registerIndicator({
       name: VOL_MAIN,
-      // shortName пуст: встроенный tooltip индикатора на холсте печатает
-      // именно shortName («Объем») и наслаивался на строку легенды.
-      // Значение объёма показывает наша HTML-строка «Объем N», подпись
-      // чипа задаётся явно в renderIndicatorChips
+      // shortName пуст: встроенный tooltip индикатора печатает именно
+      // shortName; значение объёма показывает наша HTML-строка «Объем N»
+      // в легенде OHLCV (тултипы отключены — см. блок стилей init)
       shortName: '',
       figures: [],
       calc: () => [],
       draw: ({ ctx, kLineDataList, visibleRange, bounding, barSpace, xAxis }) => {
-        volScale = null;
         if (!kLineDataList || !kLineDataList.length || !barSpace || !bounding) return false;
         const from = Math.max(0, visibleRange.from);
         const to = Math.min(kLineDataList.length - 1, visibleRange.to);
@@ -473,11 +522,9 @@
           if (Number.isFinite(v) && v > volMax) volMax = v;
         }
         if (!(volMax > 0)) return false;
-        // Координаты draw — локальные относительно canvas панели: низ
-        // панели = bounding.height; bounding.top — та же точка в координатах
-        // контейнера графика (для позиции HTML-метки на оси)
+        // Координаты draw — локальные относительно canvas панели:
+        // низ панели = bounding.height
         const unitPx = (bounding.height * VOL_MAX_HEIGHT_RATIO) / volMax;
-        volScale = { top: bounding.top, height: bounding.height, unitPx };
         for (let i = from; i <= to; i++) {
           const k = kLineDataList[i];
           const v = k.volume;
@@ -966,11 +1013,12 @@
             tooltip: { showType: 'rect', showRule: 'none' },
           },
           indicator: {
-            // Значения индикаторов (MA, RSI…) оставляем, но опускаем ниже
-            // легенды на холсте (дефолтный marginTop 8 пересекался бы с ней):
-            // легенда стала двухстрочной (вторая строка — «Объем»), 40 —
-            // сразу под обеими строками
-            tooltip: { showType: 'standard', showRule: 'always', text: { marginTop: 40 } },
+            // Встроенный тултип индикаторов (shortName + значения на холсте,
+            // showRule 'none' → isDrawTooltip=false) отключён: вместо него
+            // свои HTML-легенды на каждой панели — «ИМЯ(параметры)
+            // значения ×» с кнопкой закрытия рядом с названием
+            // (см. renderIndicatorLegends)
+            tooltip: { showRule: 'none' },
           },
           xAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
           yAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
@@ -1010,19 +1058,18 @@
         const id = chartInstance.createIndicator(VOL_MAIN, true, { id: 'candle_pane' });
         if (id) {
           indicators.set(VOL_MAIN, 'candle_pane');
-          renderIndicatorChips();
+          renderIndicatorLegends();
         }
       }
-      // Легенда OHLCV следует за кроссхейром (как в TradingView). При уходе
-      // курсора KLineChart отдаёт последнюю свечу — легенда «возвращается».
+      // Легенда OHLCV и легенды индикаторов следуют за кроссхейром (как в
+      // TradingView). При уходе курсора KLineChart отдаёт последнюю свечу —
+      // легенды «возвращаются».
       if (typeof chartInstance.subscribeAction === 'function') {
         chartInstance.subscribeAction('onCrosshairChange', (ev) => {
           if (ev && ev.kLineData) {
             renderLegend(ev.kLineData);
-            // paneId пуст, когда курсор ушёл с графика (при этом отдаётся
-            // последняя свеча) — метку объёма на оси в этом случае прячем
-            renderVolumeAxisLabel(ev.kLineData, ev.paneId !== undefined);
           }
+          renderIndicatorLegendValues(ev && ev.kLineData ? ev.kLineData : null);
         });
         // Сдвиг/зум меняют положение цены на шкале — отсчёт под тегом
         // последней цены догоняет (секундный тик подстрахует, если тип
@@ -1258,8 +1305,8 @@
     bindCtxItem('tc-ctx-shot', takeChartSnapshot);
     bindCtxItem('tc-ctx-clear', () => window.tcClearOverlays());
     // Закрытие меню: клик где угодно, Escape, изменение размера окна.
-    // Тот же клик/Escape гасят и открытое меню дропдауна типа графика
-    // (hideTypeMenu вернёт true, только если меню было открыто).
+    // Тот же клик/Escape гасят и открытые меню дропдаунов типа графика
+    // и шкалы цены (hide…Menu вернёт true, только если меню было открыто).
     // Escape — также отмена недостроенной фигуры (как в TradingView:
     // Esc снимает режим рисования) и разоружение взведённого инструмента.
     // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — undo/redo разметки: только при
@@ -1272,12 +1319,19 @@
           && e.target.closest('#tc-type-dropdown'))) {
         hideTypeMenu();
       }
+      const scaleMenu = document.getElementById('tc-scale-menu');
+      if (scaleMenu && scaleMenu.classList.contains('open')
+        && !(e && e.target && typeof e.target.closest === 'function'
+          && e.target.closest('#tc-scale-dropdown'))) {
+        hideScaleMenu();
+      }
       if (ctxMenuOpen) hideCtxMenu();
     });
     document.addEventListener('keydown', (e) => {
       if (!e) return;
       if (e.key === 'Escape') {
         if (hideTypeMenu()) return;
+        if (hideScaleMenu()) return;
         if (ctxMenuOpen) { hideCtxMenu(); return; }
         if (dialogCtx) return; // открытый диалог закроет window-обработчик
         if (cancelActiveDrawing()) {
@@ -1766,7 +1820,8 @@
   // поверх холста показывает O/H/L/C/Vol свечи под курсором (crosshair),
   // без курсора — последнюю. Значения окрашены по направлению свечи.
 
-  const TF_LABELS = { 60: '1ч', 24: '1д', 7: '1н', 31: '1М' };
+  // Дублирующий ТФ из шапки убран (активный ТФ виден на сегменте кнопок),
+  // прежние подписи TF_LABELS больше не нужны
 
   // ---- Отсчёт до закрытия свечи (тег «287,45 · 00:32:41» в TradingView) ----
   // Закрытие текущего бара — следующая граница сетки ТФ ПОСЛЕ текущего
@@ -1946,15 +2001,21 @@
   const displayTicker = (ticker) =>
     isBinanceTicker(ticker) ? ticker.replace('BINANCE:', '') : ticker;
 
-  // Код/ТФ показываем сразу (ещё до ответа бэкенда), цену — прочерком
+  // Тикер для поля шапки: как есть (BINANCE:BTCUSDT остаётся с префиксом —
+  // это готовый к вводу код), без технического MOEX: (его срезает
+  // normalizeTicker). Поле под фокусом не трогаем — пользователь печатает
+  const syncTickerInput = (ticker) => {
+    const inp = document.getElementById('tc-sym-input');
+    if (!inp || document.activeElement === inp) return;
+    if (inp.value !== ticker) inp.value = ticker || '';
+  };
+
+  // Код показываем сразу (ещё до ответа бэкенда), имя — прочерком.
+  // Дублирующий ТФ из шапки убран (активный ТФ виден на сегменте)
   const setHeaderSymbol = (ticker, interval) => {
-    const code = document.getElementById('tc-sym-code');
-    if (!code) return;
-    code.textContent = displayTicker(ticker);
+    syncTickerInput(ticker);
     const name = document.getElementById('tc-sym-name');
     if (name) { name.textContent = ''; name.style.display = 'none'; }
-    const tf = document.getElementById('tc-sym-tf');
-    if (tf) tf.textContent = TF_LABELS[interval] || '';
     // Цена прежнего тикера в поле на шкале гасится сразу — свежая
     // придёт с первыми данными (updateSymbolQuote)
     const price = document.getElementById('tc-sym-price');
@@ -2020,31 +2081,18 @@
   };
 
   // Строка «Объем N» в легенде живёт вместе с гистограммой: чип убран —
-  // строка прячется, гистограмма возвращена — строка показывается снова
+  // строка и её × (закрытие на графике, рядом с названием — как у прочих
+  // индикаторов) прячутся, гистограмма возвращена — показываются снова
   const syncVolumeLegend = () => {
+    const on = indicators.has(VOL_MAIN);
     const row = document.getElementById('tc-leg-volume-row');
-    if (row) row.style.display = indicators.has(VOL_MAIN) ? '' : 'none';
+    if (row) row.style.display = on ? '' : 'none';
+    const close = document.getElementById('tc-leg-volume-close');
+    if (close) close.style.display = on ? '' : 'none';
   };
 
-  // Метка объёма на оси цены (как в TradingView): тег со значением столбика
-  // под курсором. Позиция по вертикали — верх столбика на гистограммной
-  // шкале (нижние 20% панели), геометрия — из последнего draw индикатора
-  // (canvas оси у KLineChart отдельный, нарисовать туда из draw нельзя).
-  // show=false (курсор ушёл/индикатор выключен/объёма нет) — тег прячется.
-  const renderVolumeAxisLabel = (k, show) => {
-    const el = document.getElementById('tc-vol-axis');
-    if (!el) return;
-    const vol = Number(k && k.volume);
-    const on = !!(show && volScale && indicators.has(VOL_MAIN)
-      && Number.isFinite(vol) && vol > 0);
-    const up = on && k.close >= k.open;
-    el.classList.toggle('show', on);
-    el.classList.toggle('up', up);
-    el.classList.toggle('down', on && !up);
-    if (!on) { el.textContent = ''; return; }
-    el.textContent = fmtVol(vol);
-    el.style.top = `${Math.round(volScale.top + volScale.height - vol * volScale.unitPx)}px`;
-  };
+  // Метки объёма на оси цены больше нет: значение под курсором показывает
+  // только строка «Объем» легенды OHLCV (тег на оси дублировал её)
 
   // ---- Пересчёт размеров холста ----
   // KLineChart 9.6 не следит за контейнером сам (ни ResizeObserver, ни
@@ -2059,20 +2107,28 @@
     if (resizeChartTimer != null) clearTimeout(resizeChartTimer);
     resizeChartTimer = setTimeout(() => {
       resizeChartTimer = null;
-      if (chartInstance && typeof chartInstance.resize === 'function') chartInstance.resize();
+      if (chartInstance && typeof chartInstance.resize === 'function') {
+        chartInstance.resize();
+        // Панели переложились — легенды индикаторов догоняют верх своей панели
+        updateIndicatorLegendPositions();
+      }
     }, 50);
   };
 
   // Легенда + цена из текущих данных графика (последняя свеча). Заодно
   // пересчитываем точность инструмента (шкала могла уйти с новыми данными)
   // и точность осей под-окон — шкалы сдвинулись с новыми данными;
-  // отсчёт до закрытия бара перезапускается вместе с lastTs; высота шапки
+  // значения в легендах индикаторов — по последней свече; отсчёт до
+  // закрытия бара перезапускается вместе с lastTs; высота шапки
   // с обновлёнными значениями могла смениться — догоняем размер холста
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
     const list = chartInstance.getDataList();
+    const lastBar = list.length ? list[list.length - 1] : null;
     applyPricePrecision(list);
-    renderLegend(list.length ? list[list.length - 1] : null);
+    renderLegend(lastBar);
+    renderIndicatorLegendValues(lastBar);
+    updateIndicatorLegendPositions();
     updateSymbolQuote(list);
     renderCountdown();
     for (const name of indicators.keys()) tuneSubPaneAxisPrecision(name);
@@ -2207,6 +2263,9 @@
       setStatus('Тикер не выбран: кликните по строке списка', true);
       return;
     }
+    // Поле тикера в шапке отражает выбор сразу (и до фактической загрузки,
+    // отложенной до показа раздела)
+    syncTickerInput(ticker);
     pendingSymbol = ticker;
     if (!chartSectionVisible()) return;
     // Раздел виден — загрузка началась: отложка больше не нужна
@@ -2263,8 +2322,8 @@
         return;
       }
 
-      // Шапка символа: код/ТФ и имя инструмента (name из candles-ответа)
-      setHeaderSymbol(ticker, interval);
+      // Шапка символа: поле тикера + имя инструмента (name из candles-ответа)
+      setHeaderSymbol(ticker);
       applySymbolName(data);
 
       const klineData = data.candles.map(toKline)
@@ -2304,9 +2363,6 @@
       // цены могли не попасть в зажатый ручной масштаб (в TradingView при
       // смене символа шкала тоже подгоняется заново)
       if (!isAutoScaleOn()) applyScaleMode();
-      // Геометрия гистограммы устарела до первого перерисовывания draw —
-      // метку на оси прячем (вернётся при движении курсора)
-      renderVolumeAxisLabel(null, false);
       // Шапка (цена/дельта) и легенда — по свежим данным
       refreshChartReadouts();
 
@@ -2345,9 +2401,6 @@
     if (![60, 24, 7, 31].includes(value)) return;
     currentInterval = value;
     syncTfButtons();
-    // ТФ в шапке символа обновляем сразу, не дожидаясь перезагрузки
-    const tfEl = document.getElementById('tc-sym-tf');
-    if (tfEl) tfEl.textContent = TF_LABELS[value] || '';
     // Как в TradingView: клик по ТФ сразу перезагружает график выбранного тикера
     if (lastTicker) window.wlChartLoad(lastTicker);
     else setStatus(`Таймфрейм: ${document.getElementById(`tc-tf-${value}`)?.textContent || value}`);
@@ -2858,39 +2911,138 @@
     ? { id: 'candle_pane' }
     : { id: `tc_ind_${name}`, height: 90 };
 
-  const renderIndicatorChips = () => {
-    const host = document.getElementById('tc-indicator-chips');
+  // ---- Легенды индикаторов на графике (как в TradingView) ----
+  // Каждая включённая линия/под-окно получает на холсте строку
+  // «ИМЯ(параметры) значения ×»: имя открывает периоды (tcConfigureIndicator),
+  // × убирает индикатор (tcRemoveIndicator) — закрытие живёт рядом с
+  // названием на графике, а не в шапке рядом со списком. Значения берутся
+  // из живого инстанса (figures/result по бару под курсором, как считал
+  // встроенный тултип — он отключён, чтобы не наслаиваться на легенды).
+  // Позиция строки — верх панели индикатора (геометрия _drawPanes), у
+  // линий в главном окне — стопкой под легендой OHLCV. Гистограмма объёма
+  // (VOL_MAIN) отдельной строки не имеет: её название и × живут в строке
+  // «Объем» легенды OHLCV.
+
+  // Строки линий главного окна: ниже легенды OHLCV (топ 8 + две строки),
+  // шаг — высота строки с зазором
+  const IND_LEGEND_BASE_TOP = 42;
+  const IND_LEGEND_PITCH = 20;
+  // span значений каждой легенды — обновление за кроссхейром без DOM-поиска
+  const legendValueEls = new Map();
+
+  const indicatorLegendLabel = (name, paneId) => {
+    let label = name;
+    let params = [];
+    try {
+      const inst = chartInstance && chartInstance.getIndicatorByPaneId(paneId, name);
+      if (inst) {
+        if (inst.shortName) label = inst.shortName;
+        if (Array.isArray(inst.calcParams) && inst.calcParams.length) params = inst.calcParams;
+      }
+    } catch (e) { /* инстанс недоступен — остаётся имя */ }
+    // Параметры строкой, как в тултипе TradingView: «MA(5,10)», «RSI(14)»
+    return params.length ? `${label}(${params.join(',')})` : label;
+  };
+
+  // Верх панели индикатора: линии главного окна — стопкой под легендой
+  // OHLCV, под-окна — у верхнего края своей панели (сдвигается вместе с
+  // раскладкой панелей — пересчитывается после данных/ресайза). Панель не
+  // найдена (ещё не разложилась) — строка прячется до следующего пересчёта
+  const updateIndicatorLegendPositions = () => {
+    const host = document.getElementById('tc-ind-legends');
+    if (!host) return;
+    let mainIdx = 0;
+    for (const row of host.children) {
+      const paneId = row.dataset ? row.dataset.paneId : null;
+      let top = IND_LEGEND_BASE_TOP + mainIdx * IND_LEGEND_PITCH;
+      if (paneId && paneId !== 'candle_pane') {
+        top = -9999;
+        try {
+          const pane = chartInstance ? (chartInstance._drawPanes || [])
+            .find(p => (typeof p.getId === 'function' ? p.getId() : p._id) === paneId) : null;
+          if (pane && pane._bounding && Number.isFinite(pane._bounding.top)) {
+            top = pane._bounding.top + 4;
+          }
+        } catch (e) { /* геометрия панелей недоступна */ }
+      } else {
+        mainIdx++;
+      }
+      row.style.top = `${Math.round(top)}px`;
+    }
+  };
+
+  // Раскладка панелей после createIndicator/removeIndicator догоняет
+  // асинхронно (adjustPaneViewport 9.6) — повторяем пересчёт с задержкой
+  const refreshLegendPositionsSoon = () => {
+    setTimeout(updateIndicatorLegendPositions, 150);
+  };
+
+  const renderIndicatorLegends = () => {
+    const host = document.getElementById('tc-ind-legends');
     if (!host) return;
     host.innerHTML = '';
+    legendValueEls.clear();
     for (const [name, paneId] of indicators) {
-      const chip = document.createElement('span');
-      chip.className = 'tc-ind-chip';
-      // Подпись чипа: у гистограммы — «Объем» (shortName пуст нарочно,
-      // чтобы не рисовался на холсте), у остальных — shortName живого
-      // инстанса, нет инстанса — имя индикатора
-      let label = name === VOL_MAIN ? 'Объем' : name;
-      try {
-        const inst = chartInstance && chartInstance.getIndicatorByPaneId(paneId, name);
-        if (name !== VOL_MAIN && inst && inst.shortName) label = inst.shortName;
-      } catch (e) { /* инстанс недоступен — остаётся имя */ }
+      if (name === VOL_MAIN) continue; // строка «Объем» легенды OHLCV
+      const row = document.createElement('span');
+      row.className = 'tc-ind-legend';
+      row.dataset.ind = name;
+      row.dataset.paneId = paneId;
       const nm = document.createElement('span');
       nm.className = 'tc-ind-name';
-      nm.textContent = label;
-      nm.title = name === VOL_MAIN ? label : `${name} — настройки периодов`;
+      nm.textContent = indicatorLegendLabel(name, paneId);
+      nm.title = `${name} — настройки периодов`;
       nm.addEventListener('click', () => window.tcConfigureIndicator(name));
+      const vals = document.createElement('span');
+      vals.className = 'tc-ind-vals';
       const x = document.createElement('span');
       x.className = 'tc-ind-close';
       x.textContent = '×';
       x.title = `Убрать ${name}`;
       x.addEventListener('click', () => window.tcRemoveIndicator(name));
-      chip.appendChild(nm);
-      chip.appendChild(x);
-      chip.dataset.paneId = paneId;
-      host.appendChild(chip);
+      row.appendChild(nm);
+      row.appendChild(vals);
+      row.appendChild(x);
+      host.appendChild(row);
+      legendValueEls.set(name, vals);
     }
-    // Чипы меняются вместе с состоянием индикаторов — строка «Объем»
-    // в легенде должна повторять это (гистограмма выключена — строки нет)
+    updateIndicatorLegendPositions();
+    renderIndicatorLegendValues();
+    // Чипы убраны — строка «Объем» в легенде должна повторять состояние
+    // гистограммы (выключена — строки и её × нет)
     syncVolumeLegend();
+  };
+
+  // Значения легенд по бару (под курсором или последний): figures/result
+  // живого инстанса — те же ключи, что рисовал встроенный тултип
+  const fmtIndicatorLegendValue = (v, precision) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toFixed(precision) : '—';
+  };
+
+  const renderIndicatorLegendValues = (k) => {
+    if (!chartInstance || !legendValueEls.size) return;
+    const list = chartInstance.getDataList();
+    const idx = k ? list.indexOf(k) : (list.length ? list.length - 1 : -1);
+    for (const [name, valsEl] of legendValueEls) {
+      const paneId = indicators.get(name);
+      let text = '';
+      if (idx >= 0) {
+        try {
+          const inst = chartInstance.getIndicatorByPaneId(paneId, name);
+          const figures = inst && Array.isArray(inst.figures) ? inst.figures : [];
+          const row = Array.isArray(inst && inst.result) ? inst.result[idx] : null;
+          // Точность: своя у индикатора; линии главного окна без неё —
+          // точность инструмента, под-окна — библиотечные 4 знака
+          const precision = inst && Number.isFinite(inst.precision) ? inst.precision
+            : (paneId === 'candle_pane' ? pricePrecision : 4);
+          text = figures
+            .map(f => fmtIndicatorLegendValue(row ? row[f.key] : undefined, precision))
+            .join(' ');
+        } catch (e) { text = ''; }
+      }
+      if (valsEl.textContent !== text) valsEl.textContent = text;
+    }
   };
 
   // Добавление индикатора: MA/EMA/BOLL/SAR — на свечи, остальные —
@@ -2907,15 +3059,20 @@
     const id = instance.createIndicator(name, pane.id === 'candle_pane', pane);
     if (!id) { setStatus(`Индикатор ${name} не поддерживается библиотекой`, true); return; }
     indicators.set(name, pane.id);
-    renderIndicatorChips();
-    // Точность оси под-окна — после первого расчёта и раскладки: экстремум
-    // оси появляется с первым кадром, раньше его просто нет
-    setTimeout(() => tuneSubPaneAxisPrecision(name), 400);
+    renderIndicatorLegends();
+    // Точность оси под-окна и значения легенд — после первого расчёта
+    // (createIndicator в 9.6 считает асинхронно: до него в легенде прочерки),
+    // верх новой панели появляется с первым кадром раскладки
+    setTimeout(() => {
+      tuneSubPaneAxisPrecision(name);
+      renderIndicatorLegendValues();
+    }, 400);
+    refreshLegendPositionsSoon();
     const select = document.getElementById('tc-indicator-select');
     if (select) select.value = '';
     setStatus(name === VOL_MAIN
       ? 'Гистограмма объёма включена'
-      : `Индикатор ${name} включён — клик по названию открывает периоды`);
+      : `Индикатор ${name} включён — закрытие и периоды на легенде графика`);
   };
 
   window.tcRemoveIndicator = function (name) {
@@ -2924,15 +3081,17 @@
     if (!instance || !paneId) return;
     instance.removeIndicator(paneId, name);
     indicators.delete(name);
-    renderIndicatorChips();
-    if (name === VOL_MAIN) renderVolumeAxisLabel(null, false);
+    renderIndicatorLegends();
+    // Оставшиеся панели переложились — позиции легенд догоняем
+    refreshLegendPositionsSoon();
     setStatus(name === VOL_MAIN
       ? 'Гистограмма объёма выключена'
       : `Индикатор ${name} выключен`);
   };
 
   // Настройка периодов (как клик по названию индикатора в TradingView):
-  // текущие значения берём из живого инстанса, правим через overrideIndicator.
+  // открывается кликом по названию в легенде на графике. Текущие значения
+  // берём из живого инстанса, правим через overrideIndicator.
   // Ввод в модальном диалоге (window.prompt выглядит чужеродно и блокирует
   // вкладку); ошибка валидации показывается inline, окно не закрывается
   window.tcConfigureIndicator = function (name) {
@@ -2960,7 +3119,10 @@
         if (!params.length) {
           return 'Нужны положительные числа через запятую — например 14 или 7, 25';
         }
-        instance.overrideIndicator({ name, calcParams: params });
+        // Легенда на графике печатает параметры рядом с названием —
+        // обновляем по завершении override (9.6 асинхронный — колбэком)
+        instance.overrideIndicator({ name, calcParams: params }, null,
+          () => renderIndicatorLegends());
         setStatus(`${name}: периоды ${params.join(', ')} применены`);
         return true;
       },
@@ -3036,6 +3198,35 @@
     return result;
   };
 
+  // ---- Поле тикера в шапке ----
+  // Значение подставляется из выбранной в списке строки (syncTickerInput
+  // внутри wlChartLoad), свой код загружается по Enter — тем же путём, что
+  // клик по строке списка (createChart: график + новости). Escape возвращает
+  // тикер, загруженный на графике (отмена ввода)
+  const bindTickerInput = () => {
+    const inp = document.getElementById('tc-sym-input');
+    if (!inp || inp.dataset.tickerInputBound) return;
+    inp.dataset.tickerInputBound = '1';
+    inp.addEventListener('keydown', (e) => {
+      if (!e) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const raw = String(inp.value || '').trim();
+        if (!raw) {
+          setStatus('Введите тикер — например SBER или BINANCE:BTCUSDT', true);
+          return;
+        }
+        const ticker = normalizeTicker(raw);
+        inp.value = ticker; // нормализуем ввод сразу (регистр, без MOEX:)
+        if (typeof window.createChart === 'function') window.createChart(ticker);
+        else if (typeof window.wlChartLoad === 'function') window.wlChartLoad(ticker);
+      } else if (e.key === 'Escape') {
+        inp.value = lastTicker || '';
+        if (typeof inp.blur === 'function') inp.blur();
+      }
+    });
+  };
+
   document.addEventListener('DOMContentLoaded', () => {
     registerCustomOverlays();
     registerVolumeIndicator();
@@ -3043,11 +3234,11 @@
     // загрузки: init графика применит его стилями (apply…Type/ScaleMode)
     loadSavedView();
     syncTfButtons();
-    // Дропдаун типа графика: сначала строим пункты меню («иконка +
-    // название»), затем syncTypeButtons подсветит выбранный и поставит
-    // иконку на триггер
+    // Дропдауны типа графика и шкалы цены: триггер + меню, подсветку
+    // активных пунктов ведут syncTypeButtons/syncScaleButtons
     buildTypeDropdown();
     syncTypeButtons();
+    buildScaleDropdown();
     syncScaleButtons();
     syncUndoButtons(); // стеки пусты — стрелки в шапке приглушены
     // Отсчёт до закрытия бара: тикает раз в секунду, но пишет в DOM
@@ -3060,6 +3251,10 @@
     bindResetViewUi();
     bindStageTools();
     bindSettingsDialog();
+    bindTickerInput();
+    // Закрытие гистограммы объёма — × в строке «Объем» легенды OHLCV
+    const volClose = document.getElementById('tc-leg-volume-close');
+    if (volClose) volClose.addEventListener('click', () => window.tcRemoveIndicator(VOL_MAIN));
     const select = document.getElementById('tc-indicator-select');
     if (select) select.addEventListener('change', () => window.tcAddIndicator(select.value));
     // Страховочные сохранения разметки: перед выгрузкой вкладки и при
