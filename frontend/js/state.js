@@ -70,8 +70,9 @@ window.replaceCircleIcons = function(name) {
 };
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
-window.widget = null;
-window.widgetReady = false;
+// window.widget/window.widgetReady больше нет: на месте виджета TradingView
+// работает график KLineChart (js/watchlist_chart.js, инстанс в замыкании,
+// наружу торчит только window.watchlistChartInstance — для отладки).
 window.debugVisible = false;
 // countdownValue больше нет: автообновление перешло на real-time
 // (постоянный маркер «RT» вместо обратного отсчёта).

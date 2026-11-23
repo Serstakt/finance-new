@@ -247,7 +247,7 @@ function parseFragment(html) {
 const nodesById = {};
 function makeEl(id, tag) { const e = new Node(tag); e.id = id; nodesById[id] = e; return e; }
 const container = makeEl('ticker-list', 'div');
-makeEl('tradingview_chart', 'div');
+makeEl('wl-chart-area', 'div');
 makeEl('notes-editor', 'textarea');
 makeEl('notes-editor-status', 'div');
 makeEl('news-panel', 'div');
@@ -306,7 +306,7 @@ vm.runInContext(`
   // тест «переносит» последний созданный .wl-context-menu в body через appendChild.
   window.__lastMenuNode = null;
   window.createChartCalls = [];
-  window.createChart = function(sym) { createChartCalls.push(sym); document.getElementById('tradingview_chart').dataset.activeSymbol = sym; };
+  window.createChart = function(sym) { createChartCalls.push(sym); document.getElementById('wl-chart-area').dataset.activeSymbol = sym; };
 `, sandbox);
 
 // реальные исходники

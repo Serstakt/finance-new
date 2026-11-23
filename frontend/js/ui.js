@@ -914,10 +914,10 @@ if (window.canRenderWithoutPrices(currentList)) {
     window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
   }
 
-  // График: пересоздаём TradingView-виджет только при СМЕНЕ активного тикера.
+  // График: перезагружаем KLineChart только при СМЕНЕ активного тикера.
   // При автообновлении цен/сортировке вызов createChart с тем же символом
-  // приводил к лишним setSymbol/реконструкциям iframe — теперь это исключено.
-  const chartDiv = document.getElementById('tradingview_chart');
+  // приводил к лишним перезагрузкам свечей — теперь это исключено.
+  const chartDiv = document.getElementById('wl-chart-area');
   if (chartDiv) {
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
       if (chartDiv.dataset.activeSymbol !== currentList.activeSymbol) {
@@ -926,7 +926,7 @@ if (window.canRenderWithoutPrices(currentList)) {
       }
     } else {
       delete chartDiv.dataset.activeSymbol;
-      chartDiv.innerHTML = '<div class="error-msg" style="display:flex;align-items:center;justify-content:center;height:100%;">Добавьте тикер в список</div>';
+      if (typeof window.wlChartReset === 'function') window.wlChartReset();
     }
   }
 
@@ -1336,60 +1336,30 @@ window.syncAlertsWithDb = async function() {
 };
 
 window.createChart = function(symbol) {
-    console.log("📊 [DEBUG] createChart вызвана для:", symbol);
-    const chartDiv = document.getElementById('tradingview_chart');
+    const chartDiv = document.getElementById('wl-chart-area');
     if (!chartDiv) return;
 
     // Идемпотентность: повторный вызов с тем же символом (например, из
-    // navigateTo или addTicker для уже открытого тикера) не должен заново
-    // дёргать widget.setSymbol и перезагружать новости — это дорого и
-    // вызывает мерцание графика.
-    if (chartDiv.dataset.activeSymbol === symbol && (window.widget || typeof TradingView === 'undefined')) return;
+    // navigateTo, addTicker или перерисовки списка при автообновлении цен)
+    // не должен заново перезагружать свечи и новости — это дорого и
+    // вызывает мерцание графика. Исключение: прежняя загрузка этого же
+    // символа сорвалась (сбой сети) — клик по той же строке повторяет её.
+    const sameLoaded = chartDiv.dataset.activeSymbol === symbol
+      && typeof window.wlChartIsCurrent === 'function'
+      && window.wlChartIsCurrent(symbol);
+    if (sameLoaded) return;
     chartDiv.dataset.activeSymbol = symbol;
 
-    if (typeof TradingView === 'undefined') {
-        chartDiv.innerHTML = '<div class="error-msg">⚠️ Ошибка загрузки скрипта TradingView.</div>';
-        return;
-    }
-
-    if (window.widget && window.widgetReady) {
-        window.widget.setSymbol(symbol, 'D', () => {});
-    } else {
-        chartDiv.innerHTML = '';
-        window.widget = new TradingView.widget({
-            "autosize": true,
-            "symbol": symbol,
-            "interval": "D",
-            "timezone": "Etc/UTC",
-            "theme": "dark",
-            "style": "1",
-            "locale": "ru",
-            "toolbar_bg": "#1e222d",
-            "enable_publishing": false,
-            "hide_top_toolbar": false,
-            "hide_legend": false,
-            "save_image": false,
-            "container_id": "tradingview_chart",
-            "onready": () => {
-                window.widgetReady = true;
-                // Разметка поверх графика (chart_overlay.js): перерисовать по
-                // новой шкале и подписать события перерисовки виджета.
-                if (typeof window.subscribeMarkupSync === 'function') {
-                    window.subscribeMarkupSync();
-                    window.drawMarkup();
-                }
-            }
-        });
-    }
-
-    // Разметка: подгружаем объекты нового символа (localStorage + БД)
-    if (typeof window.refreshMarkupForSymbol === 'function') {
-        window.refreshMarkupForSymbol(symbol);
+    // График KLineChart с разметкой и фильтрами (ТФ/тип/индикаторы) —
+    // js/watchlist_chart.js: тикер берётся из выбранной строки списка.
+    // Пока раздел скрыт, загрузка откладывается внутри wlChartLoad до
+    // показа раздела (контейнер без размеров — свечи не раскладываются).
+    if (typeof window.wlChartLoad === 'function') {
+        window.wlChartLoad(symbol);
     }
 
     // ЯВНЫЙ ВЫЗОВ НОВОСТЕЙ
     if (typeof window.loadTickerNews === 'function') {
-        console.log("✅ [DEBUG] Вызываем loadTickerNews для:", symbol);
         window.loadTickerNews(symbol);
     } else {
         console.error("❌ [DEBUG] Функция loadTickerNews НЕ НАЙДЕНА!");

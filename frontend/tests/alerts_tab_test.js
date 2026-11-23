@@ -123,7 +123,7 @@ makeEl('news-panel', 'div');
 makeEl('news-list', 'div');
 makeEl('notes-list', 'div');
 makeEl('ticker-list', 'div');
-makeEl('tradingview_chart', 'div');
+makeEl('wl-chart-area', 'div');
 makeEl('alert-modal', 'div');
 makeEl('alert-symbol-name', 'span');
 makeEl('alert-condition', 'select');

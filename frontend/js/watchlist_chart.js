@@ -1,9 +1,11 @@
-// Раздел «Тест график»: свечи Мосбиржи (при заданном MOEX_API_TOKEN —
+// График раздела Watchlist (переехал из «Тест график», заменил виджет
+// TradingView): свечи Мосбиржи (при заданном MOEX_API_TOKEN —
 // авторизованный ISS Algopack apim.moex.com, без задержки; при сбое токена
 // — анонимный iss.moex.com с лагом ~15 мин) и крипто-пары Binance
 // (BINANCE:BTCUSDT, реальное время) рисуются библиотекой KLineChart.
-// Ввод тикера — по образцу формы добавления в watchlist: поле + кнопка,
-// отправка по Enter. Данные идут через бэкенд: GET /api/candles/{symbol}.
+// Тикер берётся из выбранной строки watchlist: ui.js createChart(symbol)
+// зовёт window.wlChartLoad(symbol) — поле ввода здесь не нужно.
+// Данные идут через бэкенд: GET /api/candles/{symbol}.
 //
 // Поведение в духе TradingView:
 //   - начальная загрузка — последнее окно истории (~600 баров, бэкенд
@@ -17,7 +19,8 @@
 //     (getBarSpace/getOffsetRightDistance → set… после applyNewData);
 //   - разметка (overlay) хранится по тикеру в localStorage и
 //     восстанавливается при возврате к тикеру;
-//   - последний тикер/ТФ автозагружаются при открытии страницы;
+//   - выбранный в списке тикер загружается сразу при показе раздела,
+//     выбранный ТФ переживает перезагрузку (localStorage);
 //   - облик TradingView: вертикальная панель инструментов разметки слева
 //     (иконки SVG инлайном), шапка символа (код · имя · ТФ + последняя
 //     цена с дельтой, имя приходит в candles-ответе бэкенда), легенда
@@ -61,18 +64,18 @@
 //   - точность подписей осей под-окон подбирается по размаху шкалы
 //     (у библиотечных индикаторов по умолчанию precision 4 — ось MACD
 //     печатает «4,000.0000», читающееся как «±4,000,000»);
-//   - компоновка как в TradingView: график занимает почти весь экран —
-//     поиск символа, ТФ, тип и индикаторы стоят в одной шапке карточки
-//     графика, подсказка раздела свёрнута в кнопку «?», статус живёт
-//     поверх холста и высоты не съедает; размеры как у виджета TradingView
-//     на Watchlist — область графика вровень с краями экрана, без рамки
-//     и внешних отступов, холст догоняет resize окна и смену высоты шапки
-//     после загрузки данных (у библиотеки слежения за контейнером нет);
+//   - компоновка как в TradingView: ТФ, тип и индикаторы стоят в одной
+//     шапке, подсказка свёрнута в кнопку «?», статус живёт поверх холста
+//     и высоты не съедает; размеры ровно как у прежнего виджета TradingView
+//     — область графика занимает тот же слот #chart-container (вся ширина,
+//     без рамки и внешних отступов), холст догоняет resize окна, тягу
+//     ресайзера панели списка и смену высоты шапки после загрузки данных
+//     (у библиотеки слежения за контейнером нет);
 //   - отсчёт до закрытия бара как тег «287,45 · 00:32:41» в TV, на всех
-//     ТФ: раз в секунду в шапку рядом с ценой дописывается остаток до
-//     следующей границы сетки ТФ (календарная проекция от последней
-//     свечи; после закрытия рынка — до открытия следующего бара, у
-//     недельных/месячных с префиксом дней «Nд ЧЧ:ММ:СС»);
+//     ТФ: раз в секунду обновляется остаток до следующей границы сетки
+//     ТФ (календарная проекция от последней свечи; после закрытия
+//     рынка — до открытия следующего бара), компактно: «6д15ч» /
+//     «3ч40м» / «23м15с» — две старшие единицы;
 //   - undo/redo разметки: стек операций создать/удалить/сдвинуть/очистить
 //     (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и две стрелки в шапке) — удалённая
 //     правым кликом фигура возвращается, как в TradingView;
@@ -94,7 +97,8 @@
 
 (() => {
   let chartInstance = null;
-  let lastTicker = null; // последний успешно введённый тикер (сохранение разметки, guard поллинга)
+  let lastTicker = null; // последний успешно загруженный тикер (сохранение разметки, guard поллинга)
+  let pendingSymbol = null; // тикер, запрошенный из списка, пока раздел был скрыт — грузится при показе
   let lastSource = null; // источник свежих свечей ('apim'|'iss'|'binance') — из candles-ответа
   let lastTs = null; // timestamp последней свечи — точка инкремента поллинга
   let pollTimer = null;
@@ -115,9 +119,7 @@
   // на ходу (отказ токена → откат на ISS) — pollOnce перезапускает поллинг.
   const POLL_MS = { binance: 5000, moex: 60000, moexApim: 15000 };
   // Разметка в localStorage: { TICKER: [{ name, extendData, points: [{timestamp, value}] }] }
-  const MARKUP_LS_KEY = 'test_chart_markup';
-  // Последний открытый график (автозагрузка при открытии страницы)
-  const LAST_LS_KEY = 'test_chart_last';
+  const MARKUP_LS_KEY = 'wl_chart_markup';
   // Начальное окно истории в днях (~600 баров; дозагрузка старых — loadMore)
   const TF_LOOKBACK_DAYS = { 60: 40, 24: 600, 7: 4200, 31: 18000 };
   // Индикаторы, живущие в главном окне со свечами; остальные — в своих под-окнах
@@ -134,9 +136,18 @@
   // автоподгонку — на этом построены и смена режима, и кнопка «авто».
   // Выбор переживает перезагрузку страницы (localStorage).
 
-  const VIEW_LS_KEY = 'test_chart_view';
+  const VIEW_LS_KEY = 'wl_chart_view';
   const LINE_COLOR = '#2962ff';
   const CHART_TYPE_LABELS = { candles: 'Свечи', bars: 'Бары', line: 'Линия', area: 'Области' };
+  // Иконки типов графика (SVG инлайном) — один источник для триггера
+  // дропдауна и пунктов меню (в меню — «иконка + название», как в
+  // TradingView; там кнопка стиля тоже показывает выбранный тип иконкой)
+  const TYPE_ICONS = {
+    candles: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3M8 18v3"/><rect x="5.5" y="6" width="5" height="12" rx="1"/><path d="M16 5v3M16 16v3"/><rect x="13.5" y="8" width="5" height="8" rx="1"/></svg>',
+    bars: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16"/><path d="M4 7.5h3"/><path d="M7 14h3"/><path d="M17 6v14"/><path d="M14 9.5h3"/><path d="M17 16h3"/></svg>',
+    line: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 16.5 6-6.5 4.5 4L21 5.5"/></svg>',
+    area: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 16.5 6-6.5 4.5 4L21 5.5"/><path d="M3 20v-3.5l6-6.5 4.5 4L21 5.5V20Z" fill="currentColor" fill-opacity="0.18" stroke="none"/></svg>',
+  };
   // Заливка area-типа: прозрачная у «линии», TV-синяя у «областей»
   const areaStyles = (transparent) => ({
     lineSize: 2,
@@ -147,11 +158,15 @@
       { offset: 1, color: transparent ? 'rgba(41, 98, 255, 0)' : 'rgba(41, 98, 255, 0.22)' },
     ],
   });
+  // priceMark.last во всех типах: пунктирная линия текущей цены на холсте
+  // видна (как в TradingView), а встроенный тег цены на шкале отключён —
+  // вместо него своё поле «цена + отсчёт» (одна плашка,
+  // см. syncAxisPriceTag), иначе два тега наслаивались бы
   const CHART_TYPE_STYLES = {
-    candles: { type: 'candle_solid', priceMark: { high: { show: true }, low: { show: true } } },
-    bars: { type: 'ohlc', priceMark: { high: { show: true }, low: { show: true } } },
-    line: { type: 'area', priceMark: { high: { show: false }, low: { show: false } }, area: areaStyles(true) },
-    area: { type: 'area', priceMark: { high: { show: false }, low: { show: false } }, area: areaStyles(false) },
+    candles: { type: 'candle_solid', priceMark: { high: { show: true }, low: { show: true }, last: { show: true, line: { show: true }, tag: { show: false } } } },
+    bars: { type: 'ohlc', priceMark: { high: { show: true }, low: { show: true }, last: { show: true, line: { show: true }, tag: { show: false } } } },
+    line: { type: 'area', priceMark: { high: { show: false }, low: { show: false }, last: { show: true, line: { show: true }, tag: { show: false } } }, area: areaStyles(true) },
+    area: { type: 'area', priceMark: { high: { show: false }, low: { show: false }, last: { show: true, line: { show: true }, tag: { show: false } } }, area: areaStyles(false) },
   };
   const SCALE_MODES = ['normal', 'log', 'percentage'];
   const SCALE_LABELS = { normal: 'обычная', log: 'логарифмическая', percentage: 'проценты' };
@@ -164,20 +179,104 @@
       const v = JSON.parse(localStorage.getItem(VIEW_LS_KEY) || '{}');
       if (CHART_TYPE_STYLES[v.type]) chartType = v.type;
       if (SCALE_MODES.includes(v.scale)) scaleMode = v.scale;
+      // Выбранный ТФ переживает перезагрузку (символ приходит из списка)
+      if (TF_LOOKBACK_DAYS[v.interval]) currentInterval = v.interval;
     } catch (e) { /* битый JSON — остаются дефолты */ }
   };
 
   const saveView = () => {
     try {
-      localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ type: chartType, scale: scaleMode }));
+      localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ type: chartType, scale: scaleMode, interval: currentInterval }));
     } catch (e) { /* localStorage недоступен — вид не сохранится */ }
   };
 
   const syncTypeButtons = () => {
-    for (const t of Object.keys(CHART_TYPE_STYLES)) {
-      const btn = document.getElementById(`tc-type-${t}`);
-      if (btn) btn.classList.toggle('active', chartType === t);
+    // Триггер дропдауна — иконка выбранного типа (как кнопка стиля в
+    // TradingView), заголовок с названием для подсказки
+    const trigger = document.getElementById('tc-type-toggle');
+    if (trigger) {
+      trigger.innerHTML = TYPE_ICONS[chartType] || '';
+      trigger.title = `Тип графика: ${CHART_TYPE_LABELS[chartType] || chartType}`;
     }
+    // Активный пункт меню подсвечен (id прежние: tc-type-candles и т.д.)
+    for (const t of Object.keys(CHART_TYPE_STYLES)) {
+      const item = document.getElementById(`tc-type-${t}`);
+      if (item) {
+        item.classList.toggle('active', chartType === t);
+        if (typeof item.setAttribute === 'function') {
+          item.setAttribute('aria-selected', chartType === t ? 'true' : 'false');
+        }
+      }
+    }
+  };
+
+  // ---- Дропдаун типа графика (как в TradingView) ----
+  // Триггер показывает иконку выбранного типа, меню — список «иконка +
+  // название». Закрытие: выбор пункта, клик мимо и Escape — оба события
+  // ловят ОБЩИЕ document-обработчики из bindResetViewUi (hideTypeMenu),
+  // чтобы не плодить слушателей документа.
+
+  const hideTypeMenu = () => {
+    const menu = document.getElementById('tc-type-menu');
+    if (!menu || !menu.classList.contains('open')) return false;
+    menu.classList.remove('open');
+    const toggle = document.getElementById('tc-type-toggle');
+    if (toggle && typeof toggle.setAttribute === 'function') {
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    return true;
+  };
+
+  const buildTypeDropdown = () => {
+    const root = document.getElementById('tc-type-dropdown');
+    const toggle = document.getElementById('tc-type-toggle');
+    const menu = document.getElementById('tc-type-menu');
+    if (!root || !toggle || !menu || root.dataset.typeDropdownBound) return;
+    root.dataset.typeDropdownBound = '1';
+    // Пункты меню строим из того же источника, что и иконку триггера:
+    // иконка + название; активность пункта ведёт syncTypeButtons
+    for (const t of Object.keys(CHART_TYPE_STYLES)) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'tc-type-item';
+      item.id = `tc-type-${t}`;
+      item.dataset.type = t; // тип для обработчика выбора в menu-click
+      const icon = document.createElement('span');
+      icon.className = 'tc-type-icon';
+      icon.innerHTML = TYPE_ICONS[t] || '';
+      const label = document.createElement('span');
+      label.className = 'tc-type-label';
+      label.textContent = CHART_TYPE_LABELS[t] || t;
+      item.appendChild(icon);
+      item.appendChild(label);
+      menu.appendChild(item);
+    }
+    // Триггер: открыть/закрыть меню. Заодно гасим контекстное меню графика,
+    // если открыто (его document-обработчик не увидит этот клик —
+    // stopPropagation ниже). stopPropagation нужен, чтобы общий
+    // «клик мимо — закрыть» тут же не погасил только что открытое меню
+    toggle.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (ctxMenuOpen) hideCtxMenu();
+      if (menu.classList.contains('open')) {
+        hideTypeMenu();
+        return;
+      }
+      menu.classList.add('open');
+      if (typeof toggle.setAttribute === 'function') {
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+    // Выбор пункта: tcSetChartType применит тип (стили/сохранение вида/
+    // статус), меню закрываем. Клик всплывает и в document-обработчик,
+    // но target внутри #tc-type-dropdown — «клик мимо» не сработает
+    menu.addEventListener('click', (e) => {
+      const item = e.target && typeof e.target.closest === 'function'
+        ? e.target.closest('.tc-type-item') : null;
+      if (!item || !item.dataset.type) return;
+      window.tcSetChartType(item.dataset.type);
+      hideTypeMenu();
+    });
   };
 
   // Ось цены главной панели — внутреннее API 9.6 (как getChartStore в
@@ -355,7 +454,11 @@
     if (typeof klinecharts === 'undefined') return;
     klinecharts.registerIndicator({
       name: VOL_MAIN,
-      shortName: 'Объем',
+      // shortName пуст: встроенный tooltip индикатора на холсте печатает
+      // именно shortName («Объем») и наслаивался на строку легенды.
+      // Значение объёма показывает наша HTML-строка «Объем N», подпись
+      // чипа задаётся явно в renderIndicatorChips
+      shortName: '',
       figures: [],
       calc: () => [],
       draw: ({ ctx, kLineDataList, visibleRange, bounding, barSpace, xAxis }) => {
@@ -760,7 +863,7 @@
   let statusHideTimer = null;
 
   const setStatus = (text, isError = false, isWarn = false) => {
-    const el = document.getElementById('test-chart-status');
+    const el = document.getElementById('watchlist-chart-status');
     if (!el) return;
     if (statusHideTimer) { clearTimeout(statusHideTimer); statusHideTimer = null; }
     el.classList.remove('fade-out');
@@ -834,7 +937,7 @@
     }
     registerCustomOverlays();
     registerVolumeIndicator();
-    const el = document.getElementById('test-chart-kline');
+    const el = document.getElementById('watchlist-kline');
     if (!el) return null;
     if (!chartInstance) {
       // Убираем заглушку «Введите тикер…» — контейнер теперь под canvas графика
@@ -853,6 +956,9 @@
               upBorderColor: '#26a69a', downBorderColor: '#ef5350',
               upWickColor: '#26a69a', downWickColor: '#ef5350',
             },
+            // Пунктир текущей цены виден, встроенный тег на шкале выключен:
+            // своё поле «цена + отсчёт» рисует syncAxisPriceTag поверх холста
+            priceMark: { last: { show: true, line: { show: true }, tag: { show: false } } },
             // Встроенную строку OHLC гасим: в 9.6 standard-tooltip рисуется
             // безусловно, подавить его можно только парой showType 'rect' +
             // showRule 'none' (isDrawTooltip = false). Вместо него — своя
@@ -861,8 +967,10 @@
           },
           indicator: {
             // Значения индикаторов (MA, RSI…) оставляем, но опускаем ниже
-            // строки легенды (дефолтный marginTop 8 пересекался бы с ней)
-            tooltip: { showType: 'standard', showRule: 'always', text: { marginTop: 26 } },
+            // легенды на холсте (дефолтный marginTop 8 пересекался бы с ней):
+            // легенда стала двухстрочной (вторая строка — «Объем»), 40 —
+            // сразу под обеими строками
+            tooltip: { showType: 'standard', showRule: 'always', text: { marginTop: 40 } },
           },
           xAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
           yAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
@@ -874,7 +982,7 @@
       });
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
-      window.testChartInstance = chartInstance;
+      window.watchlistChartInstance = chartInstance;
       // Русская ось времени (см. блок customFormatDate выше)
       if (typeof chartInstance.setCustomApi === 'function') {
         chartInstance.setCustomApi({ formatDate: customFormatDate });
@@ -916,6 +1024,12 @@
             renderVolumeAxisLabel(ev.kLineData, ev.paneId !== undefined);
           }
         });
+        // Сдвиг/зум меняют положение цены на шкале — отсчёт под тегом
+        // последней цены догоняет (секундный тик подстрахует, если тип
+        // события этой версией библиотеки не отдаётся)
+        for (const evName of ['onScroll', 'onZoom', 'onPaneMouseZoom']) {
+          chartInstance.subscribeAction(evName, () => renderCountdown());
+        }
       }
     }
     return chartInstance;
@@ -1020,7 +1134,7 @@
       return;
     }
     const dom = typeof chartInstance.getDom === 'function' ? chartInstance.getDom()
-      : document.getElementById('test-chart-kline');
+      : document.getElementById('watchlist-kline');
     const canvases = dom && typeof dom.querySelectorAll === 'function'
       ? dom.querySelectorAll('canvas') : [];
     if (!canvases || !canvases.length) {
@@ -1144,15 +1258,26 @@
     bindCtxItem('tc-ctx-shot', takeChartSnapshot);
     bindCtxItem('tc-ctx-clear', () => window.tcClearOverlays());
     // Закрытие меню: клик где угодно, Escape, изменение размера окна.
+    // Тот же клик/Escape гасят и открытое меню дропдауна типа графика
+    // (hideTypeMenu вернёт true, только если меню было открыто).
     // Escape — также отмена недостроенной фигуры (как в TradingView:
     // Esc снимает режим рисования) и разоружение взведённого инструмента.
     // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — undo/redo разметки: только при
     // видимом разделе, без открытого диалога, ввода в полях и незавершённого
     // рисования
-    document.addEventListener('click', () => { if (ctxMenuOpen) hideCtxMenu(); });
+    document.addEventListener('click', (e) => {
+      const typeMenu = document.getElementById('tc-type-menu');
+      if (typeMenu && typeMenu.classList.contains('open')
+        && !(e && e.target && typeof e.target.closest === 'function'
+          && e.target.closest('#tc-type-dropdown'))) {
+        hideTypeMenu();
+      }
+      if (ctxMenuOpen) hideCtxMenu();
+    });
     document.addEventListener('keydown', (e) => {
       if (!e) return;
       if (e.key === 'Escape') {
+        if (hideTypeMenu()) return;
         if (ctxMenuOpen) { hideCtxMenu(); return; }
         if (dialogCtx) return; // открытый диалог закроет window-обработчик
         if (cancelActiveDrawing()) {
@@ -1690,13 +1815,18 @@
     return ts;
   };
 
-  // «00:32:41», при остатке больше суток — «2д 07:14:35» (в TradingView
-  // отсчёт недельных/месячных баров тоже идёт, с префиксом дней)
+  // Компактный отсчёт из двух старших единиц: «6д15ч» (недельные/месячные
+  // бары), «3ч40м» (дневные), «23м15с» (часовые) — тик остаётся живым и на
+  // внутридневных ТФ, а длинные остатки не занимают пол-оси
   const fmtCountdown = (ms) => {
     const s = Math.max(0, Math.floor(ms / 1000));
     const days = Math.floor(s / 86400);
-    const core = `${pad2(Math.floor((s % 86400) / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
-    return days > 0 ? `${days}д ${core}` : core;
+    const hours = Math.floor((s % 86400) / 3600);
+    const minutes = Math.floor((s % 3600) / 60);
+    const seconds = s % 60;
+    if (days > 0) return `${days}д${hours}ч`;
+    if (hours > 0) return `${hours}ч${pad2(minutes)}м`;
+    return `${minutes}м${pad2(seconds)}с`;
   };
 
   const renderCountdown = () => {
@@ -1706,9 +1836,43 @@
     if (lastTs != null && chartSectionVisible() && !document.hidden) {
       const closeTs = nextBarCloseTs();
       const remain = closeTs != null ? closeTs - Date.now() : null;
-      if (remain != null && remain > 0) text = `· ${fmtCountdown(remain)}`;
+      if (remain != null && remain > 0) text = fmtCountdown(remain);
     }
     if (el.textContent !== text) el.textContent = text;
+    syncAxisPriceTag();
+  };
+
+  // Поле «цена + отсчёт» на шкале цены — ОДНА плашка в цвет направления
+  // последней свечи: сверху цена, отсчёт — просто строкой ниже (как тег
+  // «287,45 · 00:32:41» в TradingView, только колонкой). Встроенный тег
+  // цены библиотеки отключён (priceMark.last.show=false) — иначе два
+  // тега наслаивались бы. Позиция по Y — внутреннее API оси главной
+  // панели (convertToPixel последней цены), плашка центрируется на цене
+  // и прижимается внутрь холста у краёв; цена вне видимого диапазона —
+  // поле прячется. Обновляется раз в секунду и на сдвиг/зум (подписки
+  // в init) — между кадрами положение может отставать на пиксели.
+  const syncAxisPriceTag = () => {
+    const tag = document.getElementById('tc-axis-price-tag');
+    if (!tag) return;
+    tag.classList.remove('up', 'down');
+    const list = chartInstance ? chartInstance.getDataList() : [];
+    const last = list.length ? list[list.length - 1] : null;
+    if (!last || lastTs == null || !chartSectionVisible()) {
+      tag.style.top = '-9999px';
+      return;
+    }
+    const axis = candlePaneAxis();
+    const px = axis && typeof axis.convertToPixel === 'function'
+      ? axis.convertToPixel(last.close) : null;
+    const stage = document.getElementById('tc-chart-stage');
+    const stageH = stage ? stage.clientHeight : 0;
+    if (!Number.isFinite(px) || stageH <= 0) { tag.style.top = '-9999px'; return; }
+    // Центрируем плашку (~34px) на цене, у краёв холста прижимаем внутрь
+    const half = 17;
+    const top = Math.min(Math.max(px - half, 2), Math.max(2, stageH - half * 2 - 2));
+    tag.style.top = `${Math.round(top)}px`;
+    tag.classList.toggle('up', last.close >= last.open);
+    tag.classList.toggle('down', last.close < last.open);
   };
 
   const startCountdownTimer = () => {
@@ -1791,9 +1955,11 @@
     if (name) { name.textContent = ''; name.style.display = 'none'; }
     const tf = document.getElementById('tc-sym-tf');
     if (tf) tf.textContent = TF_LABELS[interval] || '';
+    // Цена прежнего тикера в поле на шкале гасится сразу — свежая
+    // придёт с первыми данными (updateSymbolQuote)
     const price = document.getElementById('tc-sym-price');
-    if (price) price.textContent = '—';
-    const change = document.getElementById('tc-sym-change');
+    if (price) price.textContent = '';
+    const change = document.getElementById('tc-leg-change');
     if (change) { change.textContent = ''; change.classList.remove('up', 'down'); }
   };
 
@@ -1807,13 +1973,16 @@
     nameEl.style.display = name ? '' : 'none';
   };
 
-  // Цена + дельта к предыдущей свече: «+10.00 (+3.25%)» зелёным/красным
+  // Дельта к предыдущей свече «+10.00 (+3.25%)» — зелёным/красным в
+  // легенде на холсте (после «Закр»). Текущую цену показывает сама
+  // библиотека — цветной тег на шкале цены справа
   const updateSymbolQuote = (list) => {
     const priceEl = document.getElementById('tc-sym-price');
-    const changeEl = document.getElementById('tc-sym-change');
-    if (!priceEl || !list || !list.length) return;
+    const changeEl = document.getElementById('tc-leg-change');
+    if ((!priceEl && !changeEl) || !list || !list.length) return;
     const last = list[list.length - 1];
-    priceEl.textContent = fmtNum(last.close);
+    // Цена — верхняя строка поля «цена + отсчёт» на шкале цены
+    if (priceEl) priceEl.textContent = fmtNum(last.close);
     if (!changeEl) return;
     const prev = list.length > 1 ? list[list.length - 2] : null;
     if (!prev || !Number.isFinite(prev.close) || !prev.close) {
@@ -1847,6 +2016,14 @@
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     }
+    syncVolumeLegend();
+  };
+
+  // Строка «Объем N» в легенде живёт вместе с гистограммой: чип убран —
+  // строка прячется, гистограмма возвращена — строка показывается снова
+  const syncVolumeLegend = () => {
+    const row = document.getElementById('tc-leg-volume-row');
+    if (row) row.style.display = indicators.has(VOL_MAIN) ? '' : 'none';
   };
 
   // Метка объёма на оси цены (как в TradingView): тег со значением столбика
@@ -1961,7 +2138,7 @@
       // Данные сменились (ввели другой тикер/ТФ) — этот таймер больше не нужен
       if (pollKey !== key) { stopPolling(); return; }
       // Пропускаем тик, пока раздел или вкладка не видны — гасим фоновую нагрузку
-      const el = document.getElementById('test-chart-kline');
+      const el = document.getElementById('watchlist-kline');
       if (document.hidden || !el || el.offsetParent === null) return;
       pollOnce(ticker, interval);
     }, period);
@@ -2018,17 +2195,32 @@
     }
   };
 
-  window.loadTestChartCandles = async function () {
-    const input = document.getElementById('test-chart-ticker-input');
-    const ticker = normalizeTicker(input && input.value);
+  // Загрузка свечей выбранного в списке тикера (символ приходит из
+  // ui.js createChart — клик по строке, смена списка, открытие раздела).
+  // Пока раздел скрыт (контейнер без размеров), запрос откладывается до
+  // первого показа — см. pendingSymbol и wlChartSectionShown.
+  let loadInFlightKey = null; // 'TICKER|interval' текущей загрузки — дедуп повторных вызовов
+
+  window.wlChartLoad = async function (symbol) {
+    const ticker = normalizeTicker(symbol);
     if (!ticker) {
-      setStatus('Введите тикер: акция (SBER) или крипто-пара (BINANCE:BTCUSDT)', true);
+      setStatus('Тикер не выбран: кликните по строке списка', true);
       return;
     }
+    pendingSymbol = ticker;
+    if (!chartSectionVisible()) return;
+    // Раздел виден — загрузка началась: отложка больше не нужна
+    pendingSymbol = null;
     const interval = currentInterval;
+    const key = `${ticker}|${interval}`;
+    // Тот же тикер/ТФ уже грузится (клик по выбранной строке, страховка
+    // из navigateTo поверх render()) — второй запрос не нужен
+    if (loadInFlightKey === key) return;
+    loadInFlightKey = key;
+    const done = () => { if (loadInFlightKey === key) loadInFlightKey = null; };
 
     const instance = getChartInstance();
-    if (!instance) return;
+    if (!instance) { done(); return; }
 
     setStatus(`Загрузка свечей ${ticker}…`);
 
@@ -2057,12 +2249,17 @@
       // устаревшими, прежнее значение сбрасываем
       lastSource = data.source || null;
 
+      // За время запроса выбрали другой тикер/ТФ — ответ уже не к этому графику
+      if (loadInFlightKey !== key) return;
+
       if (data.error) {
         setStatus(`Ошибка: ${data.error}`, true);
+        done();
         return;
       }
       if (!data.candles || !data.candles.length) {
         setStatus(`Для тикера ${ticker} свечи не найдены`, true);
+        done();
         return;
       }
 
@@ -2116,9 +2313,6 @@
       // Доборка старых экранов при скролле влево (переввод callback — идемпотентно)
       instance.loadMore((oldestTs) => loadMoreHistory(oldestTs));
 
-      // Последний график — для автозагрузки при следующем открытии страницы
-      try { localStorage.setItem(LAST_LS_KEY, JSON.stringify({ ticker, interval })); } catch (e) {}
-
       const restored = symbolChanged ? restoreOverlays(ticker) : 0;
       startPolling(ticker, interval);
 
@@ -2130,7 +2324,9 @@
       const base = `График ${ticker} · свечей: ${klineData.length} · ${sourceNote(ticker)} · ${liveNote}`;
       if (data.note) setStatus(`⚠ ${data.note} — ${base}`, false, true);
       else setStatus(restored ? `${base} · разметка восстановлена: ${restored}` : base);
+      done();
     } catch (e) {
+      done();
       setStatus(`Не удалось загрузить свечи: ${e.message || e}`, true);
     }
   };
@@ -2153,7 +2349,7 @@
     const tfEl = document.getElementById('tc-sym-tf');
     if (tfEl) tfEl.textContent = TF_LABELS[value] || '';
     // Как в TradingView: клик по ТФ сразу перезагружает график выбранного тикера
-    if (lastTicker) window.loadTestChartCandles();
+    if (lastTicker) window.wlChartLoad(lastTicker);
     else setStatus(`Таймфрейм: ${document.getElementById(`tc-tf-${value}`)?.textContent || value}`);
   };
 
@@ -2210,7 +2406,7 @@
   const stageEventPoint = (e) => {
     if (!chartInstance) return null;
     const dom = typeof chartInstance.getDom === 'function' ? chartInstance.getDom()
-      : document.getElementById('test-chart-kline');
+      : document.getElementById('watchlist-kline');
     const rect = dom && typeof dom.getBoundingClientRect === 'function'
       ? dom.getBoundingClientRect() : null;
     if (!rect || typeof chartInstance.convertFromPixel !== 'function' || e.clientX == null) return null;
@@ -2669,12 +2865,13 @@
     for (const [name, paneId] of indicators) {
       const chip = document.createElement('span');
       chip.className = 'tc-ind-chip';
-      // Подпись чипа — shortName живого инстанса («Объем» у гистограммы),
-      // нет инстанса — имя индикатора
-      let label = name;
+      // Подпись чипа: у гистограммы — «Объем» (shortName пуст нарочно,
+      // чтобы не рисовался на холсте), у остальных — shortName живого
+      // инстанса, нет инстанса — имя индикатора
+      let label = name === VOL_MAIN ? 'Объем' : name;
       try {
         const inst = chartInstance && chartInstance.getIndicatorByPaneId(paneId, name);
-        if (inst && inst.shortName) label = inst.shortName;
+        if (name !== VOL_MAIN && inst && inst.shortName) label = inst.shortName;
       } catch (e) { /* инстанс недоступен — остаётся имя */ }
       const nm = document.createElement('span');
       nm.className = 'tc-ind-name';
@@ -2691,6 +2888,9 @@
       chip.dataset.paneId = paneId;
       host.appendChild(chip);
     }
+    // Чипы меняются вместе с состоянием индикаторов — строка «Объем»
+    // в легенде должна повторять это (гистограмма выключена — строки нет)
+    syncVolumeLegend();
   };
 
   // Добавление индикатора: MA/EMA/BOLL/SAR — на свечи, остальные —
@@ -2769,45 +2969,61 @@
 
   // ---- Стартовые слушатели ----
 
-  // klinecharts.init измеряет контейнер в момент вызова. Автозагрузка
-  // последнего графика стреляет на DOMContentLoaded, когда активной может
-  // быть другая страница («Главная»): контейнер 0×0, панель свечей
+  // klinecharts.init измеряет контейнер в момент вызова. Первый выбор
+  // тикера происходит на DOMContentLoaded, когда активной может быть
+  // другая страница («Главная»): контейнер 0×0, панель свечей
   // раскладывается в нулевую высоту, и после показа раздела свечи остаются
   // сжатыми в полосу у верхнего края (ResizeObserver растягивает канвас,
   // но раскладку панелей не пересчитывает). Поэтому загрузка в скрытом
-  // разделе откладывается до первого показа, а уже созданный график при
-  // показе пересобирается через resize().
-  let pendingAutoload = false;
+  // разделе откладывается до первого показа (pendingSymbol), а уже
+  // созданный график при показе пересобирается через resize().
 
   const chartSectionVisible = () => {
-    const el = document.getElementById('test-chart-kline');
+    const el = document.getElementById('watchlist-kline');
     return !!(el && el.offsetParent !== null);
   };
 
-  // Вызывается из navigateTo при первом показе раздела (декоратор ниже)
-  window.tcSectionShown = function () {
+  // Показ раздела Watchlist: доигрывает отложенную загрузку и пересобирает
+  // панели под реальные размеры. Вызывается из navigateTo (декоратор ниже);
+  // render() к этому моменту уже вызвал createChart → wlChartLoad.
+  window.wlChartSectionShown = function () {
     if (!chartSectionVisible()) return;
     // Меню могло остаться открытым при уходе с раздела — прячем (позиция устарела)
     hideCtxMenu();
-    if (pendingAutoload) {
-      pendingAutoload = false;
-      autoLoadLastChart();
+    if (pendingSymbol) {
+      const ticker = pendingSymbol;
+      pendingSymbol = null;
+      window.wlChartLoad(ticker);
     } else if (chartInstance && typeof chartInstance.resize === 'function') {
       // Раздел снова виден — пересобрать панели под реальные размеры
       chartInstance.resize();
     }
   };
 
-  const autoLoadLastChart = () => {
-    let last = null;
-    try { last = JSON.parse(localStorage.getItem(LAST_LS_KEY) || 'null'); } catch (e) {}
-    if (!last || !last.ticker) return;
-    const input = document.getElementById('test-chart-ticker-input');
-    if (input) input.value = last.ticker;
-    if (last.interval && TF_LOOKBACK_DAYS[last.interval]) currentInterval = last.interval;
-    syncTfButtons();
-    if (!chartSectionVisible()) { pendingAutoload = true; return; }
-    window.loadTestChartCandles();
+  // Пересборка холста без перезагрузки данных: тянется ресайзером панели
+  // списка (вызовы из main.js — окна слева меняют ширину, window-resize
+  // при этом не срабатывает) и показом/скрытием панели.
+  window.wlChartResize = function () { resizeChartSoon(); };
+
+  // Показывает ли график сейчас этот символ (успешно загруженный).
+  // ui.js createChart пропускает повторный вызов только для текущего
+  // символа — клик по той же строке после сбоя сети повторяет загрузку.
+  window.wlChartIsCurrent = function (symbol) {
+    return lastTicker !== null && lastTicker === normalizeTicker(symbol);
+  };
+
+  // Символ не выбран (раздел списка/пустой список): гасим поллинг и
+  // показываем заглушку поверх холста — как «пустой» виджет TradingView.
+  window.wlChartReset = function () {
+    pendingSymbol = null;
+    stopPolling();
+    const wrap = document.getElementById('watchlist-kline');
+    if (wrap && !wrap.querySelector('.widget-fallback')) {
+      const msg = document.createElement('div');
+      msg.className = 'widget-fallback';
+      msg.textContent = 'Добавьте тикер в список';
+      wrap.appendChild(msg);
+    }
   };
 
   // Показ раздела — как в portfolio.js: оборачиваем navigateTo, чтобы
@@ -2816,17 +3032,21 @@
   window.navigateTo = function (pageName) {
     const result = typeof originalNavigateTo === 'function'
       ? originalNavigateTo(pageName) : undefined;
-    if (pageName === 'test-chart') window.tcSectionShown();
+    if (pageName === 'watchlist') window.wlChartSectionShown();
     return result;
   };
 
   document.addEventListener('DOMContentLoaded', () => {
     registerCustomOverlays();
     registerVolumeIndicator();
-    syncTfButtons();
-    // Сохранённый вид (тип графика + режим шкалы) читаем до первой
+    // Сохранённый вид (тип графика, режим шкалы, ТФ) читаем до первой
     // загрузки: init графика применит его стилями (apply…Type/ScaleMode)
     loadSavedView();
+    syncTfButtons();
+    // Дропдаун типа графика: сначала строим пункты меню («иконка +
+    // название»), затем syncTypeButtons подсветит выбранный и поставит
+    // иконку на триггер
+    buildTypeDropdown();
     syncTypeButtons();
     syncScaleButtons();
     syncUndoButtons(); // стеки пусты — стрелки в шапке приглушены
@@ -2840,18 +3060,8 @@
     bindResetViewUi();
     bindStageTools();
     bindSettingsDialog();
-    const input = document.getElementById('test-chart-ticker-input');
-    const btn = document.getElementById('test-chart-load-btn');
-    if (btn) btn.addEventListener('click', () => window.loadTestChartCandles());
-    if (input) {
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') window.loadTestChartCandles();
-      });
-    }
     const select = document.getElementById('tc-indicator-select');
     if (select) select.addEventListener('change', () => window.tcAddIndicator(select.value));
-    // Открываем график, который был открыт последним (как в TradingView)
-    autoLoadLastChart();
     // Страховочные сохранения разметки: перед выгрузкой вкладки и при
     // сворачивании/переключении вкладки (перетаскивание точек без
     // onPressedMoveEnd всё равно попадёт в один из этих моментов).
