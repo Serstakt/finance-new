@@ -23,6 +23,16 @@
 // dblclick сразу после достройки, точность осей под-окон по размаху
 // шкалы (ось MACD «4,000.0000» → «4,000»), статус-тост с автоскрытием
 // (info 6 с / warn 15 с / ошибка сама не гаснет, фаза затухания).
+// Доработки P3 по аналогии с TradingView: отсчёт до закрытия бара в
+// шапке («· ЧЧ:ММ:СС», тик раз в секунду), undo/redo разметки (стек
+// операций создать/удалить/сдвинуть/очистить + стрелки в шапке,
+// Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y), Escape снимает недостроенную фигуру
+// и разоружает взведённый инструмент, контекстное меню богаче
+// («Скопировать цену» по курсору, «Снимок PNG», «Удалить всю разметку»),
+// русская ось времени через setCustomApi ({formatDate}: «Июнь» вместо
+// «2026-06», дни числом, кроссхейр ДД.ММ.ГГГГ), поллинг Binance 5 с,
+// Pointer Events у кисти/измерителя и догоняющего клика (тач-устройства),
+// fmtVol с триллионами (2355.79B → 2.36T).
 // Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
 // (node:vm без браузера).
 const fs = require('fs');
@@ -81,6 +91,7 @@ const els = {
   'tc-sym-tf': new El('span'),
   'tc-sym-price': new El('span'),
   'tc-sym-change': new El('span'),
+  'tc-sym-countdown': new El('span'),
   'tc-legend': new El('div'),
   'tc-leg-o': new El('span'),
   'tc-leg-h': new El('span'),
@@ -88,10 +99,17 @@ const els = {
   'tc-leg-c': new El('span'),
   'tc-leg-v': new El('span'),
   'tc-vol-axis': new El('div'),
-  // сброс вида: холст + контекстное меню «Reset chart»
+  // сброс вида: холст + контекстное меню «Reset chart» (+ новые пункты:
+  // скопировать цену, снимок PNG, удалить всю разметку)
   'tc-chart-stage': new El('div'),
   'tc-ctx-menu': new El('div'),
   'tc-ctx-reset': new El('button'),
+  'tc-ctx-copy': new El('button'),
+  'tc-ctx-shot': new El('button'),
+  'tc-ctx-clear': new El('button'),
+  // undo/redo разметки (стрелки в шапке как в TradingView)
+  'tc-undo': new El('button'),
+  'tc-redo': new El('button'),
   // тип графика (сегмент иконок) + шкала цены (log/%/авто)
   'tc-type-candles': new El('button'),
   'tc-type-bars': new El('button'),
@@ -146,6 +164,8 @@ const fakeOverlayStore = {
 
 const chart = {
   applyNewData: (d, more) => { applied = d.slice(); moreState = (more === undefined ? true : more); callOrder.push(['applyNewData', d.length]); },
+  // русская ось времени: перехват setCustomApi ({formatDate}) 9.6
+  setCustomApi: api => { Object.assign(customApi, api); },
   applyMoreData: (list, more) => {
     applied = list.concat(applied); moreState = (more === undefined ? true : more);
     callOrder.push(['applyMoreData', list.length]);
@@ -164,7 +184,11 @@ const chart = {
   createOverlay: opts => {
     const id = 'ov' + (++ovSeq);
     const o = { id, name: opts.name, extendData: opts.extendData,
-      points: (opts.points || []).slice(), opts };
+      points: (opts.points || []).slice(), opts,
+      // undo/redo сдвига: живой Overlay 9.6 умеет setPoints — полный
+      // набор точек переводит его в завершённый режим
+      setPoints(pts) { this.points = pts.slice(); },
+    };
     overlayStore.set(id, o);
     if (!opts.points || !opts.points.length) {
       // без точек — progress-режим 9.6 (кликами ждёт остальные точки);
@@ -256,6 +280,7 @@ const chart = {
 let fakeDrawing = false;
 let autoCalcTickFlag = true; // автоподгонка шкалы цены включена по умолчанию
 const styleCalls = [];
+const customApi = {}; // setCustomApi ({formatDate}) — русская ось времени
 const precisions = []; // точность инструмента: setPrecision({price, volume}) 9.6
 const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
@@ -361,6 +386,24 @@ const candle = (day, close, month = 11) => ({
   actions['onCrosshairChange']({ kLineData: applied[applied.length - 1] }); // ушли с графика
   assert(els['tc-leg-c'].textContent === '308.00', 'легенда: уход курсора вернул последнюю свечу');
 
+  // 0a4) Русская ось времени (setCustomApi {formatDate}): «Июнь» вместо
+  //      «2026-06», дни числом, полная дата в кроссхейре — ДД.ММ.ГГГГ
+  const junLocal = new Date(2026, 5, 1, 14, 30); // локальная 1 июня — TZ-независимо
+  assert(typeof customApi.formatDate === 'function',
+    'ось времени: setCustomApi с formatDate применён при init');
+  assert(customApi.formatDate(null, junLocal.getTime(), 'YYYY-MM') === 'Июнь',
+    'ось времени: месячный тик печатается словом («Июнь», было «2026-06»)');
+  assert(customApi.formatDate(null, junLocal.getTime(), 'MM-DD') === '01',
+    'ось времени: дневной тик — число дня');
+  assert(customApi.formatDate(null, junLocal.getTime(), 'YYYY') === '2026',
+    'ось времени: годовой тик — цифры (эвристика формы первого тика)');
+  assert(customApi.formatDate(null, junLocal.getTime(), 'HH:mm') === '14:30',
+    'ось времени: внутридневной тик — ЧЧ:мм');
+  assert(customApi.formatDate(null, junLocal.getTime(), 'YYYY-MM-DD HH:mm') === '01.06.2026 14:30',
+    'кроссхейр/тултип: полная дата в формате ДД.ММ.ГГГГ ЧЧ:мм');
+  assert(customApi.formatDate(null, NaN, 'YYYY-MM-DD') === '',
+    'ось времени: битый timestamp — пустая строка вместо «Invalid Date»');
+
   // 0b) Разметка на SBER: onDrawEnd сохраняет в localStorage; иконка
   //     инструмента на вертикальной панели активна до конца рисования
   const toolBtn = new El('button');
@@ -371,7 +414,7 @@ const candle = (day, close, month = 11) => ({
     { timestamp: Date.UTC(2026, 10, 18), value: 300, dataIndex: 0 },
     { timestamp: Date.UTC(2026, 10, 19), value: 310, dataIndex: 1 },
   ];
-  ovS.opts.onDrawEnd();
+  ovS.opts.onDrawEnd({ overlay: ovS });
   assert(!toolBtn._classes.has('active'), 'панель разметки: подсветка снята после построения фигуры');
   const saved0 = JSON.parse(store.get('test_chart_markup'));
   assert(saved0['SBER'] && saved0['SBER'].length === 1 && saved0['SBER'][0].name === 'segment',
@@ -409,6 +452,33 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-sym-price'].textContent === '150.00' && els['tc-sym-change'].textContent === '+2.00 (+1.35%)',
     'шапка: цена и дельта обновились на тике поллинга');
 
+  // 2a) Отсчёт до закрытия бара (тег «287,45 · 00:32:41» в TradingView):
+  //     живая свеча (дневная, началась час назад) — в шапке «· ЧЧ:ММ:СС»;
+  //     заодно fmtVol с триллионами (оборот SHIBUSDT печатался «2355.79B»)
+  const localBegin = (msAgo) => {
+    const d = new Date(Date.now() - msAgo);
+    const p2 = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} `
+      + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+  };
+  els['test-chart-ticker-input'].value = 'GAZP';
+  fetchQueue = [{
+    symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
+    candles: [
+      { begin: localBegin(25 * 3600000), open: 139, high: 141, low: 138, close: 140, volume: 1 },
+      { begin: localBegin(3600000), open: 141, high: 145, low: 140, close: 143, volume: 2355790000000 },
+    ],
+  }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: живая свеча — в шапке «· ЧЧ:ММ:СС» до закрытия бара');
+  assert(els['tc-leg-v'].textContent === '2.36T',
+    'fmtVol: триллионы форматируются — 2.36T (было «2355.79B»)');
+  timers[0].cb(); // тик отсчёта раз в секунду — не падает, формат держится
+  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: секундный тик пересчитывает остаток');
+
   // 3) Разметка: у SBER уже сохранена (шаг 0b), у GAZP пока пусто
   const saved = JSON.parse(store.get('test_chart_markup'));
   assert(saved['SBER'] && saved['SBER'].length === 1, 'разметка SBER в localStorage перед сменой тикера');
@@ -434,6 +504,8 @@ const candle = (day, close, month = 11) => ({
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
   assert(els['tc-sym-price'].textContent === '318.00' && els['tc-sym-change'].textContent === '+3.00 (+0.95%)',
     'шапка: цена и дельта пересчитаны для новых данных');
+  assert(els['tc-sym-countdown'].textContent === '',
+    'отсчёт: остывшие данные (свечи не в будущем) — тик до закрытия скрыт');
 
   // 5a) Статус-тост (как сообщения в TradingView): обычное сообщение само
   //     гаснет — таймер 6 с, фаза затухания, затем очистка текста
@@ -640,7 +712,7 @@ const candle = (day, close, month = 11) => ({
     statusOf().text.includes('Гистограмма объёма включена'),
     'volume: включается обратно через dropdown в главном окне');
 
-  // 11) Binance: период поллинга 8 с, UTC-метки парсятся
+  // 11) Binance: период поллинга 5 с (ближе к потоку TV), UTC-метки парсятся
   els['test-chart-ticker-input'].value = 'BINANCE:BTCUSDT';
   fetchQueue = [{
     symbol: 'BINANCE:BTCUSDT', interval: 7, name: 'Bitcoin',
@@ -649,7 +721,7 @@ const candle = (day, close, month = 11) => ({
   await sandbox.window.loadTestChartCandles();
   await flush();
   assert(Number.isFinite(applied[applied.length - 1].timestamp), 'Binance: UTC begin парсится в timestamp');
-  assert(statusOf().text.includes('8 с'), 'Binance: статус обещает автообновление 8 с');
+  assert(statusOf().text.includes('5 с'), 'Binance: статус обещает автообновление 5 с');
   assert(els['tc-sym-code'].textContent === 'BTCUSDT' && els['tc-sym-name'].textContent === 'Bitcoin',
     'шапка: префикс BINANCE: скрыт, имя монеты показано');
   assert(els['tc-sym-tf'].textContent === '1н', 'шапка: ТФ 1н для interval=7');
@@ -828,7 +900,7 @@ const candle = (day, close, month = 11) => ({
     { timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 0 },
     { timestamp: Date.UTC(2026, 10, 20), value: 145, dataIndex: 1 },
   ];
-  ovUndo.opts.onDrawEnd();
+  ovUndo.opts.onDrawEnd({ overlay: ovUndo });
   const beforeUndo = liveOverlays().length;
   docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
   assert(liveOverlays().length === beforeUndo - 1 && statusOf().text.includes('удалена'),
@@ -845,6 +917,34 @@ const candle = (day, close, month = 11) => ({
   assert(liveOverlays().length === beforeUndo - 1,
     'Ctrl+Z: без Ctrl разметка не тронута');
 
+  // 14e) Escape как в TradingView: снимает режим рисования — недостроенная
+  //      фигура удаляется (removeOverlay по id прогресс-объекта 9.6 сам
+  //      сбрасывает _progressInstanceInfo), инструмент отжимается;
+  //      взведённая кисть разоружается; без активного рисования — no-op
+  const escBtn = btnTool();
+  sandbox.window.tcDrawOverlay('segment', escBtn);
+  assert(escBtn._classes.has('active') && fakeProgressInfo !== null,
+    'Esc: рисование сегмента ждёт точки');
+  const segsBeforeEsc = liveOverlays().filter(o => o.name === 'segment').length;
+  docListeners.keydown({ key: 'Escape', preventDefault: () => {} });
+  assert(liveOverlays().filter(o => o.name === 'segment').length === segsBeforeEsc - 1,
+    'Esc: недостроенная фигура удалена с холста');
+  assert(fakeProgressInfo === null,
+    'Esc: прогресс-режим библиотеки сброшен — рисование не «застревает»');
+  assert(!escBtn._classes.has('active'), 'Esc: подсветка инструмента снята');
+  assert(statusOf().text.includes('отменено'), 'Esc: статус сообщает об отмене рисования');
+  const brushEsc = btnTool();
+  sandbox.window.tcDrawOverlay('tc-brush', brushEsc);
+  assert(brushEsc._classes.has('active'), 'Esc: кисть взведена');
+  docListeners.keydown({ key: 'Escape', preventDefault: () => {} });
+  assert(!brushEsc._classes.has('active'), 'Esc: взведённая кисть разоружена');
+  assert(!liveOverlays().find(o => o.name === 'tc-brush' && o.points.length === 2),
+    'Esc: кисть без пути ничего не создала');
+  const statusBeforeEscNoop = statusOf().text;
+  docListeners.keydown({ key: 'Escape', preventDefault: () => {} });
+  assert(statusOf().text === statusBeforeEscNoop,
+    'Esc: без активного рисования и меню — ничего не происходит');
+
   // 15) Полный инструментарий разметки (как в TradingView): кастомные
   //     шаблоны зарегистрированы, встроенные создаются своими именами
   assert(registeredOverlays['tc-arrow'] && registeredOverlays['tc-arrow'].totalStep === 3,
@@ -855,12 +955,13 @@ const candle = (day, close, month = 11) => ({
     'измеритель: кастомный overlay (2 точки) зарегистрирован');
 
   const gazpMarkup = () => (JSON.parse(store.get('test_chart_markup') || '{}')['GAZP'] || []);
-  // press-drag: mousedown ловится на холсте (capture), move/up — на window
-  const stageMDn = (ev) => els['tc-chart-stage']._listeners.mousedown({
+  // press-drag на Pointer Events: pointerdown ловится на холсте (capture),
+  // pointermove/pointerup — на window (мышь, тач и стилус одним потоком)
+  const stageMDn = (ev) => els['tc-chart-stage']._listeners.pointerdown({
     button: 0, preventDefault: () => {}, stopPropagation: () => {}, ...ev,
   });
-  const stageMMove = (ev) => winListeners.mousemove(ev);
-  const stageMUp = (ev) => winListeners.mouseup(ev);
+  const stageMMove = (ev) => winListeners.pointermove(ev);
+  const stageMUp = (ev) => winListeners.pointerup(ev);
 
   const btnH = btnTool();
   sandbox.window.tcDrawOverlay('horizontalStraightLine', btnH);
@@ -1102,7 +1203,7 @@ const candle = (day, close, month = 11) => ({
   // переключатель: возвращает автоподгонку и, что важнее, выключает её
   // (тем же флагом, что и перетаскивание оси — шкала фиксируется)
   autoCalcTickFlag = false;
-  winListeners.mouseup();
+  winListeners.pointerup();
   assert(!els['tc-scale-auto']._classes.has('active'),
     'автоскейл: перетаскивание шкалы сняло автоподгонку, кнопка «авто» отжалась');
   styleCalls.length = 0;
@@ -1119,7 +1220,7 @@ const candle = (day, close, month = 11) => ({
     && statusOf().text.includes('включён'),
     'автоскейл: зафиксированную шкалу можно вернуть под автоподгонку');
   autoCalcTickFlag = true; // setStyles в 9.6 сам возвращает флаг оси
-  winListeners.mouseup(); // отпускание кнопки актуализирует состояние «авто»
+  winListeners.pointerup(); // отпускание кнопки актуализирует состояние «авто»
   assert(els['tc-scale-auto']._classes.has('active'),
     'автоскейл: после возврата автоподгонки кнопка снова активна');
 
@@ -1193,8 +1294,8 @@ const candle = (day, close, month = 11) => ({
   ovQ.currentStep = 2;
   // клик 2 — проглочен (окно dblclick): нажатие и отпускание в одном месте
   // (клик), дальше 6 px от нажатия он бы считался перетаскиванием холста
-  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 420, clientY: 160, preventDefault: () => {}, stopPropagation: () => {} });
-  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 421, clientY: 161 });
+  els['tc-chart-stage']._listeners.pointerdown({ button: 0, clientX: 420, clientY: 160, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.pointerup({ button: 0, clientX: 421, clientY: 161 });
   const swallowedTimer = timeouts.filter(t => t.ms === 60).pop();
   assert(swallowedTimer, 'догоняющий клик: проверка проглоченного клика запланирована');
   swallowedTimer.cb();
@@ -1220,8 +1321,8 @@ const candle = (day, close, month = 11) => ({
   const btnR25 = btnTool();
   sandbox.window.tcDrawOverlay('segment', btnR25);
   const ovR25 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined && o !== ovQ);
-  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
-  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 101, clientY: 101 });
+  els['tc-chart-stage']._listeners.pointerdown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.pointerup({ button: 0, clientX: 101, clientY: 101 });
   ovR25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
   ovR25.currentStep = 2;
   timeouts.filter(t => t.ms === 60).pop().cb();
@@ -1235,8 +1336,8 @@ const candle = (day, close, month = 11) => ({
   ovS25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
   ovS25.currentStep = 2;
   const timeoutsBefore25 = timeouts.length;
-  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
-  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 260, clientY: 100 });
+  els['tc-chart-stage']._listeners.pointerdown({ button: 0, clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.pointerup({ button: 0, clientX: 260, clientY: 100 });
   assert(timeouts.length === timeoutsBefore25,
     'догоняющий клик: перетаскивание холста точку не ставит');
   chart.removeOverlay(ovS25.id);
@@ -1247,8 +1348,8 @@ const candle = (day, close, month = 11) => ({
   const ovT25 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined && ![ovQ, ovR25, ovS25].includes(o));
   ovT25.points.push({ timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 1 });
   ovT25.currentStep = 2;
-  els['tc-chart-stage']._listeners.mousedown({ button: 0, clientX: 300, clientY: 415, preventDefault: () => {}, stopPropagation: () => {} });
-  els['tc-chart-stage']._listeners.mouseup({ button: 0, clientX: 301, clientY: 415 });
+  els['tc-chart-stage']._listeners.pointerdown({ button: 0, clientX: 300, clientY: 415, preventDefault: () => {}, stopPropagation: () => {} });
+  els['tc-chart-stage']._listeners.pointerup({ button: 0, clientX: 301, clientY: 415 });
   timeouts.filter(t => t.ms === 60).pop().cb();
   assert(ovT25.points.length === 1 && ovT25.currentStep === 2 && progressCompleted === progressCompleted25,
     'догоняющий клик: клик вне панели свечей фигуру не достраивает');
@@ -1270,6 +1371,122 @@ const candle = (day, close, month = 11) => ({
     'точность оси: отложенная настройка выполнена после раскладки');
   assert(overrides.some(o => o.name === 'MACD' && o.precision === 0),
     'точность оси: MACD ±4000 → подписи без дробной части (precision 0)');
+
+  // 28) Undo/redo разметки (стрелки в шапке как в TradingView): стек
+  //     операций создать/удалить/сдвинуть/очистить; Ctrl+Z / Ctrl+Y /
+  //     Ctrl+Shift+Z; смена тикера сбрасывает историю; пункты контекстного
+  //     меню (копия цены, снимок PNG, очистка) и их undo-ability
+  els['test-chart-ticker-input'].value = 'SBER';
+  fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  els['test-chart-ticker-input'].value = 'GAZP';
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+
+  // a) создать → в стеке; стрелки в шапке: undo активна, redo пуста
+  const segBtn28 = btnTool();
+  sandbox.window.tcDrawOverlay('segment', segBtn28);
+  const ov28 = liveOverlays().find(o => o.name === 'segment' && o.currentStep !== undefined);
+  ov28.points = [
+    { timestamp: Date.UTC(2026, 10, 19), value: 140, dataIndex: 0 },
+    { timestamp: Date.UTC(2026, 10, 20), value: 145, dataIndex: 1 },
+  ];
+  ov28.opts.onDrawEnd({ overlay: ov28 });
+  assert(!els['tc-undo'].disabled && els['tc-redo'].disabled,
+    'undo/redo: создание в стеке — стрелка undo активна, redo погашена');
+
+  // b) Ctrl+Z удаляет созданное, стек пустеет, redo готова
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(chart.getOverlayById(ov28.id) === null && statusOf().text.includes('удалена'),
+    'undo: Ctrl+Z удалил созданную фигуру, статус об отмене создания');
+  assert(els['tc-undo'].disabled && !els['tc-redo'].disabled,
+    'undo: стек пуст — undo погасла, redo активна');
+
+  // c) Ctrl+Y возвращает фигуру с точками
+  docListeners.keydown({ ctrlKey: true, key: 'y', code: 'KeyY', preventDefault: () => {} });
+  const redo28 = liveOverlays().find(o => o.name === 'segment');
+  assert(redo28 && redo28.points.length === 2 && redo28.points[1].value === 145,
+    'redo: Ctrl+Y вернул фигуру с точками');
+  assert(!els['tc-undo'].disabled && els['tc-redo'].disabled,
+    'redo: операция вернулась в стек undo, redo снова пуста');
+
+  // d) сдвинуть: onPressedMoveStart/End пишут операцию с до/после-снимками
+  const beforeMove28 = JSON.stringify(redo28.points);
+  redo28.opts.onPressedMoveStart({ overlay: redo28 });
+  redo28.points = [
+    { timestamp: Date.UTC(2026, 10, 19), value: 150, dataIndex: 0 },
+    { timestamp: Date.UTC(2026, 10, 20), value: 155, dataIndex: 1 },
+  ];
+  redo28.opts.onPressedMoveEnd({ overlay: redo28 });
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(JSON.stringify(redo28.points) === beforeMove28,
+    'undo: перетаскивание отменено — точки вернулись на место');
+  docListeners.keydown({ ctrlKey: true, shiftKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(redo28.points[0].value === 150 && redo28.points[1].value === 155,
+    'redo (Ctrl+Shift+Z): перетаскивание повторено');
+
+  // e) удалить правым кликом (силами библиотеки) → Ctrl+Z возвращает
+  const hlineBtn28 = btnTool();
+  sandbox.window.tcDrawOverlay('horizontalStraightLine', hlineBtn28);
+  const hline28 = liveOverlays().find(o => o.name === 'horizontalStraightLine' && o.currentStep !== undefined);
+  hline28.points = [{ timestamp: Date.UTC(2026, 10, 20), value: 143, dataIndex: 1 }];
+  hline28.opts.onDrawEnd({ overlay: hline28 });
+  chart.removeOverlay(hline28.id);
+  assert(chart.getOverlayById(hline28.id) === null,
+    'undo/redo: фигура удалена правым кликом (как в браузере)');
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  const back28 = liveOverlays().find(o => o.name === 'horizontalStraightLine');
+  assert(back28 && back28.points.length === 1 && back28.points[0].value === 143
+    && statusOf().text.includes('возвращена'),
+    'undo: удалённая правым кликом фигура возвращена');
+
+  // f) очистить: операция «очистить» целиком обратима кнопками шапки
+  const markupCnt28 = gazpMarkup().length;
+  const liveCnt28 = liveOverlays().length;
+  assert(liveCnt28 > 0, 'undo/redo: к очистке есть разметка (кисти + фигуры)');
+  sandbox.window.tcClearOverlays();
+  assert(liveOverlays().length === 0 && gazpMarkup().length === 0,
+    'очистка: холст и хранилище пусты');
+  sandbox.window.tcUndo(); // кнопка undo в шапке (onclick="tcUndo()")
+  assert(liveOverlays().length === liveCnt28 && gazpMarkup().length === markupCnt28,
+    'undo (кнопка шапки): очистка отменена — разметка восстановлена в холст и хранилище');
+  sandbox.window.tcRedo(); // кнопка redo (onclick="tcRedo()")
+  assert(liveOverlays().length === 0 && gazpMarkup().length === 0,
+    'redo (кнопка шапки): разметка снова удалена');
+
+  // g) контекстное меню богаче одного «Reset chart»: копия цены, снимок
+  //    PNG, очистка (возвратная через Ctrl+Z); без цены под курсором
+  //    пункт копирования гасится
+  stageEl._listeners.contextmenu({ clientX: 300, clientY: 150, preventDefault: () => {} });
+  assert(menuEl._classes.has('show') && !els['tc-ctx-copy'].disabled,
+    'меню: открыто, цена под курсором найдена — «Скопировать цену» активна');
+  els['tc-ctx-copy']._listeners.click();
+  assert(statusOf().err && statusOf().text.includes('Буфер'),
+    'меню: без clipboard API — честная ошибка копирования');
+  els['tc-ctx-shot']._listeners.click();
+  assert(statusOf().text.includes('Снимок'),
+    'меню: снимок PNG — без canvas-ов (мини-DOM) честный статус');
+  els['tc-ctx-clear']._listeners.click();
+  assert(liveOverlays().length === 0 && statusOf().text.includes('Разметка удалена'),
+    'меню: «Удалить всю разметку» очистило холст');
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(liveOverlays().length === liveCnt28,
+    'меню: очистка из контекстного меню возвращается Ctrl+Z');
+  docListeners.click(); // закрыть меню
+
+  // h) смена тикера сбрасывает историю undo/redo (стек чужой разметки
+  //    не переезжает на новый график)
+  els['test-chart-ticker-input'].value = 'SBER';
+  fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  assert(els['tc-undo'].disabled && els['tc-redo'].disabled,
+    'undo/redo: смена тикера сбросила историю — обе стрелки погашены');
+  docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
+  assert(statusOf().text.includes('Отменять нечего'),
+    'undo/redo: пустой стек — статус «Отменять нечего»');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

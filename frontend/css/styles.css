@@ -1419,6 +1419,67 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   white-space: nowrap;
 }
 
+/* Отсчёт до закрытия бара (тег «287,45 · 00:32:41» в TradingView):
+   «· ЧЧ:ММ:СС» рядом с ценой, табличные цифры не дёргают соседей;
+   пустой span скрыт (:empty) — отсчёт есть только у живой свечи */
+.tc-sym-countdown {
+  font-size: 13px;
+  color: #787b86;
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-sym-countdown:empty {
+  display: none;
+}
+
+/* Undo/redo разметки (стрелки как в TradingView): склеенная пара кнопок
+   в шапке рядом с типом графика; на пустом стеке — приглушены */
+.tc-undo-group {
+  display: flex;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tc-undo-group button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2e39;
+  border: none;
+  border-right: 1px solid #363a45;
+  color: #d1d4dc;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tc-undo-group button:last-child {
+  border-right: none;
+}
+
+.tc-undo-group button svg {
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+
+.tc-undo-group button:hover {
+  background: #363a45;
+}
+
+.tc-undo-group button:disabled,
+.tc-undo-group button.disabled {
+  color: #4a4e59;
+  cursor: default;
+}
+
+.tc-undo-group button:disabled:hover,
+.tc-undo-group button.disabled:hover {
+  background: #2a2e39;
+}
+
 .tc-sym-price {
   font-size: 18px;
   font-weight: 700;
@@ -1440,13 +1501,16 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   color: #ef5350;
 }
 
-/* Холст графика: позиционирование легенды поверх канваса */
+/* Холст графика: позиционирование легенды поверх канваса. touch-action
+   none — браузерные жесты (скролл/пинч) не срывают рисование кисти и
+   измерителя на тач-устройствах (события Pointer Events продолжают идти) */
 .tc-chart-stage {
   position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  touch-action: none;
 }
 
 .test-chart-wrapper {
@@ -1553,6 +1617,19 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .tc-ctx-menu button:hover {
   background: #2962ff;
   color: #fff;
+}
+
+/* Пункт без действия (цены под курсором нет) — приглушён */
+.tc-ctx-menu button:disabled,
+.tc-ctx-menu button.disabled {
+  color: #4a4e59;
+  cursor: default;
+}
+
+.tc-ctx-menu button:disabled:hover,
+.tc-ctx-menu button.disabled:hover {
+  background: transparent;
+  color: #4a4e59;
 }
 
 /* Панель инструментов «Тест график»: разметка + индикаторы */
