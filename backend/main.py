@@ -275,6 +275,9 @@ async def get_candles(symbol: str,
                 "symbol": symbol_full,
                 "interval": interval,
                 "name": await _instrument_name(ticker, is_binance),
+                # Какой источник реально отдал свечи ('apim'|'iss'|'binance')
+                # — фронт показывает его в статусе и подбирает период поллинга
+                "source": result.get("source"),
                 "candles": fresh,
             }
         except Exception as e:  # noqa: BLE001 — как и основной путь, не роняем сервер
@@ -299,6 +302,9 @@ async def get_candles(symbol: str,
                 "symbol": symbol_full,
                 "interval": interval,
                 "name": await _instrument_name(ticker, is_binance),
+                # Источник свежей подкачки ('apim'|'iss'|'binance'); свечи в
+                # ответе — из хранилища, но их «свежесть» определяется им же
+                "source": result.get("source"),
                 "candles": candles,
                 "stored": candle_store_service.stored_candle_counts(symbol_full),
                 "incremental": bool(last),

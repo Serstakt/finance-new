@@ -260,16 +260,18 @@ const chart = {
   setPrecision: p => { precisions.push(p); },
   // автоскейл: ось цены главной панели с флагом автоподгона (9.6
   // снимает его при перетаскивании шкалы, setStyles с yAxis.type
-  // возвращает, кнопка «авто»-переключатель снимает через set…Flag)
+  // возвращает, кнопка «авто»-переключатель снимает через set…Flag).
+  // Инстанс стабильный (в живой библиотеке ось одна на всё время жизни
+  // графика) — на нём же проверяется перекрытие плотности тиков
   _candlePane: {
-    getAxisComponent: () => ({
-      getAutoCalcTickFlag: () => autoCalcTickFlag,
-      setAutoCalcTickFlag: f => { autoCalcTickFlag = f; },
-    }),
+    getAxisComponent: () => fakeYAxis,
   },
   // сброс вида/догоняющий клик: OverlayStore 9.6 (isDrawing для guard'а
   // dblclick, progress-инстанс для завершения фигуры последним кликом)
   getChartStore: () => ({ getOverlayStore: () => fakeOverlayStore }),
+  // Пересчёт размеров холста (у klinecharts 9.6 нет слежения за
+  // контейнером): вызывается после загрузки данных и на resize окна
+  resize: () => { resizeCalls++; },
   // геометрия панелей (paneIdAtY для догоняющего клика: точка фигуры —
   // только клик в панель свечей, не в под-окно или ось времени)
   _drawPanes: [
@@ -279,6 +281,16 @@ const chart = {
 };
 let fakeDrawing = false;
 let autoCalcTickFlag = true; // автоподгонка шкалы цены включена по умолчанию
+// Стабильный инстанс оси цены главной панели (см. _candlePane выше):
+// densifyPriceAxisTicks перекрывает на нём _calcTickInterval после init.
+// В живой библиотеке _calcTickInterval — prototype-метод AxisImp с жёстким
+// делителем 8; здесь он собственный метод-двойник, чтобы перекрытие
+// own-свойством сработало и его можно было проверить
+const fakeYAxis = {
+  getAutoCalcTickFlag: () => autoCalcTickFlag,
+  setAutoCalcTickFlag: f => { autoCalcTickFlag = f; },
+  _calcTickInterval: range => [range / 8, 2],
+};
 const styleCalls = [];
 const customApi = {}; // setCustomApi ({formatDate}) — русская ось времени
 const precisions = []; // точность инструмента: setPrecision({price, volume}) 9.6
@@ -286,6 +298,7 @@ const actions = {};
 let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
 const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
 let updatePaneCalls = 0;
+let resizeCalls = 0; // chart.resize() — пересчёт холста под контейнер
 const klinecharts = {
   init: () => chart,
   registerOverlay: tpl => { registeredOverlays[tpl.name] = tpl; },
@@ -301,7 +314,7 @@ const fetchWithTimeout = async url => {
   return { json: async () => item };
 };
 const timers = []; const timeouts = [];
-const setInterval = cb => { timers.push({ cb }); return timers.length; };
+const setInterval = (cb, ms) => { timers.push({ cb, ms }); return timers.length; };
 const clearInterval = () => {};
 const setTimeoutCapturing = (cb, ms) => { timeouts.push({ cb, ms, done: false }); return timeouts.length; };
 const clearTimeoutCapturing = id => { if (timeouts[id - 1]) timeouts[id - 1].done = true; };
@@ -504,8 +517,8 @@ const candle = (day, close, month = 11) => ({
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
   assert(els['tc-sym-price'].textContent === '318.00' && els['tc-sym-change'].textContent === '+3.00 (+0.95%)',
     'шапка: цена и дельта пересчитаны для новых данных');
-  assert(els['tc-sym-countdown'].textContent === '',
-    'отсчёт: остывшие данные (свечи не в будущем) — тик до закрытия скрыт');
+  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: остывшие данные — проекция к следующей границе суток, тик виден (как в TV)');
 
   // 5a) Статус-тост (как сообщения в TradingView): обычное сообщение само
   //     гаснет — таймер 6 с, фаза затухания, затем очистка текста
@@ -1487,6 +1500,118 @@ const candle = (day, close, month = 11) => ({
   docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
   assert(statusOf().text.includes('Отменять нечего'),
     'undo/redo: пустой стек — статус «Отменять нечего»');
+
+  // 12) Источник свечей (source из ответа бэкенда): статус и период
+  //     поллинга MOEX подстраиваются — apim (токен Algopack, без
+  //     задержки) 15 с, анонимный ISS 60 с; смена источника на тике
+  //     поллинга перезапускает таймер (ISS не дёргают каждые 15 с)
+  els['test-chart-ticker-input'].value = 'SBER';
+  fetchQueue = [{
+    symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк', source: 'apim',
+    candles: [candle(19, 315)],
+  }];
+  await sandbox.window.loadTestChartCandles();
+  await flush();
+  assert(statusOf().text.includes('данные MOEX Algopack (реальное время)'),
+    'source apim: статус показывает «MOEX Algopack (реальное время)» вместо ISS');
+  assert(statusOf().text.includes('автообновление каждые 15 с'),
+    'source apim: период поллинга в статусе — 15 с');
+  assert(timers[timers.length - 1].ms === 15000,
+    'source apim: таймер поллинга заведён на 15 с');
+  const apimPollTimer = timers[timers.length - 1];
+
+  fetchQueue = [{
+    symbol: 'MOEX:SBER', interval: 24, source: 'iss',
+    candles: [candle(19, 315), candle(20, 316)],
+  }];
+  const timersBeforeFlip = timers.length;
+  await apimPollTimer.cb(); await flush();
+  assert(timers.length === timersBeforeFlip + 1,
+    'source iss на тике: поллинг перезапущен — заведён новый таймер');
+  assert(timers[timers.length - 1].ms === 60000,
+    'source iss: таймер поллинга заведён на 60 с');
+  assert(statusOf().text.includes('данные ISS с задержкой ~15 мин'),
+    'source iss: статус снова показывает задержку ISS');
+
+  // 13) Плотность меток оси цены: klinecharts 9.6 делит диапазон шкалы
+  //     на 8 частей (жёсткий делитель в Axis._calcTickInterval) — 6-8
+  //     редких подписей. densifyPriceAxisTicks перекрывает метод на
+  //     инстансе оси делителем 16: подписей вдвое больше, вид шага
+  //     (1/2/…/8 × 10^k) сохранён — log/% и малые цены не поедут
+  assert(fakeYAxis._tcDensified === true,
+    'шкала цены: инстанс оси помечен — перекрытие установлено один раз');
+  assert(Object.prototype.hasOwnProperty.call(fakeYAxis, '_calcTickInterval'),
+    'шкала цены: _calcTickInterval перекрыт own-свойством инстанса');
+  const [iSber] = fakeYAxis._calcTickInterval(7.8);      // SBER 285.4…293.2
+  const [iBtc] = fakeYAxis._calcTickInterval(2600);      // BTCUSDT 94800…97400
+  const [iShib] = fakeYAxis._calcTickInterval(1.9e-6);   // SHIB, размах долей цента
+  assert(iSber === 0.5, `шкала цены: шаг SBER 0.5 вместо 0.8 (получено ${iSber})`);
+  assert(iBtc === 200, `шкала цены: шаг BTC 200 вместо 300 (получено ${iBtc})`);
+  assert(iShib === 1e-7, `шкала цены: шаг SHIB 1e-7 вместо 2e-7 (получено ${iShib})`);
+
+  // 14) Отсчёт до закрытия бара на всех ТФ, как в TradingView: часовой
+  //     тикает и после разрыва сессий (проекция к началу следующего часа),
+  //     недельный — до понедельника, месячный — до 1-го числа; у баров
+  //     длиннее суток в метке префикс дней «Nд ЧЧ:ММ:СС»
+  const localBeginAt = (d) => {
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} `
+      + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+  };
+  const loadWithCandle = async (tf, begin) => {
+    els['test-chart-ticker-input'].value = 'SBER';
+    fetchQueue = [{
+      symbol: 'MOEX:SBER', interval: parseInt(tf, 10), name: 'Сбербанк',
+      candles: [{ begin, open: 314, high: 316, low: 313, close: 315, volume: 10 }],
+    }];
+    await sandbox.window.tcSetInterval(tf);
+    await flush();
+    timers[0].cb(); // секундный тик отсчёта
+  };
+
+  // 1ч: последняя свеча — вчера в 18:00 (данные «замерли» между
+  // сессиями). Наивный lastTs+интервал ушёл бы в минус и тик пропал;
+  // проекция календарно шагает к началу ближайшего будущего часа
+  const yestEvening = new Date(Date.now() - 86400000);
+  yestEvening.setHours(18, 0, 0, 0);
+  await loadWithCandle('60', localBeginAt(yestEvening));
+  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1ч: тикает после разрыва сессий — к началу следующего часа');
+
+  // 1н: недельный бар открыт в понедельник — закрытие в следующий
+  // понедельник, остаток больше суток → префикс дней
+  const monday = new Date();
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  await loadWithCandle('7', localBeginAt(monday));
+  assert(/^· \d+д \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1н: до закрытия недельного бара — с префиксом дней «Nд ЧЧ:ММ:СС»');
+
+  // 1М: месячный бар открыт 1-го числа — закрытие 1-го числа следующего
+  // месяца (наивный интервал 28–31 день дрейфовал бы на несколько дней)
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  await loadWithCandle('31', localBeginAt(monthStart));
+  assert(/^· \d+д \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1М: до 1-го числа следующего месяца — с префиксом дней');
+
+  // 15) Пересчёт размеров холста (у klinecharts 9.6 нет слежения за
+  //     контейнером): после загрузки данных шапка могла сменить высоту
+  //     переноса строк, при resize окна — окно изменилось; в обоих случаях
+  //     холст догоняет контейнер отложенным chart.resize()
+  const runPendingResize = () => {
+    const t = timeouts.filter(x => x.ms === 50 && !x.done).pop();
+    if (t) t.cb();
+    return !!t;
+  };
+  const r0 = resizeCalls;
+  assert(runPendingResize(), 'размер холста: после загрузки данных запланирован отложенный resize()');
+  assert(resizeCalls === r0 + 1, 'размер холста: chart.resize() вызван после загрузки данных');
+  const r1 = resizeCalls;
+  winListeners.resize(); // событие resize окна
+  assert(runPendingResize(), 'размер холста: на resize окна запланирован отложенный resize()');
+  assert(resizeCalls === r1 + 1, 'размер холста: chart.resize() вызван после resize окна');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');
