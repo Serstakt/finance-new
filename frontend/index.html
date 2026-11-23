@@ -549,6 +549,23 @@
                                     </svg>
                                 </button>
                             </div>
+                            <!-- Undo/redo разметки (стрелки как в TradingView):
+                                 дублируют Ctrl+Z / Ctrl+Y, гаснут на пустом стеке
+                                 (js/test_chart.js: syncUndoButtons) -->
+                            <div class="tc-undo-group" id="tc-undo-group">
+                                <button type="button" id="tc-undo" onclick="tcUndo()" disabled title="Отменить последнюю операцию разметки (Ctrl+Z)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M9 14 4 9l5-5"/>
+                                        <path d="M4 9h10a5.5 5.5 0 0 1 0 11h-4"/>
+                                    </svg>
+                                </button>
+                                <button type="button" id="tc-redo" onclick="tcRedo()" disabled title="Повторить отменённую операцию разметки (Ctrl+Y)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m15 14 5-5-5-5"/>
+                                        <path d="M20 9H10a5.5 5.5 0 0 0 0 11h4"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <!-- Индикаторы: dropdown всех встроенных; клик по названию
                              включённого — настройка периодов (как в TradingView) -->
@@ -587,6 +604,10 @@
                         <span class="tc-sym-quote">
                             <span class="tc-sym-price" id="tc-sym-price">—</span>
                             <span class="tc-sym-change" id="tc-sym-change"></span>
+                            <!-- Отсчёт до закрытия бара (тег «287,45 · 00:32:41»
+                                 в TradingView): «· ЧЧ:ММ:СС», тикает раз в секунду
+                                 (js/test_chart.js: renderCountdown), пустой — скрыт -->
+                            <span class="tc-sym-countdown" id="tc-sym-countdown"></span>
                         </span>
                         <!-- Подсказка раздела, свёрнутая в «?» (как в TradingView
                              панель занимает весь экран, текста-шапки нет) -->
@@ -603,8 +624,12 @@
                                 таймфреймом; шкала цены (log, %, авто) — кнопки у правого
                                 края холста, «авто» включается и выключается. Сбросить
                                 масштаб и сдвиг: двойной клик по графику или правый клик →
-                                <b>Reset chart</b>. Нарисованное: правый клик по фигуре
-                                удаляет её, <b>Ctrl+Z</b> убирает последнюю.
+                                <b>Reset chart</b> (в меню ещё «Скопировать цену»,
+                                «Снимок PNG» и «Удалить всю разметку»). Нарисованное:
+                                правый клик по фигуре удаляет её, <b>Ctrl+Z</b> отменяет
+                                последнюю операцию, <b>Ctrl+Y</b> возвращает, стрелки undo/redo —
+                                в шапке; <b>Esc</b> снимает недостроенную фигуру. Рядом с
+                                ценой в шапке тикает отсчёт до закрытия бара.
                             </div>
                         </div>
                     </div>
@@ -648,12 +673,15 @@
                             <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">log</button>
                             <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">%</button>
                         </div>
-                        <!-- Контекстное меню «Reset chart» (как в TradingView):
-                             правый клик по графику открывает, клик/Escape/resize
-                             закрывает; пункт сбрасывает масштаб и сдвиг к
-                             дефолтным и возвращает график к последней свече -->
+                        <!-- Контекстное меню правого клика (как в TradingView):
+                             Reset chart + «Скопировать цену» (цена под курсором),
+                             «Снимок PNG» (композиция canvas'ов контейнера) и
+                             «Удалить всю разметку»; клик/Escape/resize закрывают -->
                         <div class="tc-ctx-menu" id="tc-ctx-menu">
                             <button type="button" id="tc-ctx-reset">Reset chart</button>
+                            <button type="button" id="tc-ctx-copy" disabled title="Цена под курсором — в буфер обмена">Скопировать цену</button>
+                            <button type="button" id="tc-ctx-shot">Снимок PNG</button>
+                            <button type="button" id="tc-ctx-clear">Удалить всю разметку</button>
                         </div>
                     </div>
                 </div>

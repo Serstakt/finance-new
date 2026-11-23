@@ -63,7 +63,28 @@
 //   - компоновка как в TradingView: график занимает почти весь экран —
 //     поиск символа, ТФ, тип и индикаторы стоят в одной шапке карточки
 //     графика, подсказка раздела свёрнута в кнопку «?», статус живёт
-//     поверх холста и высоты не съедает.
+//     поверх холста и высоты не съедает;
+//   - отсчёт до закрытия бара как тег «287,45 · 00:32:41» в TV: раз в
+//     секунду в шапку рядом с ценой дописывается остаток времени до
+//     закрытия последней свечи (lastTs + интервал бара; недельным и
+//     месячным барам отсчёт не показывается — как в TV);
+//   - undo/redo разметки: стек операций создать/удалить/сдвинуть/очистить
+//     (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и две стрелки в шапке) — удалённая
+//     правым кликом фигура возвращается, как в TradingView;
+//   - Escape снимает рисование: недостроенная фигура убирается, режим
+//     рисования выключается (взведённая кисть/измеритель разоружаются);
+//   - контекстное меню правого клика богаче одного «Reset chart»:
+//     «Скопировать цену» (цена под курсором через convertFromPixel),
+//     «Снимок PNG» (композиция canvas'ов контейнера в dataURL — публичного
+//     getSnapshot в 9.6 нет) и «Удалить всю разметку»;
+//   - ось времени по-русски: месяцы словами на границах («Июнь»), дни
+//     числом, дата в кроссхейре ДД.ММ.ГГГГ — библиотека печатает жёстко
+//     en-формат («2026-06»), единственная публичная точка — setCustomApi;
+//   - кисть/измеритель и клики рисования — на Pointer Events (мышь,
+//     тач-устройства и стилус одним потоком событий, touch-action: none
+//     гасит браузерные жесты на холсте);
+//   - поллинг Binance 5 с (ближе к потоку TV), MOEX 60 с (ISS и так
+//     отдаёт данные с задержкой ~15 мин).
 
 (() => {
   let chartInstance = null;
@@ -78,9 +99,10 @@
   // (paneId, name) — поэтому храним оба.
   const indicators = new Map();
 
-  // Периоды поллинга: у Binance реальные тики, поэтому часто; ISS и так
-  // отдаёт котировки с задержкой ~15 мин — чаще 60 с смысла нет.
-  const POLL_MS = { binance: 8000, moex: 60000 };
+  // Периоды поллинга: у Binance реальные тики — 5 с (ближе к потоку
+  // TradingView, без websockets); ISS и так отдаёт котировки с задержкой
+  // ~15 мин — чаще 60 с смысла нет.
+  const POLL_MS = { binance: 5000, moex: 60000 };
   // Разметка в localStorage: { TICKER: [{ name, extendData, points: [{timestamp, value}] }] }
   const MARKUP_LS_KEY = 'test_chart_markup';
   // Последний открытый график (автозагрузка при открытии страницы)
@@ -701,6 +723,41 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
 
+  // ---- Ось времени по-русски (как в TradingView) ----
+  // Библиотека форматирует метки времени через Intl, жёстко собранный с
+  // локалью «en» (setLocale на даты не влияет): месячные тики печатаются
+  // «2026-04» вместо «Июнь». Публичная точка перехвата — setCustomApi
+  // ({formatDate}); ей пользуются ось времени, кроссхейр и тултип.
+  // Форматы оси: 'HH:mm' | 'MM-DD' | 'YYYY-MM' | 'YYYY'; первый тик
+  // библиотека до-думывает, сравнивая текст соседних тиков (оптимальная
+  // метка перекрывает эвристику формы «2026-04»), поэтому строкам можно
+  // придавать любой вид. Дни — числом («22»), месяцы — словом («Июнь»),
+  // полная дата в кроссхейре — ДД.ММ.ГГГГ.
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const RU_MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+  const customFormatDate = (dateTimeFormat, timestamp, format) => {
+    const d = new Date(Number(timestamp));
+    if (Number.isNaN(d.getTime())) return '';
+    const tok = {
+      YYYY: String(d.getFullYear()),
+      MM: pad2(d.getMonth() + 1),
+      DD: pad2(d.getDate()),
+      HH: pad2(d.getHours()),
+      mm: pad2(d.getMinutes()),
+      ss: pad2(d.getSeconds()),
+    };
+    switch (format) {
+      case 'YYYY-MM': return RU_MONTHS[d.getMonth()]; // «Июнь» на границе месяца
+      case 'MM-DD': return tok.DD;                    // «22» — число дня
+      case 'YYYY-MM-DD': return `${tok.DD}.${tok.MM}.${tok.YYYY}`;
+      case 'YYYY-MM-DD HH:mm': return `${tok.DD}.${tok.MM}.${tok.YYYY} ${tok.HH}:${tok.mm}`;
+      default: return format.replace(/YYYY|MM|DD|HH|mm|ss/g, (t) => tok[t]);
+    }
+  };
+
   const getChartInstance = () => {
     if (typeof klinecharts === 'undefined') {
       setStatus('⚠ Библиотека KLineChart не загрузилась (CDN cdn.jsdelivr.net недоступен)', true);
@@ -749,6 +806,10 @@
       // Доступ к instance извне замыкания — для отладки. Сериализация
       // разметки живёт в этом замыкании (overlayIds), наружу не торчит.
       window.testChartInstance = chartInstance;
+      // Русская ось времени (см. блок customFormatDate выше)
+      if (typeof chartInstance.setCustomApi === 'function') {
+        chartInstance.setCustomApi({ formatDate: customFormatDate });
+      }
       // Сохранённый вид (тип графика + режим шкалы) применяем сразу —
       // состояние уже прочитано из localStorage на DOMContentLoaded
       applyChartType();
@@ -852,6 +913,79 @@
   // рисование), а contextmenu всплывает на холсте сразу после — по нему
   // понимаем, что «Reset chart» в этот момент открывать не нужно
   let lastOverlayRightClickAt = 0;
+  // Цена под курсором на момент открытия меню — для «Скопировать цену»;
+  // null (курсор вне данных/осей) — пункт гасится
+  let ctxMenuPrice = null;
+
+  const syncCtxCopyItem = () => {
+    const item = document.getElementById('tc-ctx-copy');
+    if (!item) return;
+    const on = ctxMenuPrice != null;
+    item.disabled = !on;
+    item.classList.toggle('disabled', !on);
+  };
+
+  const copyCtxPrice = () => {
+    if (ctxMenuPrice == null) return;
+    const text = fmtNum(ctxMenuPrice);
+    const clipboard = typeof navigator !== 'undefined' && navigator ? navigator.clipboard : null;
+    if (clipboard && typeof clipboard.writeText === 'function') {
+      clipboard.writeText(text)
+        .then(() => setStatus(`Скопировано в буфер: ${text}`))
+        .catch(() => setStatus('Не удалось скопировать цену', true));
+    } else {
+      setStatus('Буфер обмена недоступен в этом браузере', true);
+    }
+  };
+
+  // Снимок PNG (как «Сохранить изображение графика» в TradingView):
+  // публичного getSnapshot в 9.6 нет — сливаем canvas'ы контейнера в
+  // один offscreen (фон + drawImage каждого слоя по его смещению,
+  // масштаб — devicePixelRatio) и отдаём как dataURL на скачивание.
+  const takeChartSnapshot = () => {
+    if (!chartInstance || !lastTicker) {
+      setStatus('Снимок: сначала загрузите график', true);
+      return;
+    }
+    const dom = typeof chartInstance.getDom === 'function' ? chartInstance.getDom()
+      : document.getElementById('test-chart-kline');
+    const canvases = dom && typeof dom.querySelectorAll === 'function'
+      ? dom.querySelectorAll('canvas') : [];
+    if (!canvases || !canvases.length) {
+      setStatus('Снимок: холсты графика не найдены', true);
+      return;
+    }
+    const rect = typeof dom.getBoundingClientRect === 'function'
+      ? dom.getBoundingClientRect() : null;
+    if (!rect || !rect.width || !rect.height) {
+      setStatus('Снимок: контейнер графика пуст', true);
+      return;
+    }
+    const out = document.createElement('canvas');
+    if (!out || typeof out.getContext !== 'function') {
+      setStatus('Снимок: canvas недоступен в этом браузере', true);
+      return;
+    }
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    out.width = Math.round(rect.width * dpr);
+    out.height = Math.round(rect.height * dpr);
+    const ctx = out.getContext('2d');
+    if (!ctx) {
+      setStatus('Снимок: canvas недоступен в этом браузере', true);
+      return;
+    }
+    ctx.fillStyle = '#131722';
+    ctx.fillRect(0, 0, out.width, out.height);
+    for (const c of canvases) {
+      ctx.drawImage(c, (c.offsetLeft || 0) * dpr, (c.offsetTop || 0) * dpr,
+        (c.offsetWidth || 0) * dpr, (c.offsetHeight || 0) * dpr);
+    }
+    const link = document.createElement('a');
+    link.download = `${displayTicker(lastTicker) || 'chart'}_${fmtDay(new Date())}.png`;
+    link.href = out.toDataURL('image/png');
+    link.click();
+    setStatus(`Снимок графика сохранён: ${link.download}`);
+  };
 
   const hideCtxMenu = () => {
     const menu = document.getElementById('tc-ctx-menu');
@@ -901,7 +1035,6 @@
 
   const bindResetViewUi = () => {
     const stage = document.getElementById('tc-chart-stage');
-    const menu = document.getElementById('tc-ctx-menu');
     if (!stage || stage.dataset.resetViewBound) return;
     stage.dataset.resetViewBound = '1';
     // Двойной клик — сброс вида (как в TradingView), но не во время
@@ -915,61 +1048,213 @@
     // библиотека обрабатывает сама (удаляет её / отменяет рисование —
     // onRightClick сработал на mousedown непосредственно перед этим
     // contextmenu): «Reset chart» в этом случае не открываем, а уже
-    // открытое меню прячем
+    // открытое меню прячем. Заодно ловим цену под курсором — для пункта
+    // «Скопировать цену»
     stage.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (Date.now() - lastOverlayRightClickAt < 350) {
         hideCtxMenu();
         return;
       }
+      const hit = typeof stageEventPoint === 'function' ? stageEventPoint(e) : null;
+      ctxMenuPrice = hit ? hit.point.value : null;
+      syncCtxCopyItem();
       showCtxMenu(e.clientX, e.clientY);
     });
-    const item = menu && document.getElementById('tc-ctx-reset');
-    if (item) {
-      // Клик по пункту: сброс произойдёт до закрытия (клик всплывает в
-      // document-обработчик ниже — он только прячет меню)
-      item.addEventListener('click', () => resetChartView());
-    }
+    // Клик по пункту: действие произойдёт до закрытия (клик всплывает в
+    // document-обработчик ниже — он только прячет меню)
+    const bindCtxItem = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    };
+    bindCtxItem('tc-ctx-reset', () => resetChartView());
+    bindCtxItem('tc-ctx-copy', copyCtxPrice);
+    bindCtxItem('tc-ctx-shot', takeChartSnapshot);
+    bindCtxItem('tc-ctx-clear', () => window.tcClearOverlays());
     // Закрытие меню: клик где угодно, Escape, изменение размера окна.
-    // Ctrl+Z — убрать последнюю нарисованную фигуру (как в TradingView):
-    // только при видимом разделе, без открытого диалога, ввода в полях
-    // и незавершённого рисования
+    // Escape — также отмена недостроенной фигуры (как в TradingView:
+    // Esc снимает режим рисования) и разоружение взведённого инструмента.
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — undo/redo разметки: только при
+    // видимом разделе, без открытого диалога, ввода в полях и незавершённого
+    // рисования
     document.addEventListener('click', () => { if (ctxMenuOpen) hideCtxMenu(); });
     document.addEventListener('keydown', (e) => {
-      if (e && e.key === 'Escape' && ctxMenuOpen) hideCtxMenu();
-      if (!e || !e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-      // «z» любой раскладки: key на русской раскладке — «я», code от неё не зависит
-      if (!(e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z' || e.key === 'я' || e.key === 'Я')) return;
+      if (!e) return;
+      if (e.key === 'Escape') {
+        if (ctxMenuOpen) { hideCtxMenu(); return; }
+        if (dialogCtx) return; // открытый диалог закроет window-обработчик
+        if (cancelActiveDrawing()) {
+          e.preventDefault();
+          setStatus('Рисование отменено (Escape)');
+        }
+        return;
+      }
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      // «z»/«y» любой раскладки: key на русской — «я»/«н», code не зависит
+      const isZ = e.code === 'KeyZ' || ['z', 'Z', 'я', 'Я'].includes(e.key);
+      const isY = e.code === 'KeyY' || ['y', 'Y', 'н', 'Н'].includes(e.key);
+      if (!isZ && !isY) return;
       const tag = e.target && e.target.tagName ? String(e.target.tagName).toLowerCase() : '';
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       if (dialogCtx || isOverlayDrawing() || stageToolDrawing) return;
       if (!chartSectionVisible()) return;
-      if (undoLastOverlay()) {
+      // Ctrl+Shift+Z и Ctrl+Y — redo, Ctrl+Z — undo
+      const wantsRedo = isY || e.shiftKey;
+      const done = wantsRedo ? performRedo() : performUndo();
+      if (done) {
         e.preventDefault();
-        setStatus('Последняя фигура удалена (Ctrl+Z)');
+        setStatus(wantsRedo ? done.redoMessage : done.undoMessage);
       } else {
-        setStatus('Отменять нечего: разметки на графике нет');
+        setStatus(wantsRedo
+          ? 'Повторять нечего: отменённых операций нет'
+          : 'Отменять нечего: разметки на графике нет');
       }
     });
     window.addEventListener('resize', () => { if (ctxMenuOpen) hideCtxMenu(); });
   };
 
-  // ---- Ctrl+Z: убрать последнюю нарисованную фигуру (как в TradingView) ----
-  // Дублирует правый клик по фигуре: на плотной разметке попасть точно
-  // по линии сложнее, чем нажать сочетание. onRemoved из overlayCallbacks
-  // сам вычистит overlayIds и сохранит разметку.
-  const undoLastOverlay = () => {
-    if (!chartInstance) return false;
-    for (let i = overlayIds.length - 1; i >= 0; i--) {
-      const id = overlayIds[i];
-      if (!chartInstance.getOverlayById(id)) continue; // удалён раньше (правый клик, «Очистить»)
-      if (id === measureLiveId) measureLiveId = null;
-      removeStageOverlay(id);
-      return true;
-    }
-    return false;
+  // ---- Undo/redo разметки (стрелки в шапке, как в TradingView) ----
+  // Стек операций создать/удалить/сдвинуть/очистить: удалённая правым
+  // кликом фигура возвращается Ctrl+Z, отменённое создание — Ctrl+Y
+  // (или Ctrl+Shift+Z), кнопки-стрелки в шапке дублируют сочетания.
+  // Свои мутации (сам undo/redo, отмена рисования по Escape, очистка
+  // как операция) не пишутся в стек повторно — guard opsMuted; измеритель
+  // и пустая кисть временнЫе, в истории не живут.
+
+  const OPS_LIMIT = 100; // кисть пишет десятки точек — стек конечен
+  const undoStack = [];
+  const redoStack = [];
+  let opsMuted = false; // true — мутации разметки в стек не попадают
+
+  const syncUndoButtons = () => {
+    const u = document.getElementById('tc-undo');
+    const r = document.getElementById('tc-redo');
+    if (u) { u.disabled = !undoStack.length; u.classList.toggle('disabled', !undoStack.length); }
+    if (r) { r.disabled = !redoStack.length; r.classList.toggle('disabled', !redoStack.length); }
   };
-  window.tcUndoLastOverlay = undoLastOverlay;
+
+  const pushOp = (op) => {
+    undoStack.push(op);
+    if (undoStack.length > OPS_LIMIT) undoStack.shift();
+    redoStack.length = 0; // новая операция обрывает ветку redo
+    syncUndoButtons();
+  };
+
+  const performUndo = () => {
+    const op = undoStack.pop();
+    if (!op) return null;
+    opsMuted = true;
+    try { op.undo(); } finally { opsMuted = false; }
+    redoStack.push(op);
+    syncUndoButtons();
+    persistOverlays();
+    return op;
+  };
+
+  const performRedo = () => {
+    const op = redoStack.pop();
+    if (!op) return null;
+    opsMuted = true;
+    try { op.redo(); } finally { opsMuted = false; }
+    undoStack.push(op);
+    syncUndoButtons();
+    persistOverlays();
+    return op;
+  };
+
+  // Восстановить фигуру из сериализованного вида (undo удаления, redo
+  // создания, отмена очистки): точки переводятся как при восстановлении
+  // разметки (timestamp/value, «будущие» f:1 — обратно в dataIndex)
+  const recreateOverlay = (specs, oldId) => {
+    if (!chartInstance || !specs || !specs.name) return null;
+    if (oldId != null) overlayIds = overlayIds.filter((x) => x !== oldId);
+    const points = convertSpecPoints(specs.points);
+    if (!points.length) return null;
+    const id = chartInstance.createOverlay({
+      name: specs.name,
+      extendData: specs.extendData ?? undefined,
+      points,
+      ...overlayCallbacks(),
+    });
+    if (!id) return null;
+    overlayIds.push(id);
+    return id;
+  };
+
+  // Фабрики операций. currentId/currentIds мутируют: redo создания должно
+  // удалить именно воссозданный объект, а не исчезнувший старый
+  const opAdd = (id, specs) => {
+    const op = {
+      kind: 'add',
+      currentId: id,
+      undoMessage: 'Фигура удалена (отмена создания, Ctrl+Z)',
+      redoMessage: 'Создание фигуры повторено',
+    };
+    op.undo = () => { removeStageOverlay(op.currentId); };
+    op.redo = () => { op.currentId = recreateOverlay(specs, op.currentId); };
+    return op;
+  };
+
+  const opRemove = (id, specs) => {
+    const op = {
+      kind: 'remove',
+      currentId: id,
+      undoMessage: 'Удаление отменено — фигура возвращена',
+      redoMessage: 'Фигура снова удалена (повтор операции)',
+    };
+    op.undo = () => { op.currentId = recreateOverlay(specs, op.currentId); };
+    op.redo = () => { removeStageOverlay(op.currentId); };
+    return op;
+  };
+
+  const opMove = (id, before, after) => {
+    const op = {
+      kind: 'move',
+      currentId: id,
+      undoMessage: 'Перетаскивание фигуры отменено',
+      redoMessage: 'Перетаскивание фигуры повторено',
+    };
+    const apply = (specs) => {
+      const ov = chartInstance && chartInstance.getOverlayById(op.currentId);
+      if (!ov || typeof ov.setPoints !== 'function') return;
+      ov.setPoints(convertSpecPoints(specs.points));
+      redrawOverlayPane();
+    };
+    op.undo = () => apply(before);
+    op.redo = () => apply(after);
+    return op;
+  };
+
+  const opClear = (specsList) => {
+    const op = {
+      kind: 'clear',
+      currentIds: [],
+      undoMessage: 'Очистка отменена — разметка восстановлена',
+      redoMessage: 'Разметка снова удалена (повтор операции)',
+    };
+    op.undo = () => {
+      op.currentIds = specsList.map((s) => recreateOverlay(s)).filter(Boolean);
+    };
+    op.redo = () => {
+      for (const id of op.currentIds) removeStageOverlay(id);
+      op.currentIds = [];
+    };
+    return op;
+  };
+
+  window.tcUndo = function () {
+    if (!chartInstance) return false;
+    const op = performUndo();
+    setStatus(op ? op.undoMessage : 'Отменять нечего: разметки на графике нет');
+    return !!op;
+  };
+
+  window.tcRedo = function () {
+    if (!chartInstance) return false;
+    const op = performRedo();
+    setStatus(op ? op.redoMessage : 'Повторять нечего: отменённых операций нет');
+    return !!op;
+  };
 
   // ---- Диалог настроек (текст заметки, периоды индикатора) ----
   // Замена window.prompt: тот выглядит чужеродно и блокирует вкладку.
@@ -1083,6 +1368,23 @@
   // Сериализация через публичный API: getOverlayStore в v9.6 — внутренний
   // метод ChartStore, наружу отданы createOverlay/getOverlayById/removeOverlay.
   // Собираем specs и заодно чистим overlayIds от уже удалённых объектов.
+
+  // Сериализованный вид одной фигуры (для localStorage и стека undo/redo)
+  const overlaySpec = (o) => {
+    if (!o) return null;
+    const points = (o.points || [])
+      .filter(p => p && p.value != null && (p.timestamp != null || Number.isFinite(p.dataIndex)))
+      .map(p => {
+        // Обычная точка — по времени; точка за пределами данных —
+        // синтезированное время + флаг f:1 (см. блок stageEventPoint)
+        if (p.timestamp != null) return { timestamp: p.timestamp, value: p.value };
+        const vts = synthVirtualTs(p) ?? p.vts ?? null;
+        return vts == null ? null : { timestamp: vts, value: p.value, f: 1 };
+      })
+      .filter(Boolean);
+    return points.length ? { name: o.name, extendData: o.extendData ?? null, points } : null;
+  };
+
   const serializeOverlays = () => {
     if (!chartInstance) return [];
     const specs = [];
@@ -1090,17 +1392,8 @@
       const o = chartInstance.getOverlayById(id);
       if (!o) return false; // объект удалён (в т.ч. контекстным меню) — забываем id
       if (o.name === 'tc-measure') return true; // жив, но временнЫй — не сохраняем
-      const points = (o.points || [])
-        .filter(p => p && p.value != null && (p.timestamp != null || Number.isFinite(p.dataIndex)))
-        .map(p => {
-          // Обычная точка — по времени; точка за пределами данных —
-          // синтезированное время + флаг f:1 (см. блок stageEventPoint)
-          if (p.timestamp != null) return { timestamp: p.timestamp, value: p.value };
-          const vts = synthVirtualTs(p) ?? p.vts ?? null;
-          return vts == null ? null : { timestamp: vts, value: p.value, f: 1 };
-        })
-        .filter(Boolean);
-      if (points.length) specs.push({ name: o.name, extendData: o.extendData ?? null, points });
+      const spec = overlaySpec(o);
+      if (spec) specs.push(spec);
       return true;
     });
     return specs;
@@ -1129,19 +1422,47 @@
     }
   };
 
-  // Колбэки жизненного цикла overlay → автосохранение. onDrawEnd — фигура
-  // достроена, onPressedMoveEnd — точку перетащили, onDeselected — сняли
-  // выделение (страховка после правок), onRemoved — удаление любым способом
-  // (контекстное меню по правому клику, «Очистить»). lastDrawEndAt — guard
-  // сброса вида: двойной клик сразу после достройки фигуры (двухкликовые
-  // инструменты) — часть рисования, а не «Reset chart».
+  // Колбэки жизненного цикла overlay → автосохранение и стек undo/redo.
+  // onDrawEnd — фигура достроена (операция «создать»), onPressedMoveStart/
+  // End — точку тащат/отпустили (операция «сдвинуть»: до-снимок на старте,
+  // после-снимок на финише), onDeselected — сняли выделение (страховка
+  // после правок), onRemoved — удаление любым способом (правый клик,
+  // контекстное меню) — операция «удалить», которую вернёт Ctrl+Z.
+  // lastDrawEndAt — guard сброса вида: двойной клик сразу после достройки
+  // фигуры (двухкликовые инструменты) — часть рисования, а не «Reset chart».
+
+  // ВременнЫе объекты, удаление которых историю не пополняет: измеритель
+  // и пустая кисть (клик без движения — рисовать нечего)
+  const isTemporaryOverlay = (o) => !o || o.name === 'tc-measure'
+    || (o.name === 'tc-brush' && (!o.points || o.points.length < 3));
+
+  const moveBeforeSpecs = new Map(); // id фигуры → сериализованный вид до перетаскивания
+
   const overlayCallbacks = () => ({
-    onDrawEnd: () => {
+    onDrawEnd: (e) => {
       lastDrawEndAt = Date.now();
       clearToolActive();
+      if (!opsMuted && e && e.overlay && !isTemporaryOverlay(e.overlay)) {
+        const specs = overlaySpec(e.overlay);
+        if (specs) pushOp(opAdd(e.overlay.id, specs));
+      }
       persistOverlays();
     },
-    onPressedMoveEnd: () => persistOverlays(),
+    onPressedMoveStart: (e) => {
+      if (opsMuted || !e || !e.overlay) return;
+      moveBeforeSpecs.set(e.overlay.id, overlaySpec(e.overlay));
+    },
+    onPressedMoveEnd: (e) => {
+      if (!opsMuted && e && e.overlay && !isTemporaryOverlay(e.overlay)) {
+        const before = moveBeforeSpecs.get(e.overlay.id);
+        const after = overlaySpec(e.overlay);
+        if (before && after && JSON.stringify(before) !== JSON.stringify(after)) {
+          pushOp(opMove(e.overlay.id, before, after));
+        }
+      }
+      moveBeforeSpecs.delete(e && e.overlay ? e.overlay.id : undefined);
+      persistOverlays();
+    },
     onDeselected: () => persistOverlays(),
     onRightClick: () => {
       // Правый клик попал по фигуре: библиотека на mousedown зовёт колбэк
@@ -1155,9 +1476,35 @@
       const id = e && e.overlay && e.overlay.id;
       if (id) overlayIds = overlayIds.filter(x => x !== id);
       clearToolActive();
+      // Удаление фигуры любым способом становится операцией — Ctrl+Z её
+      // вернёт. Свои снятия (undo/redo, отмена рисования, очистка) замьючены
+      if (!opsMuted && id != null && !isTemporaryOverlay(e.overlay)) {
+        const specs = overlaySpec(e.overlay);
+        if (specs) pushOp(opRemove(id, specs));
+      }
       persistOverlays();
     },
   });
+
+  // Точки сериализованного вида → точки живого объекта: timestamp/value
+  // рисуются сразу, «будущие» (f:1 — за последней свечой) переводятся
+  // в dataIndex: timestampToDataIndex в 9.6 зажимает к ближайшему бару,
+  // поэтому время в индекс переводим сами — точка останется в правом поле
+  const convertSpecPoints = (specPoints) => (specPoints || []).map(p => {
+    if (!p || p.value == null || p.timestamp == null) return null;
+    if (p.f === 1) {
+      const list = chartInstance.getDataList();
+      const interval = barIntervalMs();
+      if (!list.length || !interval) return null;
+      const last = list[list.length - 1];
+      return {
+        dataIndex: (list.length - 1)
+          + Math.round((p.timestamp - last.timestamp) / interval),
+        value: p.value,
+      };
+    }
+    return { timestamp: p.timestamp, value: p.value };
+  }).filter(Boolean);
 
   const restoreOverlays = (ticker) => {
     let restored = 0;
@@ -1166,26 +1513,7 @@
       // Измеритель — временнЫй объект, в localStorage попадать не должен
       // (страховка на случай разметки из старых сборок)
       if (s.name === 'tc-measure') continue;
-      // «Будущие» точки (f:1 — за последней свечой): timestampToDataIndex
-      // в 9.6 зажимает к ближайшему бару, поэтому переводим время в
-      // dataIndex сами — точка останется в правом поле графика
-      const points = s.points.map(p => {
-        if (!p || p.value == null || p.timestamp == null) return null;
-        if (p.f === 1) {
-          const list = chartInstance.getDataList();
-          const interval = barIntervalMs();
-          if (!list.length || !interval) return null;
-          const last = list[list.length - 1];
-          return {
-            dataIndex: (list.length - 1)
-              + Math.round((p.timestamp - last.timestamp) / interval),
-            value: p.value,
-          };
-        }
-        // points с timestamp/value рисуются сразу, без режима рисования:
-        // Overlay.setPoints сам переводит timestamp в dataIndex
-        return { timestamp: p.timestamp, value: p.value };
-      }).filter(Boolean);
+      const points = convertSpecPoints(s.points);
       if (!points.length) continue;
       const id = chartInstance.createOverlay({
         name: s.name,
@@ -1228,6 +1556,36 @@
 
   const TF_LABELS = { 60: '1ч', 24: '1д', 7: '1н', 31: '1М' };
 
+  // ---- Отсчёт до закрытия свечи (тег «287,45 · 00:32:41» в TradingView) ----
+  // Последняя свеча закрывается в lastTs + интервал бара; раз в секунду
+  // остаток дописывается в шапку рядом с ценой («· 00:32:41»). Недельным
+  // и месячным барам (более суток до закрытия) отсчёт не показываем —
+  // как в TradingView; скрытый раздел и фоновая вкладка не тикают.
+
+  let countdownTimer = null;
+
+  const fmtCountdown = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+  };
+
+  const renderCountdown = () => {
+    const el = document.getElementById('tc-sym-countdown');
+    if (!el) return;
+    let text = '';
+    if (lastTs != null && chartSectionVisible() && !document.hidden) {
+      const interval = barIntervalMs();
+      const remain = interval ? lastTs + interval - Date.now() : null;
+      if (remain != null && remain > 0 && remain <= 86400000) text = `· ${fmtCountdown(remain)}`;
+    }
+    if (el.textContent !== text) el.textContent = text;
+  };
+
+  const startCountdownTimer = () => {
+    if (countdownTimer != null) return; // идемпотентно: DOMContentLoaded бывает не раз
+    countdownTimer = setInterval(renderCountdown, 1000);
+  };
+
   // Точность инструмента — как в TradingView, определяется автоматически по
   // данным: максимум десятичных знаков среди цен загруженных свечей
   // (BINANCE:SHIBUSDT ~0.0000154 → 7 знаков, SBER → 2). Одна переменная
@@ -1247,6 +1605,8 @@
   const fmtVol = (v) => {
     const n = Number(v);
     if (!Number.isFinite(n)) return '—';
+    // Триллионы реальны: суточный оборот SHIBUSDT печатался «2355.79B»
+    if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
     if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
     if (n >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
@@ -1381,13 +1741,15 @@
 
   // Легенда + цена из текущих данных графика (последняя свеча). Заодно
   // пересчитываем точность инструмента (шкала могла уйти с новыми данными)
-  // и точность осей под-окон — шкалы сдвинулись с новыми данными
+  // и точность осей под-окон — шкалы сдвинулись с новыми данными;
+  // отсчёт до закрытия бара перезапускается вместе с lastTs
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
     const list = chartInstance.getDataList();
     applyPricePrecision(list);
     renderLegend(list.length ? list[list.length - 1] : null);
     updateSymbolQuote(list);
+    renderCountdown();
     for (const name of indicators.keys()) tuneSubPaneAxisPrecision(name);
   };
 
@@ -1560,6 +1922,11 @@
         // press-drag объекты (измеритель) тоже ушли с холста — забываем id
         measureLiveId = null;
         stageToolOverlayId = null;
+        // Стек undo/redo относится к разметке прежнего тикера — история
+        // не должна «переезжать» на чужой график
+        undoStack.length = 0;
+        redoStack.length = 0;
+        syncUndoButtons();
       }
 
       // Вид графика (масштаб + сдвиг) не должен прыгать при смене данных
@@ -1624,10 +1991,11 @@
 
   // ---- Кисть и измеритель: press-drag захват на холсте (как в TV) ----
   // KLineChart строит фигуры по кликам и промежуточных точек пути не
-  // даёт, поэтому для кисти и измерителя захват ведём сами: mousedown
+  // даёт, поэтому для кисти и измерителя захват ведём сами: pointerdown
   // перехватывается на .tc-chart-stage в фазе CAPTURE (stopPropagation
-  // не даёт библиотеке начать прокрутку графика), mousemove/mouseup —
-  // на window, чтобы рисование не срывалось при выходе курсора за край.
+  // не даёт библиотеке начать прокрутку графика), pointermove/pointerup —
+  // на window, чтобы рисование не срывалось при выходе курсора за край
+  // (и на тач-устройствах — см. Pointer Events в bindStageTools).
   // Объект создаётся сразу с ДВУМЯ совпадающими точками: он валиден
   // (points.length >= totalStep - 1 → не «progress»-режим) и рисует
   // прямоугольник нулевого размера, который дальше растягивается
@@ -1722,6 +2090,46 @@
     }
   };
 
+  // Снятие объекта без записи в историю разметки (undo/redo-движок,
+  // отмена рисования, пустая кисть — свои мутации в стек не попадают)
+  const removeStageOverlaySilently = (id) => {
+    if (id == null) return;
+    const wasMuted = opsMuted;
+    opsMuted = true;
+    try { removeStageOverlay(id); } finally { opsMuted = wasMuted; }
+  };
+
+  // Escape как в TradingView: снимает режим рисования. Недостроенная
+  // (progress-режим библиотеки) фигура удаляется — removeOverlay по id
+  // прогресс-объекта в 9.6 сам сбрасывает _progressInstanceInfo; идущий
+  // press-drag захват кисти/измерителя обрывается; взведённый, но ещё
+  // не начавший рисовать инструмент разоружается. Возвращает true, если
+  // что-то было отменено (для статус-сообщения)
+  const cancelActiveDrawing = () => {
+    if (!chartInstance) return false;
+    if (stageToolDrawing) {
+      stageToolDrawing = false;
+      const id = stageToolOverlayId;
+      stageToolOverlayId = null;
+      lastCaptureXY = null;
+      if (id === measureLiveId) measureLiveId = null;
+      disarmStageTool();
+      removeStageOverlaySilently(id);
+      return true;
+    }
+    const info = progressDrawingInfo();
+    if (info && info.instance) {
+      disarmStageTool();
+      removeStageOverlaySilently(info.instance.id);
+      return true;
+    }
+    if (armedStageTool) {
+      disarmStageTool();
+      return true;
+    }
+    return false;
+  };
+
   const onStageMouseDown = (e) => {
     // Измеритель построен и инструмент не активен — клик его убирает
     // (поведение TradingView), остальное событие пропускаем дальше.
@@ -1796,8 +2204,11 @@
       removeStageOverlay(id);
       setStatus('Кисть: зажмите кнопку мыши и ведите курсор по графику');
     } else if (name === 'tc-brush') {
-      // Готовый путь кисти — постоянная разметка, сохраняем по тикеру
+      // Готовый путь кисти — постоянная разметка: сохраняем по тикеру и
+      // пишем операцию «создать» (Ctrl+Z уберёт её, Ctrl+Y вернёт)
       persistOverlays();
+      const specs = overlaySpec(ov);
+      if (specs) pushOp(opAdd(id, specs));
     } else if (name === 'tc-measure' && !stretched) {
       measureLiveId = null;
       removeStageOverlay(id);
@@ -1944,13 +2355,18 @@
     const stage = document.getElementById('tc-chart-stage');
     if (!stage || stage.dataset.stageToolsBound) return;
     stage.dataset.stageToolsBound = '1';
-    stage.addEventListener('mousedown', onStageMouseDown, true);
-    window.addEventListener('mousemove', onStageMouseMove);
-    window.addEventListener('mouseup', onStageMouseUp);
+    // Pointer Events вместо мышиных событий: кисть/измеритель и клики
+    // рисования одинаково работают на мыши, тач-экране и стилусе
+    // (touch-action: none на холсте гасит браузерные жесты). pointercancel
+    // обрывает захват как отпускание — рисование не «залипает»
+    stage.addEventListener('pointerdown', onStageMouseDown, true);
+    window.addEventListener('pointermove', onStageMouseMove);
+    window.addEventListener('pointerup', onStageMouseUp);
+    window.addEventListener('pointercancel', onStageMouseUp);
     // Клик по холсту (capture): координаты нажатия/отжатия для догоняющего
-    // клика — figура фиксируется последним кликом без лишнего «мимо»
-    stage.addEventListener('mousedown', onStageClickDown, true);
-    stage.addEventListener('mouseup', onStageClickUp, true);
+    // клика — фигура фиксируется последним кликом без лишнего «мимо»
+    stage.addEventListener('pointerdown', onStageClickDown, true);
+    stage.addEventListener('pointerup', onStageClickUp, true);
   };
 
 
@@ -2032,9 +2448,15 @@
     stageToolDrawing = false;
     stageToolOverlayId = null;
     measureLiveId = null;
-    chartInstance.removeOverlay();
+    // Сериализуем до удаления: очистка станет операцией — Ctrl+Z вернёт
+    // всю разметку (включая «будущие» точки, см. convertSpecPoints)
+    const specs = serializeOverlays();
+    opsMuted = true;
+    try { chartInstance.removeOverlay(); } finally { opsMuted = false; }
     overlayIds = [];
     clearToolActive();
+    if (specs.length) pushOp(opClear(specs));
+    syncUndoButtons();
     persistOverlays();
     setStatus('Разметка удалена');
   };
@@ -2239,6 +2661,11 @@
     loadSavedView();
     syncTypeButtons();
     syncScaleButtons();
+    syncUndoButtons(); // стеки пусты — стрелки в шапке приглушены
+    // Отсчёт до закрытия бара: тикает раз в секунду, но пишет в DOM
+    // только когда есть живая свеча и раздел виден (renderCountdown)
+    startCountdownTimer();
+    renderCountdown();
     // Сброс вида (двойной клик / правый клик → «Reset chart»), захват
     // кисти/измерителя и диалог настроек — слушатели защищены от
     // повторного навешивания
