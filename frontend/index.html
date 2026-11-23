@@ -6,17 +6,17 @@
     <!-- Версионный параметр — одноразовый сброс эвристического кэша браузеров,
          закэшировавших статику до включения Cache-Control: no-cache на бэкенде;
          дальше ревалидация по etag держит файлы свежими без него -->
-    <link rel="stylesheet" href="css/styles.css?v=20261121">
-    <!-- ВАЖНО: внешние скрипты (Sortable, TradingView) загружаются АСИНХРОННО (defer).
+    <link rel="stylesheet" href="css/styles.css?v=20261123">
+    <!-- ВАЖНО: внешние скрипты (Sortable, KLineChart) загружаются АСИНХРОННО (defer).
          Обычный <script src="..."> блокирует разбор страницы: если CDN недоступен
          (блокировка провайдером/регионом, файрвол, антивирус, прокси), вкладка
          «вечно грузит» и локальный сервер тут ни при чём. -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <script defer src="https://s3.tradingview.com/tv.js"></script>
-    <!-- KLineChart для раздела «Тест график» (свечи MOEX ISS).
-         Версия запинена на 9.6.0: код (кастомный overlay «rect», сериализация
-         разметки) проверен именно на ней, а плавающий тег @9 при выходе
-         новых минорных версий мог бы молча сменить поведение API. -->
+    <!-- KLineChart для графика в Watchlist (свечи MOEX ISS + Binance) — см.
+         js/watchlist_chart.js. Версия запинена на 9.6.0: код (кастомные
+         overlay-фигуры, сериализация разметки) проверен именно на ней, а
+         плавающий тег @9 при выходе новых минорных версий мог бы молча
+         сменить поведение API. -->
     <script defer src="https://cdn.jsdelivr.net/npm/klinecharts@9.6.0/dist/klinecharts.min.js"></script>
 </head>
 <body>
@@ -25,7 +25,6 @@
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
-    <button class="nav-btn" data-page="test-chart" onclick="navigateTo('test-chart')">Тест график</button>
 </nav>
 
 <div id="main-content">
@@ -162,19 +161,260 @@
         </div>
         <div id="resizer" title="Потяните, чтобы изменить размер"></div>
         <div id="chart-container">
-            <!-- Тулбар разметки поверх графика (см. js/chart_overlay.js):
-                 TradingView-виджет не позволяет рисовать внутри iframe, поэтому
-                 разметка лежит на canvas-оверлее над контейнером графика. -->
-            <div id="markup-toolbar" style="display: none;">
-                <button data-tool="hline" onclick="setMarkupTool('hline')" title="Горизонтальный уровень по цене"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/></svg></span>Уровень</button>
-                <button data-tool="vline" onclick="setMarkupTool('vline')" title="Вертикальная отметка по дате"><span class="btn-icon btn-icon-vertical" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/></svg></span>Дата</button>
-                <button data-tool="text" onclick="setMarkupTool('text')" title="Текстовая заметка в углу графика"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.5a4 4 0 0 1-4 4 4 4 0 0 1-4-4V4"/><path d="M4 4h3.5"/><path d="M10.5 4H7"/><path d="M14.5 13h5"/><path d="M17 10.5V13"/></svg></span>Текст</button>
-                <button onclick="undoLastMarkup()" title="Удалить последний объект"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg></span></button>
-                <button onclick="clearMarkup()" title="Очистить всю разметку этого тикера"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></span></button>
-                <span id="markup-status"></span>
+            <!-- График KLineChart — переехал из раздела «Тест график»
+                 (логика в js/watchlist_chart.js): слева вертикальная панель
+                 инструментов разметки, шапка с ТФ/типом графика/индикаторами
+                 и холст свечей. Область занимает ровно тот слот, в котором
+                 раньше стоял виджет TradingView: вся ширина, от верха
+                 #chart-container до панели «Новости». Тикер берётся из
+                 выбранной строки watchlist — поле ввода здесь не нужно. -->
+            <div id="wl-chart-area" class="tc-chart-area">
+                <div class="tc-draw-toolbar" title="Инструменты разметки">
+                    <!-- Линии -->
+                    <button type="button" onclick="tcDrawOverlay('segment', this)" title="Линия — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="6" y1="18" x2="18" y2="6"/>
+                            <circle cx="6" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="18" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('horizontalStraightLine', this)" title="Горизонтальная линия на всю ширину — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="2" y1="12" x2="22" y2="12"/>
+                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('horizontalRayLine', this)" title="Горизонтальный луч-уровень — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="6" y1="12" x2="20" y2="12"/>
+                            <circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            <path d="M16.5 8.5 20 12l-3.5 3.5"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('verticalStraightLine', this)" title="Вертикальная линия на всю высоту — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="12" y1="2" x2="12" y2="22"/>
+                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <span class="tc-draw-sep"></span>
+                    <!-- Фигуры -->
+                    <button type="button" onclick="tcDrawOverlay('tc-rect', this)" title="Прямоугольник — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="4.5" y="6.5" width="15" height="11" rx="1"/>
+                            <circle cx="4.5" cy="6.5" r="1.3" fill="currentColor" stroke="none"/>
+                            <circle cx="19.5" cy="17.5" r="1.3" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('tc-arrow', this)" title="Стрелка — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="5" y1="19" x2="18" y2="6"/>
+                            <path d="M18 6v8"/>
+                            <path d="M18 6h-8"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('priceChannelLine', this)" title="Канал (параллельный) — 3 точки: граница и ширина">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="4" y1="15" x2="13" y2="6"/>
+                            <line x1="9" y1="20" x2="18" y2="11"/>
+                            <line x1="4" y1="15" x2="9" y2="20" stroke-dasharray="2.2 2.2"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('fibonacciLine', this)" title="Уровни Фибоначчи — 2 точки">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="4" y1="5" x2="20" y2="5"/>
+                            <line x1="4" y1="12" x2="20" y2="12"/>
+                            <line x1="4" y1="19" x2="20" y2="19"/>
+                            <line x1="4" y1="19" x2="20" y2="5"/>
+                        </svg>
+                    </button>
+                    <span class="tc-draw-sep"></span>
+                    <!-- Прочее -->
+                    <button type="button" onclick="tcDrawOverlay('tc-brush', this)" title="Кисть (свободное рисование) — зажать и вести">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3.5 18c2.5-6.5 4.5-10 6.5-10s2 6.5 4.5 6.5c1.8 0 3-3.5 6-9.5"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('tc-measure', this)" title="Измеритель цены и времени — зажать и растянуть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 17 17 3l4 4L7 21z"/>
+                            <path d="m8 12 2 2"/>
+                            <path d="m11 9 2 2"/>
+                            <path d="m14 6 2 2"/>
+                        </svg>
+                    </button>
+                    <button type="button" onclick="tcDrawOverlay('text', this)" title="Текстовая заметка — 1 точка">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M5 6.5h14"/>
+                            <path d="M12 6.5v12"/>
+                        </svg>
+                    </button>
+                    <span class="tc-draw-sep"></span>
+                    <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 7h16"/>
+                            <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            <path d="M6 7l1 13a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 20l1-13"/>
+                            <path d="M10 11v6M14 11v6"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="tc-chart-main">
+                    <!-- Шапка графика (как верхняя панель TradingView):
+                         ТФ + тип + undo/redo разметки + индикаторы, справа —
+                         код · имя · ТФ + последняя цена с дельтой
+                         (js/watchlist_chart.js) -->
+                    <div class="tc-symbol-header" id="tc-symbol-header">
+                        <!-- Таймфреймы — сегмент кнопок (tcSetInterval),
+                             тип графика — дропдаун как в TradingView:
+                             триггер показывает иконку выбранного типа,
+                             в меню — «иконка + название» (tcSetChartType;
+                             пункты строит js/watchlist_chart.js:
+                             buildTypeDropdown, подсветку ведёт
+                             syncTypeButtons) -->
+                        <div class="tc-controls">
+                            <div class="tc-tf-group" title="Таймфрейм">
+                                <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
+                                <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
+                                <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
+                                <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
+                            </div>
+                            <div class="tc-type-dropdown" id="tc-type-dropdown">
+                                <button type="button" id="tc-type-toggle" aria-haspopup="listbox" aria-expanded="false" title="Тип графика"></button>
+                                <div class="tc-type-menu" id="tc-type-menu" role="listbox"></div>
+                            </div>
+                            <!-- Undo/redo разметки (стрелки как в TradingView):
+                                 дублируют Ctrl+Z / Ctrl+Y, гаснут на пустом стеке
+                                 (js/watchlist_chart.js: syncUndoButtons) -->
+                            <div class="tc-undo-group" id="tc-undo-group">
+                                <button type="button" id="tc-undo" onclick="tcUndo()" disabled title="Отменить последнюю операцию разметки (Ctrl+Z)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M9 14 4 9l5-5"/>
+                                        <path d="M4 9h10a5.5 5.5 0 0 1 0 11h-4"/>
+                                    </svg>
+                                </button>
+                                <button type="button" id="tc-redo" onclick="tcRedo()" disabled title="Повторить отменённую операцию разметки (Ctrl+Y)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m15 14 5-5-5-5"/>
+                                        <path d="M20 9H10a5.5 5.5 0 0 0 0 11h4"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Индикаторы: dropdown всех встроенных; клик по названию
+                             включённого — настройка периодов (как в TradingView) -->
+                        <div class="tc-indicator-toolbar">
+                            <span class="tc-group-label">Индикаторы:</span>
+                            <select id="tc-indicator-select" title="Добавить индикатор">
+                                <option value="">+ индикатор…</option>
+                                <optgroup label="На графике цены">
+                                    <option value="MA">MA</option>
+                                    <option value="EMA">EMA</option>
+                                    <option value="BOLL">BOLL</option>
+                                    <option value="SAR">SAR</option>
+                                    <option value="BBI">BBI</option>
+                                    <option value="VOL_MAIN">Объем (гистограмма)</option>
+                                </optgroup>
+                                <optgroup label="В под-окнах">
+                                    <option value="VOL">VOL</option>
+                                    <option value="MACD">MACD</option>
+                                    <option value="RSI">RSI</option>
+                                    <option value="KDJ">KDJ</option>
+                                    <option value="WR">WR</option>
+                                    <option value="CCI">CCI</option>
+                                    <option value="DMI">DMI</option>
+                                    <option value="OBV">OBV</option>
+                                    <option value="ROC">ROC</option>
+                                    <option value="DMA">DMA</option>
+                                    <option value="BIAS">BIAS</option>
+                                    <option value="TRIX">TRIX</option>
+                                </optgroup>
+                            </select>
+                            <span id="tc-indicator-chips" class="tc-ind-chips"></span>
+                        </div>
+                        <span class="tc-sym-code" id="tc-sym-code">—</span>
+                        <span class="tc-sym-name" id="tc-sym-name" style="display:none"></span>
+                        <span class="tc-sym-tf" id="tc-sym-tf"></span>
+                        <!-- Текущую цену показывает цветной тег на шкале цены
+                             (рисует библиотека), цену в шапке убрали; отсчёт
+                             до закрытия бара стоит под этим тегом —
+                             см. .tc-sym-countdown в #tc-chart-stage -->
+                    </div>
+                    <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно:
+                         если CDN недоступен, показываем предупреждение вместо
+                         «вечной загрузки». -->
+                    <div class="tc-chart-stage" id="tc-chart-stage">
+                        <div id="watchlist-kline" class="wl-chart-wrapper">
+                            <div class="widget-fallback">Выберите тикер в списке</div>
+                        </div>
+                        <!-- Статус загрузки/поллинга/ошибок — поверх нижнего края
+                             холста (как сообщения в TradingView), высоты макета
+                             не занимает (js/watchlist_chart.js setStatus) -->
+                        <div class="wl-chart-status" id="watchlist-chart-status"></div>
+                        <!-- Легенда OHLCV как в TradingView: подписи Откр/Макс/
+                             Мин/Закр, следом — изменение к предыдущей свече в
+                             числах и процентах (переехало из шапки справа
+                             вверху, updateSymbolQuote пишет в tc-leg-change);
+                             значения окрашены по направлению свечи и
+                             обновляются под курсором (subscribeAction
+                             onCrosshairChange). Объем — второй строкой, виден
+                             только при включённой гистограмме
+                             (js/watchlist_chart.js: syncVolumeLegend). -->
+                        <div class="tc-legend" id="tc-legend">
+                            <div class="tc-leg-row">
+                                <span class="tc-leg-item"><span class="tc-leg-label">Откр</span><span class="tc-leg-val" id="tc-leg-o"></span></span>
+                                <span class="tc-leg-item"><span class="tc-leg-label">Макс</span><span class="tc-leg-val" id="tc-leg-h"></span></span>
+                                <span class="tc-leg-item"><span class="tc-leg-label">Мин</span><span class="tc-leg-val" id="tc-leg-l"></span></span>
+                                <span class="tc-leg-item"><span class="tc-leg-label">Закр</span><span class="tc-leg-val" id="tc-leg-c"></span></span>
+                                <span class="tc-leg-item"><span class="tc-leg-val tc-leg-change" id="tc-leg-change"></span></span>
+                            </div>
+                            <div class="tc-leg-row" id="tc-leg-volume-row">
+                                <span class="tc-leg-item"><span class="tc-leg-label">Объем</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
+                            </div>
+                        </div>
+                        <!-- Метка объёма на оси цены (как в TradingView): тег
+                             со значением столбика под курсором; позиция и цвет
+                             задаются из js/watchlist_chart.js (renderVolumeAxisLabel) -->
+                        <div class="tc-vol-axis" id="tc-vol-axis"></div>
+                        <!-- Поле «цена + отсчёт» на шкале цены — одна плашка
+                             в цвет направления последней свечи: сверху цена,
+                             отсчёт до закрытия бара — строкой ниже. Встроенный
+                             тег цены отключён (priceMark.last.show=false);
+                             текст, цвет и позиция по Y из
+                             js/watchlist_chart.js (updateSymbolQuote,
+                             renderCountdown → syncAxisPriceTag) -->
+                        <div class="tc-axis-price-tag" id="tc-axis-price-tag">
+                            <span class="tc-axis-price" id="tc-sym-price"></span>
+                            <span class="tc-sym-countdown" id="tc-sym-countdown"></span>
+                        </div>
+                        <!-- Кластер шкалы цены как в TradingView: «авто», log
+                             и % у правого края холста. Перетаскивание шкалы
+                             цены снимает автоподгонку (ручной масштаб),
+                             кнопка «авто» возвращает её (js/watchlist_chart.js) -->
+                        <div class="tc-scale-cluster">
+                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: включить/выключить подгонку шкалы цены по видимой области (снимается и перетаскиванием шкалы)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 4v16"/>
+                                    <path d="m8 8 4-4 4 4"/>
+                                    <path d="m8 16 4 4 4-4"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">log</button>
+                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">%</button>
+                        </div>
+                        <!-- Контекстное меню правого клика (как в TradingView):
+                             Reset chart + «Скопировать цену» (цена под курсором),
+                             «Снимок PNG» (композиция canvas'ов контейнера) и
+                             «Удалить всю разметку»; клик/Escape/resize закрывают -->
+                        <div class="tc-ctx-menu" id="tc-ctx-menu">
+                            <button type="button" id="tc-ctx-reset">Reset chart</button>
+                            <button type="button" id="tc-ctx-copy" disabled title="Цена под курсором — в буфер обмена">Скопировать цену</button>
+                            <button type="button" id="tc-ctx-shot">Снимок PNG</button>
+                            <button type="button" id="tc-ctx-clear">Удалить всю разметку</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <!-- Сам график TradingView -->
-            <div id="tradingview_chart"></div>
             <!-- Панель «Новости / Избранные Новости / Заметки» под графиком.
                  По умолчанию активна вкладка «Новости», заметки (функционал
                  watchlist_items.note) — во второй вкладке. Вкладка
@@ -194,7 +434,6 @@
                     </div>
                     <div class="tab-actions">
                         <button id="news-refresh-btn" onclick="refreshNews()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></span>Обновить</button>
-                        <button id="markup-toggle-btn" onclick="toggleMarkupToolbar()" title="Показать/скрыть инструменты разметки поверх графика"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12.5 3.5a2.1 2.1 0 0 1 3 3L6 16l-4 1 1-4Z"/></svg></span>Разметка</button>
                         <!-- Кнопка добавления алерта: перенесена с колокольчика
                              из строк списка тикеров — открывает модалку
                              ценового уведомления для выбранного тикера -->
@@ -401,305 +640,15 @@
         </div>
     </div>
 
-    <div id="test-chart-page" class="page">
-        <!-- Облик TradingView: график занимает почти весь экран. Поиск
-             символа, ТФ, тип графика и индикаторы стоят в одной шапке
-             карточки графика (как верхняя панель TV), справа в ней —
-             код · имя · ТФ и последняя цена с дельтой; «?» раскрывает
-             подсказку раздела, статус живёт поверх холста.
-             Логика в js/test_chart.js. -->
-        <div class="test-chart-container">
-            <div class="tc-chart-area">
-                <div class="tc-draw-toolbar" title="Инструменты разметки">
-                    <!-- Линии -->
-                    <button type="button" onclick="tcDrawOverlay('segment', this)" title="Линия — 2 точки">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="6" y1="18" x2="18" y2="6"/>
-                            <circle cx="6" cy="18" r="1.5" fill="currentColor" stroke="none"/>
-                            <circle cx="18" cy="6" r="1.5" fill="currentColor" stroke="none"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('horizontalStraightLine', this)" title="Горизонтальная линия на всю ширину — 1 точка">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="2" y1="12" x2="22" y2="12"/>
-                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('horizontalRayLine', this)" title="Горизонтальный луч-уровень — 1 точка">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="6" y1="12" x2="20" y2="12"/>
-                            <circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                            <path d="M16.5 8.5 20 12l-3.5 3.5"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('verticalStraightLine', this)" title="Вертикальная линия на всю высоту — 1 точка">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="12" y1="2" x2="12" y2="22"/>
-                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                        </svg>
-                    </button>
-                    <span class="tc-draw-sep"></span>
-                    <!-- Фигуры -->
-                    <button type="button" onclick="tcDrawOverlay('tc-rect', this)" title="Прямоугольник — 2 точки">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <rect x="4.5" y="6.5" width="15" height="11" rx="1"/>
-                            <circle cx="4.5" cy="6.5" r="1.3" fill="currentColor" stroke="none"/>
-                            <circle cx="19.5" cy="17.5" r="1.3" fill="currentColor" stroke="none"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('tc-arrow', this)" title="Стрелка — 2 точки">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="5" y1="19" x2="18" y2="6"/>
-                            <path d="M18 6v8"/>
-                            <path d="M18 6h-8"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('priceChannelLine', this)" title="Канал (параллельный) — 3 точки: граница и ширина">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="4" y1="15" x2="13" y2="6"/>
-                            <line x1="9" y1="20" x2="18" y2="11"/>
-                            <line x1="4" y1="15" x2="9" y2="20" stroke-dasharray="2.2 2.2"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('fibonacciLine', this)" title="Уровни Фибоначчи — 2 точки">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="4" y1="5" x2="20" y2="5"/>
-                            <line x1="4" y1="12" x2="20" y2="12"/>
-                            <line x1="4" y1="19" x2="20" y2="19"/>
-                            <line x1="4" y1="19" x2="20" y2="5"/>
-                        </svg>
-                    </button>
-                    <span class="tc-draw-sep"></span>
-                    <!-- Прочее -->
-                    <button type="button" onclick="tcDrawOverlay('tc-brush', this)" title="Кисть (свободное рисование) — зажать и вести">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3.5 18c2.5-6.5 4.5-10 6.5-10s2 6.5 4.5 6.5c1.8 0 3-3.5 6-9.5"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('tc-measure', this)" title="Измеритель цены и времени — зажать и растянуть">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3 17 17 3l4 4L7 21z"/>
-                            <path d="m8 12 2 2"/>
-                            <path d="m11 9 2 2"/>
-                            <path d="m14 6 2 2"/>
-                        </svg>
-                    </button>
-                    <button type="button" onclick="tcDrawOverlay('text', this)" title="Текстовая заметка — 1 точка">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M5 6.5h14"/>
-                            <path d="M12 6.5v12"/>
-                        </svg>
-                    </button>
-                    <span class="tc-draw-sep"></span>
-                    <button type="button" class="tc-danger" onclick="tcClearOverlays()" title="Удалить всю разметку">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M4 7h16"/>
-                            <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                            <path d="M6 7l1 13a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 20l1-13"/>
-                            <path d="M10 11v6M14 11v6"/>
-                        </svg>
-                    </button>
-                </div>
-                <div class="tc-chart-main">
-                    <!-- Шапка карточки графика (как верхняя панель TradingView):
-                         поиск символа + ТФ + тип + индикаторы, справа —
-                         SBER · Сбербанк · 1д + последняя цена с дельтой (js/test_chart.js) -->
-                    <div class="tc-symbol-header" id="tc-symbol-header">
-                        <!-- Ввод тикера — по образцу формы добавления в watchlist:
-                             поле + кнопка, отправка по Enter. Таймфреймы —
-                             сегмент кнопок (tcSetInterval), тип графика —
-                             сегмент иконок (tcSetChartType) -->
-                        <div class="test-chart-controls">
-                            <input id="test-chart-ticker-input" placeholder="SBER, GAZP, BINANCE:BTCUSDT…" title="Тикер акции Мосбиржи или пара Binance с префиксом BINANCE:" />
-                            <button id="test-chart-load-btn" type="button" title="Загрузить график">Показать</button>
-                            <div class="tc-tf-group" id="test-chart-tf" title="Таймфрейм">
-                                <button type="button" id="tc-tf-60" onclick="tcSetInterval('60')">1ч</button>
-                                <button type="button" id="tc-tf-24" onclick="tcSetInterval('24')">1д</button>
-                                <button type="button" id="tc-tf-7" onclick="tcSetInterval('7')">1н</button>
-                                <button type="button" id="tc-tf-31" onclick="tcSetInterval('31')">1М</button>
-                            </div>
-                            <div class="tc-type-group" id="test-chart-type" title="Тип графика">
-                                <button type="button" id="tc-type-candles" onclick="tcSetChartType('candles')" title="Свечи">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="M8 3v3M8 18v3"/>
-                                        <rect x="5.5" y="6" width="5" height="12" rx="1"/>
-                                        <path d="M16 5v3M16 16v3"/>
-                                        <rect x="13.5" y="8" width="5" height="8" rx="1"/>
-                                    </svg>
-                                </button>
-                                <button type="button" id="tc-type-bars" onclick="tcSetChartType('bars')" title="Бары (OHLC)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="M7 4v16"/>
-                                        <path d="M4 7.5h3"/>
-                                        <path d="M7 14h3"/>
-                                        <path d="M17 6v14"/>
-                                        <path d="M14 9.5h3"/>
-                                        <path d="M17 16h3"/>
-                                    </svg>
-                                </button>
-                                <button type="button" id="tc-type-line" onclick="tcSetChartType('line')" title="Линия">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
-                                    </svg>
-                                </button>
-                                <button type="button" id="tc-type-area" onclick="tcSetChartType('area')" title="Области">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="m3 16.5 6-6.5 4.5 4L21 5.5"/>
-                                        <path d="M3 20v-3.5l6-6.5 4.5 4L21 5.5V20Z" fill="currentColor" fill-opacity="0.18" stroke="none"/>
-                                    </svg>
-                                </button>
-                            </div>
-                            <!-- Undo/redo разметки (стрелки как в TradingView):
-                                 дублируют Ctrl+Z / Ctrl+Y, гаснут на пустом стеке
-                                 (js/test_chart.js: syncUndoButtons) -->
-                            <div class="tc-undo-group" id="tc-undo-group">
-                                <button type="button" id="tc-undo" onclick="tcUndo()" disabled title="Отменить последнюю операцию разметки (Ctrl+Z)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="M9 14 4 9l5-5"/>
-                                        <path d="M4 9h10a5.5 5.5 0 0 1 0 11h-4"/>
-                                    </svg>
-                                </button>
-                                <button type="button" id="tc-redo" onclick="tcRedo()" disabled title="Повторить отменённую операцию разметки (Ctrl+Y)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="m15 14 5-5-5-5"/>
-                                        <path d="M20 9H10a5.5 5.5 0 0 0 0 11h4"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                        <!-- Индикаторы: dropdown всех встроенных; клик по названию
-                             включённого — настройка периодов (как в TradingView) -->
-                        <div class="test-chart-toolbar">
-                            <span class="tc-group-label">Индикаторы:</span>
-                            <select id="tc-indicator-select" title="Добавить индикатор">
-                                <option value="">+ индикатор…</option>
-                                <optgroup label="На графике цены">
-                                    <option value="MA">MA</option>
-                                    <option value="EMA">EMA</option>
-                                    <option value="BOLL">BOLL</option>
-                                    <option value="SAR">SAR</option>
-                                    <option value="BBI">BBI</option>
-                                    <option value="VOL_MAIN">Объем (гистограмма)</option>
-                                </optgroup>
-                                <optgroup label="В под-окнах">
-                                    <option value="VOL">VOL</option>
-                                    <option value="MACD">MACD</option>
-                                    <option value="RSI">RSI</option>
-                                    <option value="KDJ">KDJ</option>
-                                    <option value="WR">WR</option>
-                                    <option value="CCI">CCI</option>
-                                    <option value="DMI">DMI</option>
-                                    <option value="OBV">OBV</option>
-                                    <option value="ROC">ROC</option>
-                                    <option value="DMA">DMA</option>
-                                    <option value="BIAS">BIAS</option>
-                                    <option value="TRIX">TRIX</option>
-                                </optgroup>
-                            </select>
-                            <span id="tc-indicator-chips" class="tc-ind-chips"></span>
-                        </div>
-                        <span class="tc-sym-code" id="tc-sym-code">—</span>
-                        <span class="tc-sym-name" id="tc-sym-name" style="display:none"></span>
-                        <span class="tc-sym-tf" id="tc-sym-tf"></span>
-                        <span class="tc-sym-quote">
-                            <span class="tc-sym-price" id="tc-sym-price">—</span>
-                            <span class="tc-sym-change" id="tc-sym-change"></span>
-                            <!-- Отсчёт до закрытия бара (тег «287,45 · 00:32:41»
-                                 в TradingView): «· ЧЧ:ММ:СС», тикает раз в секунду
-                                 (js/test_chart.js: renderCountdown), пустой — скрыт -->
-                            <span class="tc-sym-countdown" id="tc-sym-countdown"></span>
-                        </span>
-                        <!-- Подсказка раздела, свёрнутая в «?» (как в TradingView
-                             панель занимает весь экран, текста-шапки нет) -->
-                        <div class="tc-hint-wrap">
-                            <button type="button" class="tc-hint-btn" id="tc-hint-btn" title="Подсказка по разделу" aria-label="Подсказка по разделу">?</button>
-                            <div class="tc-hint-pop" role="tooltip">
-                                Свечи Мосбиржи (Algopack apim по токену — данные без
-                                задержки; при сбое токена анонимный ISS отдаёт их
-                                с задержкой ~15 мин) и крипто-пары Binance (реальное
-                                время). Последняя свеча обновляется автоматически.
-                                Разметка сохраняется по
-                                тикеру (в этом браузере) и переживает смену тикера и
-                                перезагрузку. Акции: <b>SBER</b>, <b>GAZP</b>, <b>LKOH</b>;
-                                крипто: <b>BINANCE:BTCUSDT</b>, <b>BINANCE:ETHUSDT</b>.
-                                Тип графика (свечи/бары/линия/области) — кнопки рядом с
-                                таймфреймом; шкала цены (log, %, авто) — кнопки у правого
-                                края холста, «авто» включается и выключается. Сбросить
-                                масштаб и сдвиг: двойной клик по графику или правый клик →
-                                <b>Reset chart</b> (в меню ещё «Скопировать цену»,
-                                «Снимок PNG» и «Удалить всю разметку»). Нарисованное:
-                                правый клик по фигуре удаляет её, <b>Ctrl+Z</b> отменяет
-                                последнюю операцию, <b>Ctrl+Y</b> возвращает, стрелки undo/redo —
-                                в шапке; <b>Esc</b> снимает недостроенную фигуру. Рядом с
-                                ценой в шапке тикает отсчёт до закрытия бара.
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Сам график KLineChart. Библиотека грузится с CDN асинхронно
-                         (см. defer-скрипт внизу страницы): если CDN недоступен,
-                         показываем предупреждение вместо «вечной загрузки». -->
-                    <div class="tc-chart-stage" id="tc-chart-stage">
-                        <div id="test-chart-kline" class="test-chart-wrapper">
-                            <div class="widget-fallback">Введите тикер и нажмите «Показать»</div>
-                        </div>
-                        <!-- Статус загрузки/поллинга/ошибок — поверх нижнего края
-                             холста (как сообщения в TradingView), высоты макета
-                             не занимает (js/test_chart.js setStatus) -->
-                        <div class="test-chart-status" id="test-chart-status"></div>
-                        <!-- Легенда OHLCV как в TradingView: значения окрашены
-                             по направлению свечи и обновляются под курсором
-                             (subscribeAction onCrosshairChange) -->
-                        <div class="tc-legend" id="tc-legend">
-                            <span class="tc-leg-item"><span class="tc-leg-label">O</span><span class="tc-leg-val" id="tc-leg-o"></span></span>
-                            <span class="tc-leg-item"><span class="tc-leg-label">H</span><span class="tc-leg-val" id="tc-leg-h"></span></span>
-                            <span class="tc-leg-item"><span class="tc-leg-label">L</span><span class="tc-leg-val" id="tc-leg-l"></span></span>
-                            <span class="tc-leg-item"><span class="tc-leg-label">C</span><span class="tc-leg-val" id="tc-leg-c"></span></span>
-                            <span class="tc-leg-item"><span class="tc-leg-label">Объем</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
-                        </div>
-                        <!-- Метка объёма на оси цены (как в TradingView): тег
-                             со значением столбика под курсором; позиция и цвет
-                             задаются из js/test_chart.js (renderVolumeAxisLabel) -->
-                        <div class="tc-vol-axis" id="tc-vol-axis"></div>
-                        <!-- Кластер шкалы цены как в TradingView: «авто», log
-                             и % у правого края холста. Перетаскивание шкалы
-                             цены снимает автоподгонку (ручной масштаб),
-                             кнопка «авто» возвращает её (js/test_chart.js) -->
-                        <div class="tc-scale-cluster">
-                            <button type="button" class="tc-scale-btn" id="tc-scale-auto" onclick="tcAutoSizeScale()" title="Автомасштаб: включить/выключить подгонку шкалы цены по видимой области (снимается и перетаскиванием шкалы)">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <path d="M12 4v16"/>
-                                    <path d="m8 8 4-4 4 4"/>
-                                    <path d="m8 16 4 4 4-4"/>
-                                </svg>
-                            </button>
-                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-log" onclick="tcSetScaleMode('log')" title="Логарифмическая шкала">log</button>
-                            <button type="button" class="tc-scale-btn tc-scale-text" id="tc-scale-pct" onclick="tcSetScaleMode('percentage')" title="Проценты: изменение к первой видимой свече">%</button>
-                        </div>
-                        <!-- Контекстное меню правого клика (как в TradingView):
-                             Reset chart + «Скопировать цену» (цена под курсором),
-                             «Снимок PNG» (композиция canvas'ов контейнера) и
-                             «Удалить всю разметку»; клик/Escape/resize закрывают -->
-                        <div class="tc-ctx-menu" id="tc-ctx-menu">
-                            <button type="button" id="tc-ctx-reset">Reset chart</button>
-                            <button type="button" id="tc-ctx-copy" disabled title="Цена под курсором — в буфер обмена">Скопировать цену</button>
-                            <button type="button" id="tc-ctx-shot">Снимок PNG</button>
-                            <button type="button" id="tc-ctx-clear">Удалить всю разметку</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <div id="debug-panel">
     <div class="debug-resize-handle" id="debug-resize-handle" title="Потяните, чтобы изменить размер"></div>
     <button class="debug-close-btn" onclick="closeDebug()" title="Закрыть">×</button>
 </div>
 
-<!-- Диалог настроек тест-графика (текст заметки, периоды индикатора) —
+<!-- Диалог настроек графика (текст заметки, периоды индикатора) —
      модальное окно в стиле приложения вместо window.prompt: тот выглядит
      чужеродно и блокирует вкладку. Enter применяет, Escape/клик по фону
-     отменяет, ошибки валидации показываются inline (js/test_chart.js) -->
+     отменяет, ошибки валидации показываются inline (js/watchlist_chart.js) -->
 <div class="modal-overlay" id="tc-settings-modal">
     <div class="modal-box">
         <div class="modal-title" id="tc-settings-title">Настройки</div>
@@ -739,17 +688,17 @@
 <script defer src="js/api.js"></script>
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
-<script defer src="js/chart_overlay.js"></script>
 <script defer src="js/portfolio.js"></script>
-<script defer src="js/test_chart.js?v=20261123"></script>
+<script defer src="js/watchlist_chart.js?v=20261123"></script>
 
-<!-- Индикатор состояния внешних CDN: если TradingView/Sortable недоступны,
-     показываем предупреждение вместо «вечной загрузки» -->
+<!-- Индикатор состояния внешних CDN: если Sortable/KLineChart недоступны,
+     показываем предупреждение вместо «вечной загрузки». Виджеты главной
+     (TradingView/Investing) вставляются с собственными фолбэками — мимо
+     этой проверки. -->
 <script>
 window.addEventListener('load', function () {
   var blocked = [];
   if (typeof Sortable === 'undefined') blocked.push('cdnjs.cloudflare.com');
-  if (typeof TradingView === 'undefined') blocked.push('s3.tradingview.com');
   if (typeof klinecharts === 'undefined') blocked.push('cdn.jsdelivr.net');
   if (blocked.length) {
     var bar = document.createElement('div');

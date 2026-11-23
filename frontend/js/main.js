@@ -81,7 +81,10 @@ window.navigateTo = function(pageName) {
     loadListNamesFromDb().then(loadFlagsFromDb).then(loadNotesFromDb).then(() => syncListWithDb(appState.activeListId));
     const currentList = getCurrentList();
     if (currentList.activeSymbol && !currentList.activeSymbol.startsWith('SECTION:')) {
-      setTimeout(() => { if (!widget) createChart(currentList.activeSymbol); }, 100);
+      // createChart идемпотентна (wlChartIsCurrent): повтор вызова при показе
+      // раздела не перезагружает уже открытый график — страховка на случай,
+      // когда render() ещё не создал график (например, после сбоя загрузки).
+      setTimeout(() => { createChart(currentList.activeSymbol); }, 100);
     }
   }
   log(`Переход на страницу: ${pageName}`, 'info');
@@ -589,17 +592,20 @@ document.addEventListener('mousemove', (e) => {
     hideWatchlist();
   } else if (w <= 500) {
     watchlist.style.width = `${w}px`;
+    // KLineChart не следит за контейнером сам — холст догоняет тягу
+    // ресайзера (debounce внутри wlChartResize)
+    if (typeof window.wlChartResize === 'function') window.wlChartResize();
   }
 });
 document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; resizer.classList.remove('active'); document.body.style.userSelect = ''; } });
 
 function hideWatchlist() {
   watchlist.classList.add('hidden'); resizer.classList.add('hidden'); document.getElementById('show-watchlist-btn').classList.add('visible');
-  if (widget && widgetReady) setTimeout(() => widget.resize(), 150);
+  if (typeof window.wlChartResize === 'function') setTimeout(window.wlChartResize, 150);
 }
 function showWatchlist() {
   watchlist.classList.remove('hidden'); resizer.classList.remove('hidden'); document.getElementById('show-watchlist-btn').classList.remove('visible');
-  if (widget && widgetReady) setTimeout(() => widget.resize(), 150);
+  if (typeof window.wlChartResize === 'function') setTimeout(window.wlChartResize, 150);
 }
 document.getElementById('show-watchlist-btn').addEventListener('click', showWatchlist);
 

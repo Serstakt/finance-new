@@ -175,7 +175,7 @@ function moveNode(parent, node, ref) {
 const nodesById = {};
 function makeEl(id, tag) { const e = new Node(tag); e.id = id; nodesById[id] = e; return e; }
 const container = makeEl('ticker-list', 'div');
-makeEl('tradingview_chart', 'div');
+makeEl('wl-chart-area', 'div');
 makeEl('notes-editor', 'textarea');
 makeEl('notes-editor-status', 'div');
 makeEl('news-panel', 'div');

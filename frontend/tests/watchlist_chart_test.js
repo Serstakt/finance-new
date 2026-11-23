@@ -1,5 +1,7 @@
-// Тест раздела «Тест график» (js/test_chart.js): оконная загрузка (?slice=1)
-// с фолбэком на хранилище, автозагрузка последнего графика, сегмент ТФ,
+// Тест графика раздела Watchlist (js/watchlist_chart.js, переехал из
+// «Тест график» на место виджета TradingView): оконная загрузка (?slice=1)
+// с фолбэком на хранилище, загрузка тикера, выбранного в списке
+// (wlChartLoad + отложка до показа раздела), сегмент ТФ,
 // догрузка истории при скролле влево (loadMore/applyMoreData), сохранение
 // viewport при смене данных, сброс вида (двойной клик / правый клик →
 // «Reset chart»: дефолтные масштаб/сдвиг + scrollToRealTime; правый клик
@@ -24,7 +26,7 @@
 // шкалы (ось MACD «4,000.0000» → «4,000»), статус-тост с автоскрытием
 // (info 6 с / warn 15 с / ошибка сама не гаснет, фаза затухания).
 // Доработки P3 по аналогии с TradingView: отсчёт до закрытия бара в
-// шапке («· ЧЧ:ММ:СС», тик раз в секунду), undo/redo разметки (стек
+// шапке/на шкале (компактный формат, тик раз в секунду), undo/redo разметки (стек
 // операций создать/удалить/сдвинуть/очистить + стрелки в шапке,
 // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y), Escape снимает недостроенную фигуру
 // и разоружает взведённый инструмент, контекстное меню богаче
@@ -79,18 +81,15 @@ class El {
 }
 
 const els = {
-  'test-chart-ticker-input': new El('input'),
-  'test-chart-load-btn': new El('button'),
-  'test-chart-status': new El('div'),
-  'test-chart-kline': new El('div'),
+  'watchlist-chart-status': new El('div'),
+  'watchlist-kline': new El('div'),
   'tc-indicator-select': new El('select'),
   'tc-indicator-chips': new El('span'),
   // шапка символа + легенда OHLCV (облик TradingView)
   'tc-sym-code': new El('span'),
   'tc-sym-name': new El('span'),
   'tc-sym-tf': new El('span'),
-  'tc-sym-price': new El('span'),
-  'tc-sym-change': new El('span'),
+  'tc-leg-change': new El('span'),
   'tc-sym-countdown': new El('span'),
   'tc-legend': new El('div'),
   'tc-leg-o': new El('span'),
@@ -336,13 +335,13 @@ const sandbox = {
   setTimeout: setTimeoutCapturing, clearTimeout: clearTimeoutCapturing,
 };
 vm.createContext(sandbox);
-const SRC = path.join(__dirname, '..', 'js', 'test_chart.js');
+const SRC = path.join(__dirname, '..', 'js', 'watchlist_chart.js');
 vm.runInContext(fs.readFileSync(SRC, 'utf8'), sandbox);
 
 const statusOf = () => ({
-  text: els['test-chart-status'].textContent,
-  warn: els['test-chart-status']._classes.has('warn'),
-  err: els['test-chart-status']._classes.has('error'),
+  text: els['watchlist-chart-status'].textContent,
+  warn: els['watchlist-chart-status']._classes.has('warn'),
+  err: els['watchlist-chart-status']._classes.has('error'),
 });
 const liveOverlays = () => [...overlayStore.values()].filter(o => !o.removed);
 const candle = (day, close, month = 11) => ({
@@ -351,21 +350,24 @@ const candle = (day, close, month = 11) => ({
 });
 
 (async () => {
-  // 0) Автозагрузка последнего графика при открытии страницы.
-  //    (loadTestChartCandles срабатывает на DOMContentLoaded без ручного клика)
-  store.set('test_chart_last', JSON.stringify({ ticker: 'SBER', interval: 24 }));
+  // 0) Загрузка тикера, выбранного в списке (ui.js createChart →
+  //    wlChartLoad). На DOMContentLoaded сама по себе ничего не грузится —
+  //    символ приходит из watchlist, «последний тикер» больше не хранится.
   fetchQueue = [{
     symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк',
     candles: [candle(18, 305), candle(19, 308)],
   }];
-  domReadyCb(); // DOMContentLoaded → autoLoadLastChart
+  domReadyCb(); // DOMContentLoaded: слушатели навешены, загрузки без символа нет
   await flush();
-  assert(els['test-chart-ticker-input'].value === 'SBER', 'автозагрузка: тикер подставлен в поле');
-  assert(els['tc-tf-24']._classes.has('active'), 'автозагрузка: кнопка ТФ 1д активна');
-  assert(applied.length === 2, 'автозагрузка: график SBER построен без клика');
+  assert(applied.length === 0, 'на DOMContentLoaded без выбранного тикера график не грузится');
+  await sandbox.window.wlChartLoad('SBER');
+  await flush();
+  assert(els['tc-tf-24']._classes.has('active'), 'загрузка: кнопка ТФ 1д активна (дефолт)');
+  assert(applied.length === 2, 'загрузка: график SBER построен по символу из списка');
   assert(/slice=1/.test(fetchUrls[fetchUrls.length - 1]), 'начальная загрузка: оконный режим slice=1');
   assert(loadMoreCb != null, 'loadMore: callback зарегистрирован');
-  assert(JSON.parse(store.get('test_chart_last')).ticker === 'SBER', 'последний график сохранён в localStorage');
+  assert(!store.has('test_chart_last'), 'последний тикер больше не сохраняется (символ — из списка)');
+  assert(sandbox.window.wlChartIsCurrent('SBER') === true, 'wlChartIsCurrent: SBER сейчас на графике');
 
   // 0a0) Вид при init: применены сохранённые (здесь — дефолтные) тип
   //      графика и режим шкалы цены
@@ -378,8 +380,7 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-sym-name'].textContent === 'Сбербанк' && els['tc-sym-name'].style.display !== 'none',
     'шапка: имя инструмента из candles-ответа показано');
   assert(els['tc-sym-tf'].textContent === '1д', 'шапка: ТФ подписан как 1д');
-  assert(els['tc-sym-price'].textContent === '308.00', 'шапка: крупная последняя цена 308.00');
-  assert(els['tc-sym-change'].textContent === '+3.00 (+0.98%)' && els['tc-sym-change']._classes.has('up'),
+  assert(els['tc-leg-change'].textContent === '+3.00 (+0.98%)' && els['tc-leg-change']._classes.has('up'),
     'шапка: дельта +3.00 (+0.98%) зелёным');
 
   // 0a2) Легенда OHLCV по последней свече, цвет по направлению
@@ -429,19 +430,18 @@ const candle = (day, close, month = 11) => ({
   ];
   ovS.opts.onDrawEnd({ overlay: ovS });
   assert(!toolBtn._classes.has('active'), 'панель разметки: подсветка снята после построения фигуры');
-  const saved0 = JSON.parse(store.get('test_chart_markup'));
+  const saved0 = JSON.parse(store.get('wl_chart_markup'));
   assert(saved0['SBER'] && saved0['SBER'].length === 1 && saved0['SBER'][0].name === 'segment',
     'onDrawEnd сохранил разметку SBER в localStorage');
 
   // 1) Срез пуст → фолбэк на полный запрос через хранилище с note
-  els['test-chart-ticker-input'].value = 'GAZP';
   fetchQueue = [
     { symbol: 'MOEX:GAZP', interval: 24, candles: [] },                       // slice: пусто
     { symbol: 'MOEX:GAZP', interval: 24,
       note: 'Источник недоступен (boom); отдаём накопленную историю',
       candles: [candle(18, 140), candle(19, 142)] },
   ];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('GAZP');
   await flush();
   const st1 = statusOf();
   assert(fetchUrls[fetchUrls.length - 1] === '/api/candles/GAZP?interval=24',
@@ -462,11 +462,11 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 3 && applied[2].close === 150, 'поллинг: новая свеча дописана');
   assert(/from=\d{4}-\d{2}-\d{2}/.test(fetchUrls[fetchUrls.length - 1]), 'поллинг: from= дата последней свечи');
   assert(statusOf().text.includes('обновлено'), 'поллинг: статус обновлён');
-  assert(els['tc-sym-price'].textContent === '150.00' && els['tc-sym-change'].textContent === '+2.00 (+1.35%)',
-    'шапка: цена и дельта обновились на тике поллинга');
+  assert(els['tc-leg-change'].textContent === '+2.00 (+1.35%)',
+    'легенда: дельта обновилась на тике поллинга');
 
-  // 2a) Отсчёт до закрытия бара (тег «287,45 · 00:32:41» в TradingView):
-  //     живая свеча (дневная, началась час назад) — в шапке «· ЧЧ:ММ:СС»;
+  // 2a) Отсчёт до закрытия бара: живая свеча (дневная, началась час
+  //     назад) — компактный остаток «23ч00м» (две старшие единицы);
   //     заодно fmtVol с триллионами (оборот SHIBUSDT печатался «2355.79B»)
   const localBegin = (msAgo) => {
     const d = new Date(Date.now() - msAgo);
@@ -474,7 +474,6 @@ const candle = (day, close, month = 11) => ({
     return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} `
       + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
   };
-  els['test-chart-ticker-input'].value = 'GAZP';
   fetchQueue = [{
     symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
     candles: [
@@ -482,31 +481,30 @@ const candle = (day, close, month = 11) => ({
       { begin: localBegin(3600000), open: 141, high: 145, low: 140, close: 143, volume: 2355790000000 },
     ],
   }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('GAZP');
   await flush();
-  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт: живая свеча — в шапке «· ЧЧ:ММ:СС» до закрытия бара');
+  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: живая свеча — компактный остаток «ЧЧчММм» до закрытия бара');
   assert(els['tc-leg-v'].textContent === '2.36T',
     'fmtVol: триллионы форматируются — 2.36T (было «2355.79B»)');
   timers[0].cb(); // тик отсчёта раз в секунду — не падает, формат держится
-  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
+  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
     'отсчёт: секундный тик пересчитывает остаток');
 
   // 3) Разметка: у SBER уже сохранена (шаг 0b), у GAZP пока пусто
-  const saved = JSON.parse(store.get('test_chart_markup'));
+  const saved = JSON.parse(store.get('wl_chart_markup'));
   assert(saved['SBER'] && saved['SBER'].length === 1, 'разметка SBER в localStorage перед сменой тикера');
 
   // 4) Пользователь настроил вид: зум и сдвиг от правого края
   barSpace = 15; offsetRight = 120;
 
   // 5) Смена тикера на SBER: разметка SBER восстанавливается, viewport восстановлен
-  els['test-chart-ticker-input'].value = 'SBER';
   callOrder.length = 0;
   fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315), candle(20, 318)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('SBER');
   await flush();
   assert(liveOverlays().length === 1, 'смена тикера: разметка SBER восстановлена с графика');
-  assert(JSON.parse(store.get('test_chart_markup'))['SBER'].length === 1,
+  assert(JSON.parse(store.get('wl_chart_markup'))['SBER'].length === 1,
     'смена тикера: разметка SBER осталась в localStorage');
   const applyIdx = callOrder.map(c => c[0]).lastIndexOf('applyNewData');
   const bsIdx = callOrder.map(c => c[0]).indexOf('setBarSpace');
@@ -515,10 +513,10 @@ const candle = (day, close, month = 11) => ({
     'viewport: setBarSpace и setOffsetRightDistance после applyNewData, в нужном порядке');
   assert(barSpace === 15 && offsetRight === 120, 'viewport: зум и сдвиг восстановлены');
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
-  assert(els['tc-sym-price'].textContent === '318.00' && els['tc-sym-change'].textContent === '+3.00 (+0.95%)',
-    'шапка: цена и дельта пересчитаны для новых данных');
-  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт: остывшие данные — проекция к следующей границе суток, тик виден (как в TV)');
+  assert(els['tc-leg-change'].textContent === '+3.00 (+0.95%)',
+    'легенда: дельта пересчитана для новых данных');
+  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: остывшие данные — проекция к следующей границе суток (как в TV)');
 
   // 5a) Статус-тост (как сообщения в TradingView): обычное сообщение само
   //     гаснет — таймер 6 с, фаза затухания, затем очистка текста
@@ -527,12 +525,12 @@ const candle = (day, close, month = 11) => ({
   assert(timeouts.some(t => t.ms === 15000),
     'тост: предупреждение (note бэкенда из шага 1) держится дольше — 15 с');
   infoToast.cb();
-  assert(els['test-chart-status']._classes.has('fade-out') && statusOf().text.length > 0,
+  assert(els['watchlist-chart-status']._classes.has('fade-out') && statusOf().text.length > 0,
     'тост: перед очисткой — фаза затухания, текст ещё на месте');
   const fadeClear = timeouts.filter(t => t.ms === 300).pop();
   assert(fadeClear != null, 'тост: после затухания запланирована очистка текста');
   fadeClear.cb();
-  assert(statusOf().text === '' && !els['test-chart-status']._classes.has('fade-out'),
+  assert(statusOf().text === '' && !els['watchlist-chart-status']._classes.has('fade-out'),
     'тост: после затухания текст очищен, класс снят');
 
   // 6) Догрузка истории при скролле влево (loadMore)
@@ -575,8 +573,8 @@ const candle = (day, close, month = 11) => ({
   //     (чип volume-гистограммы включён по умолчанию и всегда в списке)
   assert(createdIndicators['VOL_MAIN'] && createdIndicators['VOL_MAIN'].id === 'candle_pane',
     'volume: гистограмма включена по умолчанию в главном окне');
-  assert(els['tc-indicator-chips'].children.some(c => c.children[0].textContent === 'VOL_MAIN'),
-    'volume: чип гистограммы показан среди включённых индикаторов');
+  assert(els['tc-indicator-chips'].children.some(c => c.children[0].textContent === 'Объем'),
+    'volume: чип гистограммы показан среди включённых индикаторов (подпись «Объем»)');
   assert(JSON.stringify(registeredIndicator.calc()) === '[]',
     'volume: без result-значений — ценовая шкала главной панели не растягивается');
   sandbox.window.tcAddIndicator('RSI');
@@ -726,20 +724,19 @@ const candle = (day, close, month = 11) => ({
     'volume: включается обратно через dropdown в главном окне');
 
   // 11) Binance: период поллинга 5 с (ближе к потоку TV), UTC-метки парсятся
-  els['test-chart-ticker-input'].value = 'BINANCE:BTCUSDT';
   fetchQueue = [{
     symbol: 'BINANCE:BTCUSDT', interval: 7, name: 'Bitcoin',
     candles: [{ begin: '2026-11-19T00:00:00Z', open: 95000, high: 96000, low: 94000, close: 95500, volume: 1 }],
   }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('BINANCE:BTCUSDT');
   await flush();
   assert(Number.isFinite(applied[applied.length - 1].timestamp), 'Binance: UTC begin парсится в timestamp');
   assert(statusOf().text.includes('5 с'), 'Binance: статус обещает автообновление 5 с');
   assert(els['tc-sym-code'].textContent === 'BTCUSDT' && els['tc-sym-name'].textContent === 'Bitcoin',
     'шапка: префикс BINANCE: скрыт, имя монеты показано');
   assert(els['tc-sym-tf'].textContent === '1н', 'шапка: ТФ 1н для interval=7');
-  assert(els['tc-sym-price'].textContent === '95,500.00', 'шапка: цена с разделением разрядов');
-  assert(els['tc-sym-change'].textContent === '' && !els['tc-sym-change']._classes.has('up'),
+  assert(els['tc-leg-c'].textContent === '95,500.00', 'легенда: цена с разделением разрядов');
+  assert(els['tc-leg-change'].textContent === '' && !els['tc-leg-change']._classes.has('up'),
     'шапка: дельты нет, когда предыдущей свечи нет');
   assert(precisions.length === 0,
     'точность: BTC с целыми ценами в тестовых данных — пол 2 знака, setPrecision не звался');
@@ -750,47 +747,41 @@ const candle = (day, close, month = 11) => ({
     begin: `2026-11-${String(day).padStart(2, '0')}T00:00:00Z`,
     open: close, high: close, low: close, close, volume: 1,
   });
-  els['test-chart-ticker-input'].value = 'BINANCE:SHIBUSDT';
   fetchQueue = [{
     symbol: 'BINANCE:SHIBUSDT', interval: 24,
     // 0.0000154 → 7 знаков; 0.000000154 библиотека печатает «1.54e-7» —
     // экспонента: 7 порядков + 2 разряда мантиссы = 9 знаков (максимум)
     candles: [sat(18, 0.000000154), sat(19, 0.0000154)],
   }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('BINANCE:SHIBUSDT');
   await flush();
   assert(precisions.length === 1 && precisions[0].price === 9 && precisions[0].volume === 0,
     'точность: для SHIB setPrecision({price: 9}) вызван один раз');
-  assert(els['tc-sym-price'].textContent === '0.000015400',
-    'точность: шапка показывает 0.000015400 вместо «0.00»');
   assert(els['tc-leg-o'].textContent === '0.000015400' && els['tc-leg-c'].textContent === '0.000015400',
     'точность: легенда O/C не схлопывается в нули');
-  assert(els['tc-sym-change'].textContent.startsWith('+0.000015246'),
+  assert(els['tc-leg-change'].textContent.startsWith('+0.000015246'),
     'точность: дельта с теми же знаками, что и цена');
 
   // 12) Ошибка загрузки неизвестного тикера — статус ошибки
-  els['test-chart-ticker-input'].value = 'ZZZZ';
   fetchQueue = [
     { symbol: 'MOEX:ZZZZ', interval: 7, error: 'Тикер не найден' }, // slice
     { symbol: 'MOEX:ZZZZ', interval: 7, error: 'Тикер не найден' }, // фолбэк
   ];
   const toastTimersBefore = timeouts.length;
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('ZZZZ');
   assert(statusOf().err && statusOf().text.includes('не найден'), 'неизвестный тикер: ошибка в статусе');
   // +1 — только info «Загрузка свечей…»; сама ошибка таймер автоскрытия не заводит
   assert(timeouts.length === toastTimersBefore + 1,
     'тост: ошибка сама не гаснет — таймер автоскрытия не заведён');
 
-  // 13) Скрытый раздел: автозагрузка откладывается до показа (navigateTo).
-  //     klinecharts.init при 0×0 ломает раскладку панелей — свечи сжимаются
-  //     в полосу у верхнего края и не раскладываются обратно.
-  els['test-chart-kline'].offsetParent = null; // раздел «Тест график» скрыт
-  store.set('test_chart_last', JSON.stringify({ ticker: 'GAZP', interval: 24 }));
+  // 13) Скрытый раздел: загрузка тикера из списка откладывается до показа
+  //     (navigateTo). klinecharts.init при 0×0 ломает раскладку панелей —
+  //     свечи сжимаются в полосу у верхнего края и не раскладываются обратно.
+  els['watchlist-kline'].offsetParent = null; // watchlist скрыт (другая страница)
   fetchQueue = [];
   const urlsBeforePending = fetchUrls.length;
-  domReadyCb(); // повторный DOMContentLoaded → autoLoadLastChart при скрытом разделе
+  await sandbox.window.wlChartLoad('GAZP'); // createChart при скрытом разделе
   await flush();
-  assert(els['test-chart-ticker-input'].value === 'GAZP', 'отложка: тикер подставлен в поле');
   assert(applied.length === 2 && applied[applied.length - 1].close === 0.0000154,
     'отложка: старый график ещё на месте (SHIB из шага 11a), свечи не перезагружены');
   assert(fetchUrls.length === urlsBeforePending,
@@ -798,13 +789,13 @@ const candle = (day, close, month = 11) => ({
   assert(!statusOf().text.includes('GAZP'),
     'отложка: загрузка GAZP не стартовала (статус не тронут)');
 
-  // Показ раздела → navigateTo → tcSectionShown → отложенная загрузка
-  els['test-chart-kline'].offsetParent = {};
+  // Показ раздела → navigateTo → wlChartSectionShown → отложенная загрузка
+  els['watchlist-kline'].offsetParent = {};
   fetchQueue = [{
     symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
     candles: [candle(19, 141), candle(20, 143)],
   }];
-  sandbox.window.navigateTo('test-chart');
+  sandbox.window.navigateTo('watchlist');
   await flush();
   assert(applied.length === 2 && applied[applied.length - 1].close === 143,
     'отложка: после показа раздела график GAZP загружен');
@@ -918,10 +909,11 @@ const candle = (day, close, month = 11) => ({
   docListeners.keydown({ ctrlKey: true, key: 'z', code: 'KeyZ', preventDefault: () => {} });
   assert(liveOverlays().length === beforeUndo - 1 && statusOf().text.includes('удалена'),
     'Ctrl+Z: последняя фигура удалена, статус сообщает об этом');
-  // Фокус в поле ввода — сочетание не должно трогать разметку
+  // Фокус в поле ввода (диалог настроек/заметки) — сочетание не должно
+  // трогать разметку
   docListeners.keydown({
     ctrlKey: true, key: 'z', code: 'KeyZ',
-    target: els['test-chart-ticker-input'], preventDefault: () => {},
+    target: els['tc-settings-input'], preventDefault: () => {},
   });
   assert(liveOverlays().length === beforeUndo - 1,
     'Ctrl+Z: при фокусе в поле ввода разметка не тронута');
@@ -967,7 +959,7 @@ const candle = (day, close, month = 11) => ({
   assert(registeredOverlays['tc-measure'] && registeredOverlays['tc-measure'].totalStep === 3,
     'измеритель: кастомный overlay (2 точки) зарегистрирован');
 
-  const gazpMarkup = () => (JSON.parse(store.get('test_chart_markup') || '{}')['GAZP'] || []);
+  const gazpMarkup = () => (JSON.parse(store.get('wl_chart_markup') || '{}')['GAZP'] || []);
   // press-drag на Pointer Events: pointerdown ловится на холсте (capture),
   // pointermove/pointerup — на window (мышь, тач и стилус одним потоком)
   const stageMDn = (ev) => els['tc-chart-stage']._listeners.pointerdown({
@@ -1156,13 +1148,11 @@ const candle = (day, close, month = 11) => ({
     'измеритель: длительность считается у точек без timestamp (по vts)');
 
   // Восстановление: f:1 → dataIndex, точка остаётся в правом поле
-  els['test-chart-ticker-input'].value = 'SBER';
   fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('SBER');
   await flush();
-  els['test-chart-ticker-input'].value = 'GAZP';
   fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('GAZP');
   await flush();
   const restoredFuture = liveOverlays().find(o => o.name === 'tc-brush'
     && o.points.some(p => p.dataIndex === 16 && p.timestamp === undefined));
@@ -1182,7 +1172,7 @@ const candle = (day, close, month = 11) => ({
     'тип «Линия»: метки max/min свечи скрыты (как в TradingView)');
   assert(els['tc-type-line']._classes.has('active') && !els['tc-type-candles']._classes.has('active'),
     'тип «Линия»: кнопка сегмента активна, свечи отжаты');
-  assert(JSON.parse(store.get('test_chart_view')).type === 'line',
+  assert(JSON.parse(store.get('wl_chart_view')).type === 'line',
     'тип графика сохранён в localStorage');
 
   sandbox.window.tcSetChartType('bars');
@@ -1196,7 +1186,7 @@ const candle = (day, close, month = 11) => ({
   const candleStyles22 = styleCalls[styleCalls.length - 1].candle;
   assert(candleStyles22.type === 'candle_solid' && candleStyles22.priceMark.high.show === true,
     'тип «Свечи»: candle_solid, метки max/min возвращены');
-  assert(JSON.parse(store.get('test_chart_view')).type === 'candles',
+  assert(JSON.parse(store.get('wl_chart_view')).type === 'candles',
     'тип графика сохранён в localStorage');
 
   // Шкала цены: log и % взаимоисключающие режимы (yAxis.type 9.6, как в TV)
@@ -1208,7 +1198,7 @@ const candle = (day, close, month = 11) => ({
   assert(styleCalls[styleCalls.length - 1].yAxis.type === 'percentage', 'шкала: проценты');
   assert(els['tc-scale-pct']._classes.has('active') && !els['tc-scale-log']._classes.has('active'),
     'шкала: переключение на % сняло активность log');
-  assert(JSON.parse(store.get('test_chart_view')).scale === 'percentage',
+  assert(JSON.parse(store.get('wl_chart_view')).scale === 'percentage',
     'режим шкалы сохранён в localStorage');
 
   // Автомасштаб: перетаскивание шкалы цены сняло автоподгонку (ручной
@@ -1294,9 +1284,8 @@ const candle = (day, close, month = 11) => ({
   //     лишнего клика «мимо»: точка ставится тем же кликом, объект
   //     переводится в готовые, инструмент отжимается, разметка сохраняется
   //     (две свечи: точка клика уйдёт в правое поле, как в живом графике)
-  els['test-chart-ticker-input'].value = 'GAZP';
   fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('GAZP');
   await flush();
   const btnQ = btnTool();
   sandbox.window.tcDrawOverlay('segment', btnQ);
@@ -1389,13 +1378,11 @@ const candle = (day, close, month = 11) => ({
   //     операций создать/удалить/сдвинуть/очистить; Ctrl+Z / Ctrl+Y /
   //     Ctrl+Shift+Z; смена тикера сбрасывает историю; пункты контекстного
   //     меню (копия цены, снимок PNG, очистка) и их undo-ability
-  els['test-chart-ticker-input'].value = 'SBER';
   fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('SBER');
   await flush();
-  els['test-chart-ticker-input'].value = 'GAZP';
   fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(19, 141), candle(20, 143)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('GAZP');
   await flush();
 
   // a) создать → в стеке; стрелки в шапке: undo активна, redo пуста
@@ -1491,9 +1478,8 @@ const candle = (day, close, month = 11) => ({
 
   // h) смена тикера сбрасывает историю undo/redo (стек чужой разметки
   //    не переезжает на новый график)
-  els['test-chart-ticker-input'].value = 'SBER';
   fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, candles: [candle(19, 315)] }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('SBER');
   await flush();
   assert(els['tc-undo'].disabled && els['tc-redo'].disabled,
     'undo/redo: смена тикера сбросила историю — обе стрелки погашены');
@@ -1505,12 +1491,11 @@ const candle = (day, close, month = 11) => ({
   //     поллинга MOEX подстраиваются — apim (токен Algopack, без
   //     задержки) 15 с, анонимный ISS 60 с; смена источника на тике
   //     поллинга перезапускает таймер (ISS не дёргают каждые 15 с)
-  els['test-chart-ticker-input'].value = 'SBER';
   fetchQueue = [{
     symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк', source: 'apim',
     candles: [candle(19, 315)],
   }];
-  await sandbox.window.loadTestChartCandles();
+  await sandbox.window.wlChartLoad('SBER');
   await flush();
   assert(statusOf().text.includes('данные MOEX Algopack (реальное время)'),
     'source apim: статус показывает «MOEX Algopack (реальное время)» вместо ISS');
@@ -1552,19 +1537,18 @@ const candle = (day, close, month = 11) => ({
   // 14) Отсчёт до закрытия бара на всех ТФ, как в TradingView: часовой
   //     тикает и после разрыва сессий (проекция к началу следующего часа),
   //     недельный — до понедельника, месячный — до 1-го числа; у баров
-  //     длиннее суток в метке префикс дней «Nд ЧЧ:ММ:СС»
+  //     длиннее суток в остатке дни с часами («6д15ч»)
   const localBeginAt = (d) => {
     const p2 = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} `
       + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
   };
   const loadWithCandle = async (tf, begin) => {
-    els['test-chart-ticker-input'].value = 'SBER';
     fetchQueue = [{
       symbol: 'MOEX:SBER', interval: parseInt(tf, 10), name: 'Сбербанк',
       candles: [{ begin, open: 314, high: 316, low: 313, close: 315, volume: 10 }],
     }];
-    await sandbox.window.tcSetInterval(tf);
+    await sandbox.window.tcSetInterval(tf); // смена ТФ перезагружает текущий тикер (SBER)
     await flush();
     timers[0].cb(); // секундный тик отсчёта
   };
@@ -1575,8 +1559,8 @@ const candle = (day, close, month = 11) => ({
   const yestEvening = new Date(Date.now() - 86400000);
   yestEvening.setHours(18, 0, 0, 0);
   await loadWithCandle('60', localBeginAt(yestEvening));
-  assert(/^· \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт 1ч: тикает после разрыва сессий — к началу следующего часа');
+  assert(/^\d+м\d{2}с$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1ч: тикает после разрыва сессий — к началу следующего часа («ММмССс»)');
 
   // 1н: недельный бар открыт в понедельник — закрытие в следующий
   // понедельник, остаток больше суток → префикс дней
@@ -1584,8 +1568,8 @@ const candle = (day, close, month = 11) => ({
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   await loadWithCandle('7', localBeginAt(monday));
-  assert(/^· \d+д \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт 1н: до закрытия недельного бара — с префиксом дней «Nд ЧЧ:ММ:СС»');
+  assert(/^\d+д\d{1,2}ч$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1н: до закрытия недельного бара — дни с часами («NдЧЧч»)');
 
   // 1М: месячный бар открыт 1-го числа — закрытие 1-го числа следующего
   // месяца (наивный интервал 28–31 день дрейфовал бы на несколько дней)
@@ -1593,8 +1577,8 @@ const candle = (day, close, month = 11) => ({
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
   await loadWithCandle('31', localBeginAt(monthStart));
-  assert(/^· \d+д \d{2}:\d{2}:\d{2}$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт 1М: до 1-го числа следующего месяца — с префиксом дней');
+  assert(/^\d+д\d{1,2}ч$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт 1М: до 1-го числа следующего месяца — дни с часами («NдЧЧч»)');
 
   // 15) Пересчёт размеров холста (у klinecharts 9.6 нет слежения за
   //     контейнером): после загрузки данных шапка могла сменить высоту
