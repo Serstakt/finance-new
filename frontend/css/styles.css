@@ -574,9 +574,10 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .favorite-picker span:hover { background: #2a2e39; transform: scale(1.2); }
 
 /* Флажок избранного новости: та же иконка bookmark, что у избранных тикеров
-   (.favorite-flag выше), прижата к левому верхнему углу карточки новости */
+   (.favorite-flag выше). В компактной ленте (см. .news-item ниже) прижат к
+   ПРАВОМУ краю строки: текст читается слева, служебные действия справа */
 .news-fav-flag {
-  position: absolute; top: 6px; left: 6px; z-index: 2;
+  position: absolute; top: 8px; right: 8px; z-index: 2;
   border: none; background: transparent; cursor: pointer; padding: 4px;
   line-height: 1; display: inline-flex; align-items: center; justify-content: center;
 }
@@ -905,6 +906,74 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #news-list::-webkit-scrollbar-thumb:hover {
   background: #787b86;
 }
+
+/* === КОМПАКТНАЯ ЛЕНТА НОВОСТЕЙ (строки вместо карточек — язык остального
+   терминала: плотный список с тонкими разделителями, как в watchlist) === */
+.news-feed { padding: 0 0 20px; }
+
+/* Липкая шапка дня («Сегодня», «Вчера», «24 ноября»): держит ориентир
+   при прокрутке длинной ленты. Счётчик только один — общий размер ленты
+   в первой шапке; по дням счётчиков нет. */
+.news-day-header {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 10px 20px 6px;
+  background: #1e222d;
+  border-bottom: 1px solid #2a2e39;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: #787b86;
+}
+.news-day-count { font-weight: 500; font-size: 11px; color: #787b86; white-space: nowrap; }
+
+/* Строка новости: тонкий разделитель вместо рамки+фона карточки;
+   hover — фон строки без «подпрыгивания». Избранная — лёгкий тёплый тинт.
+   Заголовок и текст — одним размером 14px (читается единым блоком,
+   различаются только насыщенностью и цветом). */
+.news-item { position: relative; border-bottom: 1px solid #2a2e39; }
+.news-item.is-fav { background: rgba(239, 83, 80, 0.05); }
+.news-row-link {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 9px 44px 9px 20px; /* справа 44px — место под флажок-bookmark */
+  text-decoration: none; color: #d1d4dc;
+  transition: background 0.15s;
+}
+.news-row-link:hover { background: #2a2e39; }
+.news-item.is-fav .news-row-link:hover { background: rgba(239, 83, 80, 0.1); }
+.news-row-link:focus-visible { outline: 1px solid #2962ff; outline-offset: -1px; }
+
+.news-time {
+  flex-shrink: 0; width: 40px; padding-top: 2px;
+  font-size: 13px; color: #787b86; font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden;
+}
+.news-text { flex: 1; min-width: 0; }
+/* Текст новости единым стилем: без жирной первой строки, 15px */
+.news-title { font-size: 15px; font-weight: 400; line-height: 1.45; color: #d1d4dc; }
+.news-row-link:hover .news-title { color: #ffffff; }
+.news-body {
+  font-size: 15px; color: #787b86; line-height: 1.45; margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.news-ticker-badge {
+  display: inline-block; margin-right: 6px; padding: 1px 6px;
+  background: #363a45; border-radius: 4px;
+  font-size: 10px; font-weight: 600; color: #2962ff; vertical-align: 1px;
+}
+
+/* Шапка вкладки «Избранные»: тихая строка с тикером и счётчиком
+   (id news-fav-count обновляется при снятии флажка — см. syncNewsFavoritesList) */
+.news-fav-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 20px 4px;
+  font-size: 13px; color: #787b86;
+}
+.news-fav-head .favorite-flag { color: #ef5350; display: inline-flex; }
+.news-fav-head .favorite-flag svg { width: 13px; height: 13px; fill: currentColor; stroke: currentColor; }
+.news-fav-head strong { color: #ef5350; font-weight: 600; }
+
+/* Пустые состояния панели новостей («Выберите тикер…», «Нет новостей») */
+.news-empty { padding: 32px 20px; text-align: center; color: #787b86; font-size: 13px; }
+.news-empty svg { width: 28px; height: 28px; display: block; margin: 0 auto 10px; opacity: 0.5; fill: none; stroke: currentColor; }
 /* ==========================================================================
    11. 🛠 ПАНЕЛЬ УПРАВЛЕНИЯ (IO) И МЕНЮ
    ========================================================================== */

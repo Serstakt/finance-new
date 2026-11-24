@@ -1,8 +1,11 @@
 // Интеграционный тест избранного во вкладке «Новости» раздела WATCHLIST.
 // Прогоняет РЕАЛЬНЫЙ frontend/js/api.js через node:vm с мини-DOM и проверяет:
-//   • карточки новостей рендерятся с флажком-bookmark в левом верхнем углу
+//   • строки компактной ленты рендерятся с флажком-bookmark справа
 //     (та же SVG-иконка lucide «bookmark», что у избранных тикеров; красный,
-//     если избрана / серый контур — если нет);
+//     если избрана / серый контур — если нет; позиционирование — в CSS, без
+//     inline-стилей и onmouseover-обработчиков);
+//   • лента сгруппирована по дням (.news-day-header), время — короткое ЧЧ:ММ
+//     с полной датой в title;
 //   • клик по флажку ставит/снимает избранное оптимистично и отправляет
 //     POST /api/news/favorite;
 //   • GET /api/news/favorites восстанавливает красные флажки без перезагрузки;
@@ -81,7 +84,8 @@ for (const id of ['news-panel', 'news-list', 'news-fav-list', 'notes-list']) byI
 // innerHTML, как в настоящем DOM (узлы доступны сразу после записи).
 function renderNewsItems(node, html) {
   node._kids = [];
-  const re = /<div class="news-item" data-link="([^"]*)"[\s\S]*?<button[^>]*>([\s\S]*?)<\/button>/g;
+  // class может быть "news-item" или "news-item is-fav" (избранная строка)
+  const re = /<div class="news-item(?: is-fav)?" data-link="([^"]*)"[\s\S]*?<button[^>]*>([\s\S]*?)<\/button>/g;
   let m;
   while ((m = re.exec(html))) {
     const item = new Node('div');
@@ -184,9 +188,20 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   assert(byId['news-list'].innerHTML.includes('class="news-fav-flag"')
          && byId['news-list'].innerHTML.includes('class="favorite-flag"'),
     'Кнопка-флажок использует классы .news-fav-flag / .favorite-flag (стиль избранного тикера)');
-  assert(/<div class="news-item"[^>]*position: relative/.test(byId['news-list'].innerHTML)
-         && /\.news-fav-flag\s*\{[^}]*position:\s*absolute/.test(fs.readFileSync(path.join(__dirname, '..', 'css', 'styles.css'), 'utf8')),
-    'Флажок перемещён в левый верхний угол карточки новости (absolute top/left)');
+  // Компактная лента: позиционирование строки и флажка — в CSS (absolute
+  // справа от текста), inline-стилей и inline-hover-обработчиков быть не должно.
+  const cssText = fs.readFileSync(path.join(__dirname, '..', 'css', 'styles.css'), 'utf8');
+  assert(/\.news-item\s*\{[^}]*position:\s*relative/.test(cssText)
+         && /\.news-fav-flag\s*\{[^}]*position:\s*absolute[^}]*right:\s*8px/.test(cssText),
+    'Флажок позиционируется CSS-ом у правого края строки (.news-fav-flag absolute right)');
+  assert(!/<div class="news-item[^"]*"[^>]*onmouseover/.test(byId['news-list'].innerHTML),
+    'Hover-поведение переехало в CSS: инлайн onmouseover/onmouseout не используются');
+  // Группировка по дням + короткое время с полной датой в title
+  assert(byId['news-list'].innerHTML.includes('news-day-header')
+         && byId['news-list'].innerHTML.includes('октября') && byId['news-list'].innerHTML.includes('сентября'),
+    'Лента сгруппирована по дням (шапки с русскими названиями месяцев)');
+  assert(/class="news-time" title="01\.10\.2026 10:00">\s*10:00\s*</.test(byId['news-list'].innerHTML),
+    'Время в строке короткое (ЧЧ:ММ), полная дата — в title');
   assert(byId['news-list'].innerHTML.includes('color: #787b86') && !byId['news-list'].innerHTML.includes('#ef5350"><span'),
     'Изначально флажки серые (bookmark с серым контуром), избранного нет');
 
@@ -226,11 +241,12 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   await new Promise(r => setTimeout(r, 0));
   assert(!!sandbox.window.newsFavorites[secondLink], 'loadNewsFavorites подтянул избранное из БД');
   const html2 = byId['news-list'].innerHTML;
-  const secondBlock = html2.split('<div class="news-item"').find(b => b.startsWith(' data-link="https://t.me/newssmartlab/222"'));
+  // class может быть "news-item is-fav" — режем по общему префиксу
+  const secondBlock = html2.split('<div class="news-item').find(b => b.startsWith(' is-fav" data-link="https://t.me/newssmartlab/222"'));
   assert(secondBlock && secondBlock.includes('favorite-filled') && secondBlock.includes('#ef5350'),
-    'Избранная новость отрисована с красным закрашенным bookmark-флажком в левом верхнем углу');
-  assert(secondBlock.includes("border: 1px solid #ef5350") || secondBlock.includes('#ef5350'),
-    'Карточка избранной новости подсвечена красной рамкой');
+    'Избранная новость отрисована с красным закрашенным bookmark-флажком справа');
+  assert(secondBlock && secondBlock.includes('is-fav'),
+    'Строка избранной новости получила класс is-fav (лёгкая подсветка вместо красной рамки)');
 
   // --- ГЛАВНАЯ ПРОВЕРКА: избранные новости по тикеру тянутся из БД НАПРЯМУЮ,
   // без ожидания загрузки ленты «Новости» (парсинга Telegram). Эмулируем
