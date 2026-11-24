@@ -241,6 +241,74 @@ window.scheduleNewsRefetch = function(symbol, tickerNorm) {
   })();
 };
 
+// === ПОМОЩНИКИ ТЕКСТА НОВОСТИ И ФЛАЖКА ИЗБРАННОГО (уровень модуля) ===
+// ВАЖНО: эти функции/константы обязаны жить ВНЕ loadTickerNews — их использует
+// и отрисовка ленты, и верхнеуровневая drawNewsFavorites (вкладка «Избранные»).
+// Раньше splitNewsTeaser объявлялась внутри loadTickerNews: первая отрисовка
+// вкладки «Избранные» падала с ReferenceError и раздел навсегда оставался
+// на «Загрузка избранного...».
+
+// Цвета флажка новости — те же, что у избранных тикеров (красная заливка /
+// серый контур). Используются и функциями уровня модуля
+// (toggleNewsFavorite / updateNewsItemFlag / drawNewsFavorites).
+window.NEWS_FAV_RED = '#ef5350';
+window.NEWS_FAV_GRAY = '#787b86';
+const NEWS_FAV_RED = window.NEWS_FAV_RED;
+const NEWS_FAV_GRAY = window.NEWS_FAV_GRAY;
+
+// Фолбэк: если ui.js (единственный источник BOOKMARK_SVG) ещё не загружен,
+// используем ту же иконку lucide «bookmark», что и в списке тикеров.
+if (typeof window.BOOKMARK_SVG !== 'string') {
+  window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>';
+}
+
+// Обрезка текста новости для UI: Telegram-посты часто заканчиваются словами
+// «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости», а также
+// на вкладке «Избранные» (новости, отмеченные флажком), всё начиная с этих
+// слов и до конца отсекаем (полный текст всегда доступен по клику на карточку —
+// она ведёт на исходный пост).
+const trimNewsTeaser = (text) => {
+  const s = String(text == null ? '' : text);
+  const re = /(?:читать\s+далее|подробнее\s+в\s+источнике|перейти\s+к\s+публикации|показать\s+полностью|смотреть\s+полностью|читать\s+полностью|\bread\s+more\b|\bview\s+post\b|\bopen\s+post\b)/i;
+  const m = re.exec(s);
+  if (!m) return s.trim();
+  return s.slice(0, m.index).replace(/[\s….,:;«»"'\-\u2013\u2014]+$/g, '').trim();
+};
+window.trimNewsTeaser = trimNewsTeaser;
+
+// Разделение тизера на заголовок и основной текст для карточки новости.
+// Короткая первая строка поста читается как заголовок (жирный), остальное —
+// обычным текстом с переносами строк (white-space:pre-line на отрисовке).
+// Однострочный пост: короткий показываем целиком жирным, длинный — обычным
+// текстом без «заголовка».
+const splitNewsTeaser = (teaser) => {
+  const t = String(teaser || '').trim();
+  if (!t) return { heading: '', body: '' };
+  const nl = t.indexOf('\n');
+  const firstLine = (nl === -1 ? t : t.slice(0, nl)).trim();
+  const rest = nl === -1 ? '' : t.slice(nl + 1).trim();
+  if (firstLine.length <= 120 && rest) return { heading: firstLine, body: rest };
+  if (nl === -1 && firstLine.length <= 120) return { heading: firstLine, body: '' };
+  return { heading: '', body: t };
+};
+
+// HTML кнопки-флажка для новости (isFav — избрана ли она). Тот же флажок,
+// что используется в списке тикеров для избранного: SVG-иконка lucide
+// «bookmark» (BOOKMARK_SVG — определена в js/ui.js; см. также
+// .favorite-flag в js/ui.js и css/styles.css). Кнопка прижата к левому
+// верхнему углу карточки новости (position:absolute + стили .news-fav-flag
+// в styles.css).
+function newsFlagBtnHtml(link, isFav) {
+  const color = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
+  const svg = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
+  return `<button type="button" class="news-fav-flag${isFav ? ' favorite-filled' : ''}"`
+    + ` title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"`
+    + ` onclick="event.preventDefault(); event.stopPropagation(); toggleNewsFavorite('${encodeURIComponent(link)}', this)"`
+    + ` style="color: ${color};">`
+    + `<span class="favorite-flag${isFav ? ' favorite-filled' : ''}" style="color: ${color}">${svg}</span></button>`;
+}
+window.newsFlagBtnHtml = newsFlagBtnHtml;
+
 window.loadTickerNews = async function(symbol, forceRefresh = false) {
   console.log("🚀 [DEBUG] loadTickerNews вызвана для:", symbol, "Force:", forceRefresh);
 
@@ -283,7 +351,7 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       newsList.innerHTML = `
         <div style="text-align: center; color: #787b86; padding: 40px;">
           <div style="font-size: 24px; margin-bottom: 12px;">⏳</div>
-          <div>${forceRefresh ? 'Принуд更新ление новостей...' : 'Загрузка новостей...'}</div>
+          <div>${forceRefresh ? 'Принудительное обновление новостей...' : 'Загрузка новостей...'}</div>
         </div>
       `;
   }
@@ -357,67 +425,8 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
       return s.replace(/\/+$/, '');
     };
 
-// Обрезка текста новости для UI: Telegram-посты часто заканчиваются словами
-// «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости», а также
-// на вкладке «Избранные» (новости, отмеченные флажком), всё начиная с этих
-// слов и до конца отсекаем (полный текст всегда доступен по клику на карточку —
-// она ведёт на исходный пост).
-const trimNewsTeaser = (text) => {
-  const s = String(text == null ? '' : text);
-  const re = /(?:читать\s+далее|подробнее\s+в\s+источнике|перейти\s+к\s+публикации|показать\s+полностью|смотреть\s+полностью|читать\s+полностью|\bread\s+more\b|\bview\s+post\b|\bopen\s+post\b)/i;
-  const m = re.exec(s);
-  if (!m) return s.trim();
-  return s.slice(0, m.index).replace(/[\s….,:;«»"'\-\u2013\u2014]+$/g, '').trim();
-};
-window.trimNewsTeaser = trimNewsTeaser;
-
-// Разделение тизера на заголовок и основной текст для карточки новости.
-// Короткая первая строка поста читается как заголовок (жирный), остальное —
-// обычным текстом с переносами строк (white-space:pre-line на отрисовке).
-// Однострочный пост: короткий показываем целиком жирным, длинный — обычным
-// текстом без «заголовка».
-const splitNewsTeaser = (teaser) => {
-  const t = String(teaser || '').trim();
-  if (!t) return { heading: '', body: '' };
-  const nl = t.indexOf('\n');
-  const firstLine = (nl === -1 ? t : t.slice(0, nl)).trim();
-  const rest = nl === -1 ? '' : t.slice(nl + 1).trim();
-  if (firstLine.length <= 120 && rest) return { heading: firstLine, body: rest };
-  if (nl === -1 && firstLine.length <= 120) return { heading: firstLine, body: '' };
-  return { heading: '', body: t };
-};
-
-// === ФЛАЖОК ИЗБРАННОГО НОВОСТИ ===
-// Тот же флажок, что используется в списке тикеров для избранного: SVG-иконка
-// lucide «bookmark» (BOOKMARK_SVG — определена в js/ui.js; см. также
-// .favorite-flag в js/ui.js и css/styles.css). Красная (#ef5350) заливка, если
-// новость избрана; серый контур (#787b86) — если нет. Кнопка прижата к левому
-// верхнему углу карточки новости (position:absolute + стили .news-fav-flag
-// в styles.css).
-// ВАЖНО: эти цвета используются и функциями верхнего уровня
-// (toggleNewsFavorite / updateNewsItemFlag), поэтому объявлены на уровне модуля.
-window.NEWS_FAV_RED = '#ef5350';   // цвет избранного флага (как у красных тикеров)
-window.NEWS_FAV_GRAY = '#787b86';  // серый контур, когда не избрана
-const NEWS_FAV_RED = window.NEWS_FAV_RED;
-const NEWS_FAV_GRAY = window.NEWS_FAV_GRAY;
-
-// Фолбэк: если ui.js (единственный источник BOOKMARK_SVG) ещё не загружен,
-// используем ту же иконку lucide «bookmark», что и в списке тикеров.
-if (typeof window.BOOKMARK_SVG !== 'string') {
-  window.BOOKMARK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>';
-}
-
-// Возвращает HTML кнопки-флажка для новости (isFav — избрана ли она).
-function newsFlagBtnHtml(link, isFav) {
-  const color = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
-  const svg = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
-  return `<button type="button" class="news-fav-flag${isFav ? ' favorite-filled' : ''}"`
-    + ` title="${isFav ? 'Убрать из избранного' : 'В избранное'}" aria-pressed="${isFav}"`
-    + ` onclick="event.preventDefault(); event.stopPropagation(); toggleNewsFavorite('${encodeURIComponent(link)}', this)"`
-    + ` style="color: ${color};">`
-    + `<span class="favorite-flag${isFav ? ' favorite-filled' : ''}" style="color: ${color}">${svg}</span></button>`;
-}
-window.newsFlagBtnHtml = newsFlagBtnHtml;
+// trimNewsTeaser / splitNewsTeaser / newsFlagBtnHtml / NEWS_FAV_* объявлены
+// на уровне модуля (см. начало файла) — здесь только отрисовка ленты.
 
 // Отображаем новости. Padding вынесен во внутренний div, чтобы скролл не обрезал низ
 newsList.innerHTML = `
@@ -737,6 +746,11 @@ window.syncNewsFavoritesList = function(link, added, item) {
     const favPane = document.getElementById('news-fav-list');
     const favItem = favPane ? favPane.querySelector(`.news-item[data-link="${CSS.escape(link)}"]`) : null;
     if (favItem) favItem.remove();
+    // Карточка удалена точечно, без полной перерисовки — обновляем счётчик
+    // в шапке вкладки («Избранные новости (TICKER): N»), иначе он остаётся
+    // устаревшим до следующей полной отрисовки.
+    const cnt = document.getElementById('news-fav-count');
+    if (cnt) cnt.textContent = String(window.newsFavoritesList.length);
     if (favPane && sessionStorage.getItem('bottomTab') === 'news-fav'
         && window.newsFavoritesList.length === 0) renderNewsFavoritesTab();
     return;
@@ -829,7 +843,7 @@ function drawNewsFavorites(pane, items, ticker) {
   pane.innerHTML = `
 <div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
     <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        <span class="favorite-flag favorite-filled" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong style="color: #ef5350;">${items.length}</strong>
+        <span class="favorite-flag favorite-filled" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong id="news-fav-count" style="color: #ef5350;">${items.length}</strong>
     </div>
 </div>
 <div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
