@@ -767,12 +767,16 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
 .error-msg { color: #ef5350; padding: 20px; font-size: 14px; line-height: 1.5; }
 
-/* === ПАНЕЛЬ «НОВОСТИ / ЗАМЕТКИ» (две вкладки под графиком) === */
+/* === ПАНЕЛЬ «НОВОСТИ / ЗАМЕТКИ» + «АЛЕРТЫ» (две колонки под графиком) ===
+   Слева — вкладки «Новости / Избранные / Заметки» (переключает
+   switchBottomTab), справа — всегда видимая колонка «Алерты»
+   (switchRightTab; вкладка одна, позже добавится «Отчётность»).
+   Пропорция 60/40 (flex 3 / flex 2). */
 #news-panel {
   flex: 1;
   min-height: 0;
   display: none;
-  flex-direction: column;
+  flex-direction: row;
   margin-top: 20px;
   background: #1e222d;
   border-radius: 8px;
@@ -780,8 +784,28 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   overflow: hidden;
 }
 
-/* Шапка с вкладками */
-#bottom-tabs {
+/* Колонки нижней панели: своя шапка с вкладками и свой скролл */
+.bottom-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.bottom-col-left { flex: 3; } /* 60% — новости/заметки шире для читаемости */
+.bottom-col-right {
+  flex: 2; /* 40% */
+  border-left: 1px solid #2a2e39;
+}
+/* На узких окнах колонки складываются вертикально — каждая становится
+   вкладкой на пол-высоты панели */
+@media (max-width: 900px) {
+  #news-panel { flex-direction: column; }
+  .bottom-col-left, .bottom-col-right { flex: 1 1 50%; }
+  .bottom-col-right { border-left: none; border-top: 1px solid #2a2e39; }
+}
+
+/* Шапка с вкладками (общая для обеих колонок) */
+.bottom-tabs {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -791,7 +815,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   flex-shrink: 0;
   flex-wrap: wrap;
 }
-#bottom-tabs .tabs-group { display: flex; gap: 4px; }
+.bottom-tabs .tabs-group { display: flex; gap: 4px; }
 .tab-btn {
   background: transparent;
   border: 1px solid transparent;
@@ -828,50 +852,50 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    (https://lucide.dev/icons/newspaper) — контурная, наследует цвет вкладки. */
 .tab-news-icon { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 4px; }
 .tab-news-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
-#bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
-#bottom-tabs .tab-actions button {
+.bottom-tabs .tab-actions { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #d1d4dc; }
+.bottom-tabs .tab-actions button {
   background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
   padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;
 }
-#bottom-tabs .tab-actions button:hover { background: #363a45; }
+.bottom-tabs .tab-actions button:hover { background: #363a45; }
 
 /* Контейнеры вкладок: показываем только активную (display задаёт JS) */
 .tab-pane { flex: 1; overflow-y: auto; min-height: 0; }
 
-/* Вкладка «Алерты»: заголовок со списком ценовых уведомлений выбранного
-   тикера (перенесена из модалки «📋 Алерты для …») */
+/* Колонка «Алерты» (правая половина нижней панели, 40% ширины):
+   заголовок и таблица уплотнены под узкую колонку */
 .alerts-tab-header {
-  padding: 12px 4px 10px;
-  font-size: 15px;
+  padding: 10px 4px 8px;
+  font-size: 13px;
   font-weight: 600;
   color: #d1d4dc;
 }
-#alerts-list .alerts-tab-content { padding-bottom: 12px; }
+#alerts-list .alerts-tab-content { padding-bottom: 8px; }
 
-/* Вкладка «Алерты»: таблица строк (Тикер, Цена, Статус, Время и дата,
+/* Таблица алертов (Тикер, Цена, Статус, Время и дата,
    справа кнопка «Отменить» у активных алертов) */
 .alerts-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 15px;
+  font-size: 13px;
 }
 .alerts-table th {
   text-align: left;
-  padding: 10px 14px;
+  padding: 8px 10px;
   color: #9aa0ab;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12px;
   border-bottom: 1px solid #363a45;
   position: sticky;
   top: 0;
   background: #1e222d;
 }
 .alerts-table td {
-  padding: 12px 14px;
+  padding: 8px 10px;
   border-bottom: 1px solid #2a2f3d;
   color: #d1d4dc;
   vertical-align: middle;
-  font-size: 15px;
+  font-size: 13px;
 }
 .alert-row.status-active td { background: rgba(38, 166, 154, 0.05); }
 .alert-row.status-triggered td { opacity: 0.8; }

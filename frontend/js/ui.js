@@ -169,11 +169,12 @@ window.openWlContextMenu = function(anchorEl, x, y, items) {
 document.addEventListener('click', () => closeWlContextMenu());
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWlContextMenu(); });
 
-// === ВКЛАДКИ «НОВОСТИ / ЗАМЕТКИ» (панель под графиком) ===
-// Заметки перенесены из watchlist-строк в блок с новостями: теперь это
-// вторая вкладка той же панели. По умолчанию активна вкладка «Новости».
-// Выбранная вкладка запоминается в sessionStorage ('bottomTab'), чтобы
-// переключение не сбрасывалось при перерисовке списка.
+// === НИЖНЯЯ ПАНЕЛЬ (под графиком): левая колонка «Новости / Заметки», ===
+// === правая колонка «Алерты» (всегда видима)                            ===
+// Заметки — вторая вкладка ЛЕВОЙ колонки (переключение switchBottomTab);
+// «Алерты» живут в правой колонке (switchRightTab) и не перекрываются
+// вкладками. Активная вкладка левой колонки запоминается в sessionStorage
+// ('bottomTab'), чтобы переключение не сбрасывалось при перерисовке списка.
 // NOTE_MAX_LEN считается по ВИДИМОМУ тексту без разметки — совпадает с
 // лимитом колонки watchlist_items.note (backend/services/watchlist_service.py).
 window.NOTE_MAX_LEN = 500;
@@ -391,9 +392,13 @@ window.initNotesEditor = function() {
   });
 };
 
-// Переключение вкладок «Новости» / «Избранные Новости» / «Заметки» / «Алерты».
+// Переключение вкладок ЛЕВОЙ колонки нижней панели:
+// «Новости» / «Избранные Новости» / «Заметки». Правая колонка («Алерты»)
+// всегда видима и управляется отдельно (switchRightTab).
 window.switchBottomTab = function(tab) {
-  tab = (tab === 'notes' || tab === 'news-fav' || tab === 'alerts') ? tab : 'news';
+  // Значение 'alerts' могло остаться в sessionStorage со старых версий —
+  // правая колонка теперь живёт отдельно, возвращаемся на «Новости».
+  tab = (tab === 'notes' || tab === 'news-fav') ? tab : 'news';
   // Вкладка «Избранные» существует только пока есть избранное — если с неё
   // сняли последний флажок, возвращаемся на «Новости».
   const favBtn = document.getElementById('news-fav-tab-btn');
@@ -403,34 +408,24 @@ window.switchBottomTab = function(tab) {
   const newsList = document.getElementById('news-list');
   const notesList = document.getElementById('notes-list');
   const newsFavList = document.getElementById('news-fav-list');
-  const alertsList = document.getElementById('alerts-list');
   if (!newsPanel || !newsList || !notesList) return;
 
   newsPanel.style.display = 'flex';
   newsList.style.display = tab === 'news' ? 'block' : 'none';
   if (newsFavList) newsFavList.style.display = tab === 'news-fav' ? 'block' : 'none';
-  if (alertsList) alertsList.style.display = tab === 'alerts' ? 'block' : 'none';
   // для #notes-list базовый display задаёт CSS (flex — полотно растягивается)
   notesList.style.display = tab === 'notes' ? '' : 'none';
 
-  document.querySelectorAll('#bottom-tabs .tab-btn').forEach(btn => {
+  document.querySelectorAll('.bottom-tabs-left .tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
   const nwBtn = document.getElementById('news-refresh-btn');
   if (nwBtn) nwBtn.style.display = tab === 'news' ? '' : 'none';
-  // Кнопка добавления алерта (перенесена с колокольчика в строках списка
-  // тикеров) видна только на вкладке «Алерты».
-  const addAlertBtn = document.getElementById('add-alert-btn');
-  if (addAlertBtn) addAlertBtn.style.display = tab === 'alerts' ? '' : 'none';
 
   if (tab === 'notes') {
     initNotesEditor(); // вешаем автосохранение при первом открытии вкладки
     const cur = getCurrentList();
     renderNotesTab(cur ? cur.activeSymbol : '');
-  }
-  if (tab === 'alerts') {
-    const cur = getCurrentList();
-    renderAlertsTab(cur ? cur.activeSymbol : '');
   }
   if (tab === 'news-fav' && typeof renderNewsFavoritesTab === 'function') {
     // Избранное индивидуально по тикерам: при открытии вкладки перерисовываем
@@ -438,6 +433,20 @@ window.switchBottomTab = function(tab) {
     // вкладка была скрыта). Кэш внутри функции сам определит устаревание.
     renderNewsFavoritesTab(true);
   }
+};
+
+// Переключение вкладок ПРАВОЙ колонки нижней панели («Алерты»; позже здесь
+// появится «Отчётность»). Колонка всегда видима — функция только подводит
+// активность кнопок/панелей (например, из openAlertsListModal).
+window.switchRightTab = function(tab) {
+  if (tab !== 'alerts') tab = 'alerts'; // пока колонка содержит одну вкладку
+  document.querySelectorAll('.bottom-tabs-right .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  const alertsList = document.getElementById('alerts-list');
+  if (alertsList) alertsList.style.display = tab === 'alerts' ? 'block' : 'none';
+  const cur = getCurrentList();
+  renderAlertsTab(cur ? cur.activeSymbol : '');
 };
 
 // ==========================================================================
@@ -555,11 +564,9 @@ window.buildRowElement = function(sym) {
     createChart(sym);
     document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
     div.classList.add('active');
-    // Вкладка «Алерты» показывает алерты выбранного тикера — при смене
-    // выбора она тоже должна обновиться (раньше оставался список старого).
-    if (sessionStorage.getItem('bottomTab') === 'alerts') {
-      renderAlertsList(sym);
-    }
+    // Колонка «Алерты» показывает алерты выбранного тикера — при смене
+    // выбора она тоже должна обновиться (иначе останется список старого).
+    renderAlertsList(sym);
   });
 
   // Правый клик по строке — то же контекстное меню (без выделения тикера)
@@ -969,20 +976,16 @@ if (window.canRenderWithoutPrices(currentList)) {
     }
   }
 
-  // Панель «Новости / Заметки / Алерты»: синхронизируем полотно заметок и
-  // список алертов с выбранным тикером (они могли измениться/переехать
-  // вместе со списком).
+  // Нижняя панель: синхронизируем полотно заметок (активная вкладка левой
+  // колонки) и список алертов (правая колонка видима всегда) с выбранным
+  // тикером — они могли измениться/переехать вместе со списком.
   const bottomTab = sessionStorage.getItem('bottomTab');
   if (bottomTab === 'notes' && currentList.activeSymbol) {
     const np = document.getElementById('news-panel');
     if (np) np.style.display = 'flex';
     renderNotesTab(currentList.activeSymbol);
   }
-  if (bottomTab === 'alerts') {
-    const np = document.getElementById('news-panel');
-    if (np) np.style.display = 'flex';
-    renderAlertsTab(currentList.activeSymbol || '');
-  }
+  renderAlertsTab(currentList.activeSymbol || '');
 };
 
 // === АЛЕРТЫ UI ===
@@ -1091,17 +1094,15 @@ window.openAlertModal = async function(symbol) {
     deleteBtn.style.display = 'none';
   }
 
-  // Если открыта вкладка «Алерты» — синхронизируем её с модалкой: список
-  // должен отражать алерты именно того тикера, для которого она открыта
-  // (раньше при создании алерта через колокольчик другого тикера вкладка
-  // продолжала рисовать пустой список выбранного тикера).
-  if (sessionStorage.getItem('bottomTab') === 'alerts') {
-    const cur = getCurrentList();
-    if (cur && !symbol.startsWith('SECTION:')) {
-      cur.activeSymbol = symbol;
-      setActiveSymbolInDb(appState.activeListId, symbol);
-      renderAlertsList(symbol);
-    }
+  // Синхронизируем колонку «Алерты» с модалкой: список должен отражать
+  // алерты именно того тикера, для которого она открыта (раньше при
+  // создании алерта через колокольчик другого тикера колонка продолжала
+  // рисовать пустой список выбранного тикера).
+  const cur = getCurrentList();
+  if (cur && !symbol.startsWith('SECTION:')) {
+    cur.activeSymbol = symbol;
+    setActiveSymbolInDb(appState.activeListId, symbol);
+    renderAlertsList(symbol);
   }
 };
 
@@ -1145,11 +1146,11 @@ window.saveAlert = async function() {
     log(`Алерт сохранён в БД для ${savedSymbol}: ${condition} ${target}`, 'success');
     closeAlertModal();
     await loadAlertsFromDb(); // мгновенно обновляем колокольчик по данным из БД
-    // Если открыта вкладка «Алерты» — перерисовываем её под ЭТОТ тикер.
-    // Важно: closeAlertModal() сбрасывает currentAlertSymbol, а при смене
-    // выбранного тикера во время сетевой записи вкладки список иначе показывал
-    // «Нет алертов для этого тикера», хотя алерт уже был создан и лежал в кеше.
-    if (sessionStorage.getItem('bottomTab') === 'alerts' && savedSymbol) {
+    // Перерисовываем колонку «Алерты» под ЭТОТ тикер. Важно:
+    // closeAlertModal() сбрасывает currentAlertSymbol, а при смене выбранного
+    // тикера во время сетевой записи список иначе показывал «Нет алертов для
+    // этого тикера», хотя алерт уже был создан и лежал в кеше.
+    if (savedSymbol) {
       renderAlertsTab(savedSymbol);
     }
   } catch (e) {
@@ -1176,18 +1177,19 @@ window.deleteAlert = async function() {
   const deletedSymbol = currentAlertSymbol;
   closeAlertModal();
   await loadAlertsFromDb();
-  if (sessionStorage.getItem('bottomTab') === 'alerts') renderAlertsList(deletedSymbol);
+  renderAlertsList(deletedSymbol);
 };
 
 window.openAlertsListModal = async function() {
-  // Кнопка «🔔 Алерты» перенесена во вкладку «Алерты» нижней панели —
-  // совместимость на случай старого вызова: просто переключаемся на вкладку.
+  // Кнопка «🔔 Алерты» перенесена в правую колонку нижней панели —
+  // совместимость на случай старого вызова: колонка видима всегда,
+  // просто перерисовываем список под текущий тикер.
   const symbol = getCurrentList().activeSymbol;
   if (!symbol || symbol.startsWith('SECTION:')) {
     window.alert('Сначала выберите тикер в списке!');
     return;
   }
-  switchBottomTab('alerts');
+  renderAlertsTab(symbol);
 };
 
 // Кнопка «+ Добавить» на вкладке «Алерты» (перенесена с колокольчика из
@@ -1202,21 +1204,21 @@ window.openAddAlertForActiveSymbol = async function() {
   await openAlertModal(symbol);
 };
 
-// Рендер содержимого вкладки «Алерты»: ТАБЛИЦА алертов выбранного тикера
-// (строки: Тикер, Цена, Статус, Время и дата; у активных справа кнопка
-// «Отменить»). Без выбранного тикера таблица пуста. При пустом кеше алертов
-// тянем свежие данные из БД.
+// Рендер правой колонки «Алерты» (видима всегда): ТАБЛИЦА алертов выбранного
+// тикера (строки: Тикер, Цена, Статус, Время; у активных справа кнопка
+// «Отменить»). Без выбранного тикера показываем пустое состояние. При пустом
+// кеше алертов тянем свежие данные из БД (для пустого тикера запрос не нужен).
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
   if (!container) return;
-  // На вкладке видны только алерты выбранного тикера.
+  // В колонке видны только алерты выбранного тикера.
   const sym = (!symbol || symbol.startsWith('SECTION:')) ? '' : symbol;
   // Свежие статусы из БД. Кеш пуст — тянем всё; есть алерты этого тикера —
   // рисуем сразу (иначе пересозданный/новый алерт мог «исчезать» до ответа
-  // сервера и вкладка показывала «Нет алертов»).
+  // сервера и колонка показывала «Нет алертов»).
   const alerts = window.dbAlerts || [];
   const hasCacheForSymbol = alerts.some(a => a.symbol === sym);
-  if (!alerts.length || !hasCacheForSymbol) await loadAlertsFromDb();
+  if (sym && (!alerts.length || !hasCacheForSymbol)) await loadAlertsFromDb();
   // Пока грузили данные, выбранный тикер мог смениться — не рисуем устаревшее
   const cur = getCurrentList();
   const activeSymRaw = (cur && cur.activeSymbol) || '';
@@ -1235,17 +1237,21 @@ window.renderAlertsList = function(symbol) {
   if (!container) return;
   container.innerHTML = '';
 
-  const header = document.createElement('div');
-  header.className = 'alerts-tab-header';
-  header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
-  container.appendChild(header);
+  // Заголовок с тикером рисуем только когда тикер выбран
+  if (sym) {
+    const header = document.createElement('div');
+    header.className = 'alerts-tab-header';
+    header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
+    container.appendChild(header);
+  }
 
   const listWrap = document.createElement('div');
   listWrap.className = 'alerts-tab-content';
   container.appendChild(listWrap);
 
   if (allAlerts.length === 0) {
-    listWrap.innerHTML = '<div style="text-align:center; color:#787b86; padding:20px;">Нет алертов</div>';
+    const emptyText = sym ? 'Нет алертов' : 'Выберите тикер для просмотра алертов';
+    listWrap.innerHTML = `<div style="text-align:center; color:#787b86; padding:20px;">${emptyText}</div>`;
     return;
   }
 
@@ -1257,9 +1263,10 @@ window.renderAlertsList = function(symbol) {
     return (b.id || 0) - (a.id || 0);
   });
 
+  // Компактный формат времени (дд.мм чч:мм, без года) — колонка узкая
   const fmtTime = (iso) => {
     if (!iso) return '';
-    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   };
 
@@ -1363,8 +1370,8 @@ window.syncAlertsWithDb = async function() {
     }
     if (triggered.length > 0) {
       await loadAlertsFromDb(); // обновляем колокольчики по новым статусам из БД
-      // Если пользователь смотрит вкладку «Алерты» — мгновенно покажем новые статусы
-      if (sessionStorage.getItem('bottomTab') === 'alerts' && typeof renderAlertsList === 'function') {
+      // Колонка «Алерты» видима всегда — мгновенно покажем новые статусы
+      if (typeof renderAlertsList === 'function') {
         const cur = getCurrentList();
         if (cur && cur.activeSymbol) renderAlertsList(cur.activeSymbol);
       }

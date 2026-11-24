@@ -530,33 +530,33 @@
                     </div>
                 </div>
             </div>
-            <!-- Панель «Новости / Избранные Новости / Заметки» под графиком.
-                 По умолчанию активна вкладка «Новости», заметки (функционал
-                 watchlist_items.note) — во второй вкладке. Вкладка
-                 «Избранные» (с флажком-закладкой вместо emoji 🚩 — та же
-                 иконка bookmark, что отмечает избранные новости) показывается
-                 только когда в ней есть добавленные новости — т.е. у выбранного
-                 тикета есть хотя бы одна избранная новость (см.
-                 updateNewsFavTabVisibility и
-                 currentTickerHasFavorites в api.js). -->
+            <!-- Нижняя панель под графиком — ДВЕ колонки:
+                 слева вкладки «Новости / Избранные / Заметки» (переключает
+                 switchBottomTab; по умолчанию активна «Новости», заметки —
+                 функционал watchlist_items.note; вкладка «Избранные» с
+                 флажком-закладкой вместо emoji 🚩 — та же иконка bookmark,
+                 что отмечает избранные новости — показывается только когда
+                 у выбранного тикета есть хотя бы одна избранная новость,
+                 см. updateNewsFavTabVisibility и currentTickerHasFavorites
+                 в api.js);
+                 справа — всегда видимая колонка «Алерты» (switchRightTab;
+                 список алертов выбранного тикера + кнопка «+ Добавить»).
+                 Колонка построена как вкладки: позже рядом с «Алерты»
+                 можно добавить вкладку «Отчётность» (краткая отчетность). -->
             <div id="news-panel">
-                <div id="bottom-tabs">
-                    <div class="tabs-group">
-                        <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')"><span class="tab-news-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-4 0v12"/><path d="M15 7a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z"/><path d="M6 12h5"/><path d="M6 15h5"/><path d="M6 9h2"/></svg></span> Новости</button>
-                        <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')"><span class="favorite-flag favorite-filled tab-fav-flag" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные</button>
-                        <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12.5 3.5a2.1 2.1 0 0 1 3 3L6 16l-4 1 1-4Z"/></svg></span> Заметки</button>
-                        <button class="tab-btn" data-tab="alerts" onclick="switchBottomTab('alerts')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Алерты</button>
+                <div class="bottom-col bottom-col-left">
+                    <div class="bottom-tabs bottom-tabs-left">
+                        <div class="tabs-group">
+                            <button class="tab-btn active" data-tab="news" onclick="switchBottomTab('news')"><span class="tab-news-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-4 0v12"/><path d="M15 7a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z"/><path d="M6 12h5"/><path d="M6 15h5"/><path d="M6 9h2"/></svg></span> Новости</button>
+                            <button class="tab-btn" data-tab="news-fav" id="news-fav-tab-btn" style="display: none;" onclick="switchBottomTab('news-fav')"><span class="favorite-flag favorite-filled tab-fav-flag" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные</button>
+                            <button class="tab-btn" data-tab="notes" onclick="switchBottomTab('notes')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12.5 3.5a2.1 2.1 0 0 1 3 3L6 16l-4 1 1-4Z"/></svg></span> Заметки</button>
+                        </div>
+                        <div class="tab-actions">
+                            <button id="news-refresh-btn" onclick="refreshNews()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></span>Обновить</button>
+                        </div>
                     </div>
-                    <div class="tab-actions">
-                        <button id="news-refresh-btn" onclick="refreshNews()"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></span>Обновить</button>
-                        <!-- Кнопка добавления алерта: перенесена с колокольчика
-                             из строк списка тикеров — открывает модалку
-                             ценового уведомления для выбранного тикера -->
-                        <button id="add-alert-btn" style="display: none;" onclick="openAddAlertForActiveSymbol()" title="Добавить ценовое уведомление для выбранного тикера">+ Добавить</button>
-                    </div>
-                </div>
 
-                <div id="news-list" class="tab-pane">
+                    <div id="news-list" class="tab-pane">
                     <div class="news-empty">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-4 0v12"/><path d="M15 7a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z"/><path d="M6 12h5"/><path d="M6 15h5"/><path d="M6 9h2"/></svg>
                         Выберите тикер для загрузки новостей
@@ -623,14 +623,39 @@
                     <div id="notes-editor" contenteditable="true" spellcheck="true"
                          data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
                 </div>
-                <!-- Вкладка «Алерты»: ценовые уведомления ВЫБРАННОГО тикера
-                     (перенесены из модалки, которая открывалась кнопкой
+                </div>
+                <!-- Конец левой колонки (Новости / Избранные / Заметки) -->
+
+                <!-- Правая колонка «Алерты»: ценовые уведомления ВЫБРАННОГО
+                     тикера (перенесены из модалки, которая открывалась кнопкой
                      «🔔 Алерты» внизу watchlist). Список относится к текущему
-                     активному символу; кнопка «+ Добавить» справа вверху
-                     открывает модалку создания алерта. -->
-                <div id="alerts-list" class="tab-pane" style="display: none;">
-                    <div style="padding: 20px; text-align: center; color: #787b86;">
-                        Выберите тикер для просмотра алертов
+                     активному символу; кнопка «+ Добавить» в шапке колонки
+                     открывает модалку создания алерта. Колонка всегда видима
+                     — переключать вкладки, чтобы увидеть алерты, не нужно.
+                     Вкладка одна; позже рядом можно добавить «Отчётность»
+                     (краткая отчетность по тикеру). -->
+                <div class="bottom-col bottom-col-right">
+                    <div class="bottom-tabs bottom-tabs-right">
+                        <div class="tabs-group">
+                            <button class="tab-btn active" data-tab="alerts" onclick="switchRightTab('alerts')"><span class="tab-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Алерты</button>
+                            <!-- Задел под будущую вкладку «Отчётность» (краткая
+                                 отчетность по тикеру): добавить кнопку
+                                 data-tab="reports" с switchRightTab('reports')
+                                 и панель рядом с #alerts-list -->
+                        </div>
+                        <div class="tab-actions">
+                            <!-- Кнопка добавления алерта: перенесена с колокольчика
+                                 из строк списка тикеров — открывает модалку
+                                 ценового уведомления для выбранного тикера.
+                                 Теперь видна всегда (колонка алертов не
+                                 переключается). -->
+                            <button id="add-alert-btn" onclick="openAddAlertForActiveSymbol()" title="Добавить ценовое уведомление для выбранного тикера">+ Добавить</button>
+                        </div>
+                    </div>
+                    <div id="alerts-list" class="tab-pane">
+                        <div style="padding: 20px; text-align: center; color: #787b86;">
+                            Выберите тикер для просмотра алертов
+                        </div>
                     </div>
                 </div>
             </div>
