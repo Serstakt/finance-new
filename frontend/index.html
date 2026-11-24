@@ -77,6 +77,41 @@
             </script>
 
         </div>
+
+        <!-- Тепловая карта (treemap как finviz map): плитка = тикер из
+             watchlist-списков, цвет = % изменения за период (День/Неделя/
+             Месяц), зоны = типы активов. Рендер и данные — js/heatmap.js. -->
+        <div class="heatmap-section" id="heatmap-section">
+            <div class="heatmap-header">
+                <h2>Тепловая карта</h2>
+                <!-- Фильтры рядом: период + сортировка одной группой справа -->
+                <div class="heatmap-controls">
+                    <div class="heatmap-period-switch" id="heatmap-period-switch">
+                        <button class="hm-period-btn active" data-period="day" type="button" onclick="setHeatmapPeriod('day')">День</button>
+                        <button class="hm-period-btn" data-period="week" type="button" onclick="setHeatmapPeriod('week')">Неделя</button>
+                        <button class="hm-period-btn" data-period="month" type="button" onclick="setHeatmapPeriod('month')">Месяц</button>
+                    </div>
+                    <!-- Сортировка плиток внутри зон (heatmap.js): порядок как в
+                         списках, самые растущие первыми или самые падающие -->
+                    <div class="heatmap-sort-switch" id="heatmap-sort-switch">
+                        <button class="hm-sort-btn active" data-sort="list" type="button" onclick="setHeatmapSort('list')" title="Порядок как в watchlist-списках">По списку</button>
+                        <button class="hm-sort-btn" data-sort="gainers" type="button" onclick="setHeatmapSort('gainers')" title="Сначала самые растущие, затем падающие">Рост ↓</button>
+                        <button class="hm-sort-btn" data-sort="losers" type="button" onclick="setHeatmapSort('losers')" title="Сначала самые падающие, затем растущие">Падение ↑</button>
+                    </div>
+                </div>
+            </div>
+            <div class="heatmap-legend">
+                <span id="heatmap-legend-min">−2%</span>
+                <div class="heatmap-legend-bar" id="heatmap-legend-bar"></div>
+                <span id="heatmap-legend-max">+2%</span>
+            </div>
+            <div class="heatmap-canvas-area" id="watchlist-heatmap">
+                <div class="widget-fallback">Загрузка карты…</div>
+            </div>
+            <!-- Тултип плитки: position:fixed, показывается при hover (см. heatmap.js) -->
+            <div class="heatmap-tooltip" id="heatmap-tooltip"></div>
+        </div>
+
         <h2 style="font-size: 18px; margin-bottom: 15px; color: #d1d4dc;">Быстрые действия</h2>
         <div class="quick-actions">
             <div class="action-card" onclick="navigateTo('watchlist')">
@@ -765,6 +800,7 @@
      обработчики полей регистрируются раньше их (см. js/symbol_search.js) -->
 <script defer src="js/symbol_search.js"></script>
 <script defer src="js/ui.js"></script>
+<script defer src="js/heatmap.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/portfolio.js"></script>
 <script defer src="js/watchlist_chart.js?v=20261124"></script>

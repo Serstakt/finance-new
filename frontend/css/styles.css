@@ -95,6 +95,194 @@ body {
 tv-market-data .tradingview-widget-copyright,
 tv-market-data a[href*="tradingview.com"] { display: none !important; }
 
+/* ==========================================================================
+   Тепловая карта списков (treemap как finviz map) — js/heatmap.js
+   ========================================================================== */
+.heatmap-section {
+  position: relative;
+  width: 100%;
+  margin-bottom: 30px;
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  padding: 15px;
+}
+.heatmap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.heatmap-header h2 { font-size: 18px; font-weight: 600; color: #d1d4dc; margin: 0; }
+/* Фильтры (период + сортировка) одной группой рядом */
+.heatmap-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.heatmap-period-switch,
+.heatmap-sort-switch {
+  display: flex;
+  gap: 4px;
+  background: #131722;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+  padding: 3px;
+}
+.hm-period-btn,
+.hm-sort-btn {
+  background: transparent;
+  border: none;
+  color: #787b86;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.hm-period-btn:hover,
+.hm-sort-btn:hover { color: #d1d4dc; }
+.hm-period-btn.active,
+.hm-sort-btn.active { background: #2962ff; color: #ffffff; }
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: #787b86;
+}
+.heatmap-legend-bar { flex: 0 1 260px; height: 8px; border-radius: 4px; }
+
+.heatmap-canvas-area { position: relative; width: 100%; height: 380px; }
+.heatmap-canvas-area .widget-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #787b86;
+  font-size: 13px;
+}
+
+/* Зона типа актива: заголовок-полоска сверху, плитки внутри .hm-group-area */
+.hm-group {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #131722;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #232733;
+}
+.hm-group-label {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d1d4dc;
+  background: #2a2e39;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+}
+.hm-group-area { position: absolute; left: 2px; right: 2px; top: 24px; bottom: 2px; }
+
+/* Плитка тикера: цвет ставится инлайн из hmColor(), текст — тикер + %,
+   текущая цена — в правом нижнем углу (нижний отступ освобождает под неё место) */
+.hm-tile {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px 5px 18px;
+  border: 1px solid rgba(19, 23, 34, 0.55);
+  border-radius: 3px;
+  color: #f0f3fa;
+  transition: background 0.3s ease;
+}
+.hm-tile:hover { filter: brightness(1.18); z-index: 1; }
+.hm-ticker {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  max-width: 96%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+/* Узкая плитка + длинный тикер: уменьшенный ярус вместо обрезки
+   (класс ставит renderHeatmap по факту переполнения, heatmap.js) */
+.hm-tile.tight-ticker .hm-ticker { font-size: 12px; letter-spacing: 0; }
+.hm-change {
+  font-size: 13px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.hm-price {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.1;
+  opacity: 0.92;
+  white-space: nowrap;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+/* Пороги читаемости: классами управляет updateHeatmapColors (heatmap.js) */
+.hm-tile.no-price .hm-price { display: none; }
+.hm-tile.no-change .hm-change { display: none; }
+.hm-tile.no-label .hm-ticker,
+.hm-tile.no-label .hm-change,
+.hm-tile.no-label .hm-price { display: none; }
+/* Пометка «частичный расчёт» (истории свечей не хватило на весь период) */
+.hm-tile.hm-partial::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Тултип плитки: position:fixed, позиционируется в showHeatmapTooltip */
+.heatmap-tooltip {
+  position: fixed;
+  z-index: 10000;
+  display: none;
+  pointer-events: none;
+  background: #1e222d;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #d1d4dc;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  max-width: 260px;
+}
+.hm-tip-symbol { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.hm-tip-row { margin-bottom: 3px; }
+.hm-tip-note { margin-top: 6px; font-size: 11px; color: #787b86; }
+
 .quick-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
 .action-card {
   background: #1e222d; border: 1px solid #2a2e39; border-radius: 8px;

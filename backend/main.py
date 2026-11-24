@@ -14,6 +14,7 @@ from .services import news_favorites_service
 from .services import alert_service
 from .services import notification_service
 from .services import candle_store_service
+from .services import heatmap_service
 from .services import symbol_search_service
 from .models import schemas
 
@@ -175,6 +176,38 @@ async def search_symbols_endpoint(
         return await symbol_search_service.search_symbols(q, limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ТЕПЛОВАЯ КАРТА «ГЛАВНАЙ» (treemap тикеров всех watchlist-списков)
+#
+# Цвет плитки — % изменения за выбранный период. «День» фронт берёт из
+# /api/prices/batch (changeDay); «неделя»/«месяц» считаются здесь из дневных
+# свечей (interval=24), которые проект копит в candle_store (см.
+# services/heatmap_service.py) — первый запрос может докачивать историю,
+# повторные отдаются из процессного TTL-кэша.
+# =============================================================================
+
+@app.get("/api/heatmap/changes")
+async def get_heatmap_changes(
+    symbols: str = Query(..., description="Тикеры через запятую: MOEX:SBER,BINANCE:BTCUSDT"),
+    period: str = Query(..., description="Период окраски: week (7 дней) | month (30 дней)"),
+):
+    """Батч % изменения тикеров за период (week/month) из дневных свечей.
+
+    Возвращает {"changes": {symbol: {"changePct": float, "partial": bool}}};
+    partial=True — накопленной истории не хватило на всё окно, расчёт от
+    самой ранней доступной свечи. Ошибка одного тикера не ломает остальные
+    (его запись — {"error": ...}).
+    """
+    requested = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not requested:
+        raise HTTPException(status_code=400, detail="Empty symbols list")
+    try:
+        changes = await heatmap_service.get_period_changes(requested, period.strip().lower())
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    return {"changes": changes}
 
 
 # =============================================================================
@@ -431,6 +464,17 @@ async def get_watchlists():
         "lists": watchlist_service.get_all_names(),
         "ticker_counts": watchlist_service.get_ticker_counts(),
     }
+
+
+@app.get("/api/watchlists/symbols")
+async def get_watchlists_symbols():
+    """Состав ВСЕХ списков одним запросом: {"symbols_by_list": {id: [symbol]}}.
+
+    Для тепловой карты «Главная»: собирает тикеры всех watchlist-списков без
+    N вызовов /api/watchlist/{id}. SECTION-заголовки исключаются — карте нужны
+    только тикеры; порядок внутри списка соответствует порядку в БД.
+    """
+    return {"symbols_by_list": watchlist_service.get_all_symbols_by_list()}
 
 
 @app.get("/api/watchlist-flags")
