@@ -312,9 +312,8 @@ const splitNewsTeaser = (teaser) => {
 // HTML кнопки-флажка для новости (isFav — избрана ли она). Тот же флажок,
 // что используется в списке тикеров для избранного: SVG-иконка lucide
 // «bookmark» (BOOKMARK_SVG — определена в js/ui.js; см. также
-// .favorite-flag в js/ui.js и css/styles.css). Кнопка прижата к левому
-// верхнему углу карточки новости (position:absolute + стили .news-fav-flag
-// в styles.css).
+// .favorite-flag в js/ui.js и css/styles.css). Кнопка прижата к правому
+// краю строки новости (position:absolute + стили .news-fav-flag в styles.css).
 function newsFlagBtnHtml(link, isFav) {
   const color = isFav ? NEWS_FAV_RED : NEWS_FAV_GRAY;
   const svg = typeof window.BOOKMARK_SVG === 'string' ? window.BOOKMARK_SVG : '';
@@ -325,6 +324,120 @@ function newsFlagBtnHtml(link, isFav) {
     + `<span class="favorite-flag${isFav ? ' favorite-filled' : ''}" style="color: ${color}">${svg}</span></button>`;
 }
 window.newsFlagBtnHtml = newsFlagBtnHtml;
+
+// === ХЕЛПЕРЫ КОМПАКТНОЙ ЛЕНТЫ НОВОСТЕЙ ===
+// Каноничная ссылка на пост — идентификатор новости (как на бэкенде:
+// https-схема, без хвостового слэша). Используется и как data-link карточки,
+// и как ключ сверки флажков.
+const canonicalNewsLink = (l) => {
+  let s = (l || '').trim();
+  if (s.startsWith('http://')) s = 'https://' + s.slice(7);
+  return s.replace(/\/+$/, '');
+};
+
+// Русская плюрализация «новость»: 1 новость / 2 новости / 5 новостей.
+const pluralNews = (n) => {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return 'новость';
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'новости';
+  return 'новостей';
+};
+
+// Разбор времени поста бэкенда «DD.MM.YYYY HH:MM» (HH:MM может отсутствовать):
+// возвращает ключ дня, подпись («Сегодня», «Вчера», «24 ноября») и короткое
+// время для колонки строки. null — если формат неожиданный.
+const NEWS_MONTHS_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+function parseNewsTime(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/.exec(s);
+  if (!m) return null;
+  const day = +m[1], mon = +m[2] - 1, year = +m[3];
+  const d = new Date(year, mon, day);
+  if (d.getMonth() !== mon || d.getDate() !== day) return null; // несуществующая дата
+  const key = `${year}-${String(mon + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((today - d) / 86400000);
+  let label;
+  if (diffDays === 0) label = 'Сегодня';
+  else if (diffDays === 1) label = 'Вчера';
+  else {
+    label = `${day} ${NEWS_MONTHS_RU[mon]}`;
+    if (year !== now.getFullYear()) label += ` ${year}`;
+  }
+  const timeShort = m[4] != null ? `${String(m[4]).padStart(2, '0')}:${m[5]}` : '';
+  return { key, label, timeShort, full: s };
+}
+
+// Группировка ленты по дням (порядок элементов сохраняется — лента приходит
+// свежими сверху, поэтому и группы идут от сегодняшнего дня вглубь).
+function newsDayGroups(items) {
+  const groups = [];
+  const byKey = new Map();
+  for (const n of items) {
+    const p = parseNewsTime(n && n.time);
+    const key = p ? p.key : '';
+    let g = byKey.get(key);
+    if (!g) { g = { key, label: p ? p.label : 'Другие даты', items: [] }; byKey.set(key, g); groups.push(g); }
+    g.items.push({ n, p });
+  }
+  return groups;
+}
+
+// Текст поста одной строкой для тизера: Telegram-посты многострочные,
+// в компактной строке переносы схлопываются; длина страхуется лимитом
+// (визуальный обрез — CSS line-clamp на .news-body).
+const collapseNewsBody = (s) => {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > 280 ? t.slice(0, 280).trimEnd() + '…' : t;
+};
+
+// Строка новости — общий шаблон ленты «Новости» и вкладки «Избранные».
+// ticker — для вкладки «Избранные»: бейдж тикера рисуем только когда пост
+// принадлежит другому тикету, чем выбранный.
+function newsRowHtml(n, isFav, ticker, parsed) {
+  const link = canonicalNewsLink(n.link);
+  const teaser = trimNewsTeaser(n.full_text || n.title || link);
+  const parts = splitNewsTeaser(teaser);
+  const body = parts.body ? collapseNewsBody(parts.body) : '';
+  const timeFull = parsed ? parsed.full : String(n.time || '').trim();
+  const timeShort = parsed ? (parsed.timeShort || '—') : (timeFull || '—');
+  let badge = '';
+  if (ticker) {
+    const itemTicker = String(n.ticker || '').replace('MOEX:', '').trim().toUpperCase();
+    if (itemTicker && itemTicker !== String(ticker).toUpperCase()) {
+      badge = `<span class="news-ticker-badge">${escapeHtml(itemTicker)}</span>`;
+    }
+  }
+  return `
+    <div class="news-item${isFav ? ' is-fav' : ''}" data-link="${escapeHtml(link)}">
+        <a href="${escapeHtml(n.link)}" target="_blank" rel="noopener" class="news-row-link">
+            <div class="news-time" title="${escapeHtml(timeFull)}">${escapeHtml(timeShort)}</div>
+            <div class="news-text">
+                ${parts.heading ? `<div class="news-title">${badge}${escapeHtml(parts.heading)}</div>` : ''}
+                ${body ? `<div class="news-body">${escapeHtml(body)}</div>` : ''}
+            </div>
+        </a>
+        ${newsFlagBtnHtml(link, isFav)}
+    </div>`;
+}
+
+// Лента сгруппированной по дням разметки (шапки дней + строки). isFavAll —
+// «всё избранное» (вкладка «Избранные»); для обычной ленты состояние флажка
+// берётся из снимка window.newsFavorites по каноничной ссылке.
+// Счётчик один — общий размер ленты в первой шапке дня; по дням без счётчиков.
+function newsFeedHtml(items, isFavAll, ticker) {
+  const groups = newsDayGroups(items);
+  return `<div class="news-feed">` + groups.map((g, i) => {
+    const countHtml = i === 0
+      ? `<span class="news-day-count" title="Всего новостей в ленте">${items.length} ${pluralNews(items.length)}</span>`
+      : '';
+    return `<div class="news-day-header"><span class="news-day-label">${escapeHtml(g.label)}</span>${countHtml}</div>`
+      + g.items.map(({ n, p }) => newsRowHtml(n,
+          isFavAll || !!window.newsFavorites[canonicalNewsLink(n.link)], ticker, p)).join('');
+  }).join('') + `</div>`;
+}
 
 window.loadTickerNews = async function(symbol, forceRefresh = false) {
   console.log("🚀 [DEBUG] loadTickerNews вызвана для:", symbol, "Force:", forceRefresh);
@@ -436,49 +549,16 @@ window.loadTickerNews = async function(symbol, forceRefresh = false) {
 
     // Ссылка на пост — каноничный идентификатор новости (как на бэкенде:
     // https-схема, без хвостового слэша), по нему сверяем флажки.
-    const normLink = (l) => {
-      let s = (l || '').trim();
-      if (s.startsWith('http://')) s = 'https://' + s.slice(7);
-      return s.replace(/\/+$/, '');
-    };
+    // Канонизация вынесена на уровень модуля (canonicalNewsLink).
 
 // trimNewsTeaser / splitNewsTeaser / newsFlagBtnHtml / NEWS_FAV_* объявлены
 // на уровне модуля (см. начало файла) — здесь только отрисовка ленты.
 
-// Отображаем новости. Padding вынесен во внутренний div, чтобы скролл не обрезал низ
-newsList.innerHTML = `
-<div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
-    <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        Найдено <strong style="color: #2962ff;">${news.length}</strong> новостей
-    </div>
-</div>
-<div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
-    ${news.map(n => {
-    const link = normLink(n.link);
-    const isFav = !!window.newsFavorites[link];
-    // На UI показываем весь текст поста до слов «Читать далее» и т.п.
-    // Источник — full_text (полный текст из Telegram): title бэкенд режет
-    // до 200 символов, из-за чего маркер «Читать далее» часто не был виден.
-    const teaser = trimNewsTeaser(n.full_text || n.title);
-    const parts = splitNewsTeaser(teaser);
-    return `
-    <div class="news-item" data-link="${link}" style="position: relative; display: flex; align-items: stretch;">
-        ${newsFlagBtnHtml(link, isFav)}
-        <a href="${n.link}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: ${isFav ? '#33272a' : '#2a2e39'}; border-radius: 8px; border: 1px solid ${isFav ? '#ef5350' : '#363a45'}; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='${isFav ? '#33272a' : '#2a2e39'}'; this.style.transform='translateY(0)'">
-            <div style="flex: 1; min-width: 0;">
-                ${parts.heading ? `<div style="font-size: 15px; font-weight: 600; line-height: 1.4; margin-bottom: ${parts.body ? '8px' : '0'};">${escapeHtml(parts.heading)}</div>` : ''}
-                ${parts.body ? `<div style="font-size: 14px; font-weight: 400; color: #b2b5be; line-height: 1.55; white-space: pre-line;">${escapeHtml(parts.body)}</div>` : ''}
-                <div style="font-size: 12px; color: #787b86; margin-top: 8px;">${n.publisher}</div>
-            </div>
-            <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
-                ${n.time || ''}
-            </div>
-        </a>
-    </div>
-    `;
-    }).join('')}
-</div>
-`;
+// Компактная лента: строки, сгруппированные по дням (см. newsFeedHtml).
+// Пустая лента — дружелюбное пустое состояние вместо чипа «Найдено 0».
+newsList.innerHTML = news.length
+    ? newsFeedHtml(news, false, '')
+    : `<div class="news-empty">Нет новостей по тикеру</div>`;
 
   } catch (error) {
     console.error('Ошибка загрузки новостей:', error);
@@ -501,7 +581,7 @@ window.refreshNews = function() {
 // выгружается лента новостей; флажок-закладка ставится в контексте этого тикера
 // (в POST сохраняется ticker), и вкладка «Избранные» показывает только
 // избранные новости выбранного тикера. Для другого тикета — своё избранное.
-// Флажок-кнопка в левом верхнем углу новости: bookmark (как у избранных
+// Флажок-кнопка справа у каждой строки новости: bookmark (как у избранных
 // тикеров) — серый контур = не избранная, красный закрашенный = избранная.
 // Отметка ставится/снимается на сервере (POST /api/news/favorite), поэтому
 // переживает смену браузера/устройства.
@@ -666,15 +746,11 @@ window.updateNewsItemFlag = function(itemOrLink) {
   const inFavPane = !!(item.closest && item.closest('#news-fav-list'));
   const isFav = inFavPane || !!window.newsFavorites[link];
   const btn = item.querySelector('button');
-  const card = item.querySelector('a');
   applyNewsFlagState(btn, isFav);
-  if (card) {
-    card.style.background = isFav ? '#33272a' : '#2a2e39';
-    card.style.borderColor = isFav ? '#ef5350' : '#363a45';
-    // hover-обработчики инлайновые — пересоздаём их с новым «базовым» цветом
-    card.onmouseover = () => { card.style.background = '#363a45'; card.style.transform = 'translateY(-2px)'; };
-    card.onmouseout = () => { card.style.background = isFav ? '#33272a' : '#2a2e39'; card.style.transform = 'translateY(0)'; };
-  }
+  // Подсветка строки теперь классом (см. .news-item.is-fav в styles.css):
+  // фон/hover целиком в CSS, никаких inline-стилей и onmouseover-обработчиков.
+  // Прямая запись className (а не classList) — чтобы работать и в мини-DOM тестов.
+  item.className = 'news-item' + (isFav ? ' is-fav' : '');
   }
 };
 
@@ -791,8 +867,8 @@ function currentNewsTicker() {
 // Раздел отображается только когда в нём есть добавленные новости: т.е.
 // у ВЫБРАННОГО тикета есть хотя бы одна избранная новость (флажок-закладка).
 // Внутри — избранные посты именно выбранного тикера (свежие сверху),
-// каждый с красным флажком-закладкой слева; клик по флажку снимает избранное и
-// убирает карточку. При выборе другого тикета перерисовывается его
+// каждая строка с красным флажком-закладкой справа; клик по флажку снимает
+// избранное и убирает строку. При выборе другого тикета перерисовывается его
 // собственное избранное (а своего нет — вкладка скрывается).
 window.renderNewsFavoritesTab = async function(force = false) {
   const pane = document.getElementById('news-fav-list');
@@ -804,7 +880,7 @@ window.renderNewsFavoritesTab = async function(force = false) {
   if (!ticker || !currentTickerHasFavorites()) {
     window.newsFavoritesList = [];
     window.newsFavoritesListTicker = null;
-    pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">
+    pane.innerHTML = `<div class="news-empty">
         Избранных новостей пока нет — отметьте новость флажком-закладкой во вкладке «Новости»
     </div>`;
     updateNewsFavTabVisibility();
@@ -817,7 +893,7 @@ window.renderNewsFavoritesTab = async function(force = false) {
   if (window.newsFavoritesListTicker === (ticker || null)) {
     drawNewsFavorites(pane, window.newsFavoritesList.filter(n => window.newsFavorites[n.link]), ticker);
   } else {
-    pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">Загрузка избранного...</div>`;
+    pane.innerHTML = `<div class="news-empty">Загрузка избранного...</div>`;
   }
   // Данные тянутся НАПРЯМУЮ из БД (GET /api/news/favorites/list?ticker=...):
   // бэкенд читает news_favorites + news_cache и отвечает сразу, не дожидаясь
@@ -851,50 +927,22 @@ function escapeHtml(s) {
 function drawNewsFavorites(pane, items, ticker) {
   if (!items || items.length === 0) {
     const who = ticker ? ` по тикеру ${escapeHtml(ticker)}` : '';
-    pane.innerHTML = `<div style="padding: 20px; text-align: center; color: #787b86;">
+    pane.innerHTML = `<div class="news-empty">
         Избранных новостей${who} пока нет — отметьте новость флажком-закладкой во вкладке «Новости»
     </div>`;
     return;
   }
   const shownTicker = (items[0] && items[0].ticker) || ticker || '';
+  // Тихая шапка с тикером и счётчиком (news-fav-count обновляется при снятии
+  // флажка — см. syncNewsFavoritesList), далее та же компактная лента по дням,
+  // что и во вкладке «Новости», но все строки избранной (is-fav).
   pane.innerHTML = `
-<div style="padding: 0 20px; margin-top: 12px; flex-shrink: 0;">
-    <div style="padding: 8px 12px; background: #2a2e39; border-radius: 6px; font-size: 12px; color: #787b86; display: inline-block;">
-        <span class="favorite-flag favorite-filled" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span> Избранные новости${shownTicker ? ` (${escapeHtml(shownTicker)})` : ''}: <strong id="news-fav-count" style="color: #ef5350;">${items.length}</strong>
-    </div>
+<div class="news-fav-head">
+    <span class="favorite-flag favorite-filled" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg></span>
+    <span>Избранные новости${shownTicker ? ` · ${escapeHtml(shownTicker)}` : ''}</span>
+    <strong id="news-fav-count" title="Новостей в избранном">${items.length}</strong>
 </div>
-<div style="padding: 12px 20px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
-    ${items.map(n => {
-    const link = n.link || '';
-    // Бейдж тикера показываем только если он отличается от выбранного
-    // (вкладка теперь индивидуальна по тикерам — свой бейдж не нужен).
-    const itemTicker = String(n.ticker || '').replace('MOEX:', '').trim().toUpperCase();
-    const tickerBadge = (itemTicker && itemTicker !== String(ticker || '').toUpperCase())
-      ? `<span style="display:inline-block; margin-right:8px; padding:2px 8px; background:#363a45; border-radius:4px; font-size:11px; color:#2962ff; font-weight:600;">${escapeHtml(itemTicker)}</span>`
-      : '';
-    // Как и на вкладке «Новости»: показываем весь текст поста до слов
-    // «Читать далее» и т.п.; всё, начиная с этих слов и до конца, отсекаем.
-    // full_text (из news_cache / GET /api/news/favorites/list) не обрезан,
-    // title — резерв (например, когда поста ещё нет ни в одном кэше).
-    const teaser = trimNewsTeaser(n.full_text || n.title || link);
-    const parts = splitNewsTeaser(teaser);
-    return `
-    <div class="news-item" data-link="${escapeHtml(link)}" style="position: relative; display: flex; align-items: stretch;">
-        ${newsFlagBtnHtml(link, true)}
-        <a href="${escapeHtml(link)}" target="_blank" style="flex: 1; min-width: 0; display: flex; gap: 16px; padding: 16px 16px 16px 40px; background: #33272a; border-radius: 8px; border: 1px solid #ef5350; text-decoration: none; color: #d1d4dc; transition: all 0.2s; align-items: flex-start;" onmouseover="this.style.background='#363a45'; this.style.transform='translateY(-2px)'" onmouseout="this.style.background='#33272a'; this.style.transform='translateY(0)'">
-            <div style="flex: 1; min-width: 0;">
-                ${parts.heading ? `<div style="font-size: 15px; font-weight: 600; line-height: 1.4; margin-bottom: ${parts.body ? '8px' : '0'};">${tickerBadge}${escapeHtml(parts.heading)}</div>` : ''}
-                ${parts.body ? `<div style="font-size: 14px; font-weight: 400; color: #b2b5be; line-height: 1.55; white-space: pre-line;">${escapeHtml(parts.body)}</div>` : ''}
-                <div style="font-size: 12px; color: #787b86; margin-top: 8px;">Smart-Lab News</div>
-            </div>
-            <div style="font-size: 12px; color: #2962ff; white-space: nowrap; flex-shrink: 0; padding-top: 2px; font-weight: 500;">
-                ${escapeHtml(n.time || '')}
-            </div>
-        </a>
-    </div>
-    `;
-    }).join('')}
-</div>
+${newsFeedHtml(items, true, ticker)}
 `;
 }
 
