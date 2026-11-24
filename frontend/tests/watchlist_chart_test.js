@@ -40,6 +40,17 @@
 // «2026-06», дни числом, кроссхейр ДД.ММ.ГГГГ), поллинг Binance 5 с,
 // Pointer Events у кисти/измерителя и догоняющего клика (тач-устройства),
 // fmtVol с триллионами (2355.79B → 2.36T).
+// Панель настроек выбранной разметки (как строка настроек фигуры в
+// TradingView): плавающая строка у фигуры — три дропдауна: цвет (палитра
+// из 12 + «Свой цвет…»), толщина и стиль линии (триггер показывает
+// текущее значение иконкой: кружок цвета / линия толщиной / линия со
+// штрихом) + корзина (удалить выделенную фигуру); меню в стиле дропдауна
+// типа графика (открытие по триггеру, закрытие — выбор пункта, клик мимо,
+// Escape); показ при выделении (onSelected) и достройке (onDrawEnd),
+// закрытие при снятии выделения (onDeselected) и удалении (onRemoved);
+// правки через overlay.setStyles переживают перезагрузку (styles в
+// сериализации разметки), кастомные шаблоны (прямоугольник/стрелка/кисть)
+// читают стили инстанса, Ctrl+Z возвращает фигуру вместе со стилями.
 // Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
 // (node:vm без браузера).
 // Единообразие со списком: дельта в легенде — из той же ручки /api/prices,
@@ -167,6 +178,21 @@ const els = {
   'tc-compare-cancel': new El('button'),
   // ⚙ настроек гистограммы объёма в строке «Объем» легенды OHLCV
   'tc-leg-volume-gear': new El('span'),
+  // плавающая панель настроек выбранной разметки — дропдауны цвета/
+  // толщины/стиля (триггеры + меню, палитру и опции строит
+  // watchlist_chart.js) + корзина
+  'tc-draw-settings': new El('div'),
+  'tc-ds-color-toggle': new El('button'),
+  'tc-ds-color-menu': new El('div'),
+  'tc-ds-color-custom': new El('button'),
+  'tc-ds-color-dot': new El('span'),
+  'tc-ds-colors': new El('div'),
+  'tc-ds-color-input': new El('input'),
+  'tc-ds-width-toggle': new El('button'),
+  'tc-ds-widths': new El('div'),
+  'tc-ds-style-toggle': new El('button'),
+  'tc-ds-styles': new El('div'),
+  'tc-ds-trash': new El('button'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -226,9 +252,27 @@ const chart = {
     const id = 'ov' + (++ovSeq);
     const o = { id, name: opts.name, extendData: opts.extendData,
       points: (opts.points || []).slice(), opts,
+      // стили инстанса (панель настроек разметки): восстановление из
+      // localStorage + merge partial-стилей, как OverlayImp 9.6
+      styles: opts.styles ? JSON.parse(JSON.stringify(opts.styles)) : {},
       // undo/redo сдвига: живой Overlay 9.6 умеет setPoints — полный
       // набор точек переводит его в завершённый режим
       setPoints(pts) { this.points = pts.slice(); },
+      // setStyles в OverlayImp 9.6 мерджит partial-стили ГЛУБОКО (по
+      // вложенным ключам line/rect/…): замена одного поля не теряет
+      // соседние, проставленные ранее
+      setStyles(st) {
+        const dst = JSON.parse(JSON.stringify(this.styles || {}));
+        const merge = (a, b) => {
+          for (const k of Object.keys(b)) {
+            if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) {
+              a[k] = merge(a[k] && typeof a[k] === 'object' && !Array.isArray(a[k]) ? a[k] : {}, b[k]);
+            } else a[k] = b[k];
+          }
+          return a;
+        };
+        this.styles = merge(dst, st);
+      },
     };
     overlayStore.set(id, o);
     if (!opts.points || !opts.points.length) {
@@ -1969,6 +2013,230 @@ const candle = (day, close, month = 11) => ({
   els['tc-compare-cancel']._listeners.click();
   assert(!els['tc-compare-modal']._classes.has('active'),
     'сравнение: «Закрыть» спрятало окно');
+
+  // ---- Панель настроек выбранной разметки (как строка настроек фигуры
+  // в TradingView): три дропдауна — цвет (палитра + «Свой цвет…»),
+  // толщина и стиль линии (триггер показывает текущее значение иконкой)
+  // + корзина. Показ при выделении (onSelected) и достройке (onDrawEnd),
+  // закрытие при снятии выделения (onDeselected) и удалении (onRemoved).
+  // Кнопки строит buildDrawSettings на DOMContentLoaded.
+  // Полные данные: press-drag измерителя ниже конвертирует координаты —
+  // нужны минимум две свечи (после блока сравнения на графике 1 месячная)
+  fetchQueue = [{
+    symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк',
+    candles: [candle(18, 305), candle(19, 308)],
+  }];
+  await sandbox.window.wlChartLoad('SBER');
+  await flush();
+  assert(els['tc-ds-colors'].children.length === 12, 'панель настроек: палитра из 12 свотчей построена');
+  assert(els['tc-ds-widths'].children.length === 4, 'панель настроек: в меню толщины 4 опции построено');
+  assert(els['tc-ds-styles'].children.length === 3, 'панель настроек: в меню стиля 3 опции (сплошная/пунктир/точки)');
+
+  // Новая фигура: панель показывается сразу после достройки (onDrawEnd),
+  // меню стартуют закрытыми, триггеры отражают дефолты шаблона
+  const dsToolBtn = new El('button');
+  sandbox.window.tcDrawOverlay('segment', dsToolBtn);
+  const ovDs = [...overlayStore.values()].reverse().find(o => o.name === 'segment' && !o.removed);
+  ovDs.points = [
+    { timestamp: Date.UTC(2026, 10, 18), value: 300, dataIndex: 0 },
+    { timestamp: Date.UTC(2026, 10, 19), value: 310, dataIndex: 1 },
+  ];
+  ovDs.opts.onDrawEnd({ overlay: ovDs });
+  assert(els['tc-draw-settings']._classes.has('show'),
+    'панель настроек: показана сразу после достройки фигуры (onDrawEnd)');
+  assert(!els['tc-ds-color-menu']._classes.has('open') && !els['tc-ds-widths']._classes.has('open')
+    && !els['tc-ds-styles']._classes.has('open'),
+    'панель настроек: меню дропдаунов стартуют закрытыми');
+  assert(els['tc-ds-color-input'].value === '#1677FF'
+    && els['tc-ds-color-dot'].style.background === '#1677FF'
+    && els['tc-ds-width-toggle'].dataset.width === '1'
+    && els['tc-ds-style-toggle'].dataset.style === 'solid',
+    'панель настроек: триггеры показывают текущие значения (цвет/толщина/стиль дефолта)');
+
+  // Выделение/снятие выделения: onSelected показывает, onDeselected прячет
+  ovDs.opts.onDeselected();
+  assert(!els['tc-draw-settings']._classes.has('show'),
+    'панель настроек: onDeselected (клик мимо фигуры) спрятал панель');
+  ovDs.opts.onSelected({ overlay: ovDs });
+  assert(els['tc-draw-settings']._classes.has('show'),
+    'панель настроек: onSelected (клик по фигуре) показал панель');
+
+  // Дропдаун цвета: триггер открывает меню, свотч красит все типы фигур,
+  // сохраняется в localStorage и закрывает меню (как выбор палитры в TV)
+  els['tc-ds-color-toggle']._listeners.click();
+  assert(els['tc-ds-color-menu']._classes.has('open'),
+    'панель настроек: триггер цвета открыл меню с палитрой');
+  const swatch = els['tc-ds-colors'].children.find(c => c.dataset.color === '#089981');
+  swatch._listeners.click();
+  assert(ovDs.styles.line.color === '#089981'
+    && ovDs.styles.rect.borderColor === '#089981'
+    && ovDs.styles.rect.color === 'rgba(8, 153, 129, 0.12)'
+    && ovDs.styles.polygon.color === '#089981'
+    && ovDs.styles.point.color === '#089981'
+    && ovDs.styles.text.backgroundColor === '#089981',
+    'панель настроек: свотч покрасил line/rect(+заливка)/polygon/point/text фигуры');
+  assert(!els['tc-ds-color-menu']._classes.has('open'),
+    'панель настроек: выбор свотча закрыл меню цвета');
+  assert(els['tc-ds-color-input'].value === '#089981'
+    && els['tc-ds-color-dot'].style.background === '#089981'
+    && swatch._classes.has('active'),
+    'панель настроек: свотч подсвечен, кружок/поле цвета показывают выбор');
+  const savedDs = JSON.parse(store.get('wl_chart_markup')).SBER
+    .find(s => s.name === 'segment' && s.styles && s.styles.line);
+  assert(savedDs && savedDs.styles.line.color === '#089981',
+    'панель настроек: styles сериализованы в localStorage разметки');
+
+  // Дропдаун толщины: триггер открывает меню, опция красит линию и
+  // границы прямоугольника, меню закрывается, триггер перерисовался
+  els['tc-ds-width-toggle']._listeners.click();
+  assert(els['tc-ds-widths']._classes.has('open') && !els['tc-ds-color-menu']._classes.has('open'),
+    'панель настроек: триггер толщины открыл своё меню (чужое закрыто)');
+  const widthBtn = els['tc-ds-widths'].children.find(c => c.dataset.width === '3');
+  widthBtn._listeners.click();
+  assert(ovDs.styles.line.size === 3 && ovDs.styles.rect.borderSize === 3
+    && ovDs.styles.polygon.borderSize === 3,
+    'панель настроек: толщина применилась к линии и границам фигур');
+  assert(!els['tc-ds-widths']._classes.has('open'),
+    'панель настроек: выбор толщины закрыл меню');
+  assert(widthBtn._classes.has('active') && els['tc-ds-width-toggle'].dataset.width === '3',
+    'панель настроек: опция толщины 3 подсвечена, триггер показывает 3');
+
+  // Дропдаун стиля: «точки» — dashed с dashedValue [1,3] у линии и границ
+  // (style — значение LineType из klinecharts 9.6: Dashed='dashed', не
+  // 'dash' — с 'dash' библиотека рисует сплошную)
+  els['tc-ds-style-toggle']._listeners.click();
+  assert(els['tc-ds-styles']._classes.has('open'),
+    'панель настроек: триггер стиля открыл меню');
+  const dottedBtn = els['tc-ds-styles'].children.find(c => c.dataset.style === 'dotted');
+  dottedBtn._listeners.click();
+  assert(ovDs.styles.line.style === 'dashed'
+    && JSON.stringify(ovDs.styles.line.dashedValue) === '[1,3]'
+    && ovDs.styles.rect.borderStyle === 'dashed'
+    && JSON.stringify(ovDs.styles.rect.borderDashedValue) === '[1,3]',
+    'панель настроек: стиль «точки» — dashed с dashedValue [1,3] у линии и границ');
+  assert(!els['tc-ds-styles']._classes.has('open'),
+    'панель настроек: выбор стиля закрыл меню');
+  assert(dottedBtn._classes.has('active') && els['tc-ds-style-toggle'].dataset.style === 'dotted',
+    'панель настроек: опция стиля «точки» подсвечена, триггер показывает dotted');
+
+  // Клик мимо панели и Escape закрывают открытые меню панели
+  els['tc-ds-color-toggle']._listeners.click();
+  assert(els['tc-ds-color-menu']._classes.has('open'), 'панель настроек: меню цвета снова открыто');
+  docListeners.click({ target: new El('div') });
+  assert(!els['tc-ds-color-menu']._classes.has('open'),
+    'панель настроек: клик мимо панели закрыл меню');
+  els['tc-ds-color-toggle']._listeners.click();
+  assert(els['tc-ds-color-menu']._classes.has('open'), 'панель настроек: меню цвета снова открыто');
+  docListeners.keydown({ key: 'Escape' });
+  assert(!els['tc-ds-color-menu']._classes.has('open'),
+    'панель настроек: Escape закрыл меню');
+
+  // Измеритель — временный объект с семантическими цветами: панели
+  // настроек у него нет. tc-measure не создаёт объект по клику инструмента —
+  // press-drag захват строит его на pointerdown (как в тестах измерителя)
+  ovDs.opts.onDeselected(); // снимаем выделение segment — панель закрыта
+  const measDsBtn = new El('button');
+  sandbox.window.tcDrawOverlay('tc-measure', measDsBtn);
+  els['tc-chart-stage']._listeners.pointerdown({
+    button: 0, clientX: 100, clientY: 150, preventDefault: () => {}, stopPropagation: () => {},
+  });
+  const ovMeasureDs = liveOverlays().find(o => o.name === 'tc-measure');
+  assert(!!ovMeasureDs, 'панель настроек: измеритель создан press-drag захватом');
+  ovMeasureDs.opts.onSelected({ overlay: ovMeasureDs });
+  assert(!els['tc-draw-settings']._classes.has('show'),
+    'панель настроек: измерителю строки настроек нет (цвета семантические)');
+  winListeners.pointerup({ clientX: 180, clientY: 120 });
+
+  // Кастомные шаблоны читают стили инстанса (прямоугольник/стрелка/кисть)
+  const rectFig = registeredOverlays['tc-rect'].createPointFigures({
+    coordinates: [{ x: 0, y: 0 }, { x: 10, y: 10 }],
+    overlay: { styles: { rect: { borderColor: '#ef5350', borderSize: 2, borderStyle: 'dashed', borderDashedValue: [6, 4], color: 'rgba(239, 83, 80, 0.12)' } } },
+  })[0];
+  assert(rectFig.styles.borderColor === '#ef5350' && rectFig.styles.borderSize === 2
+    && rectFig.styles.borderStyle === 'dashed'
+    && JSON.stringify(rectFig.styles.borderDashedValue) === '[6,4]',
+    'кастомный прямоугольник: фигура рисуется стилями инстанса (цвет/толщина/пунктир)');
+  const rectFigDefault = registeredOverlays['tc-rect'].createPointFigures({
+    coordinates: [{ x: 0, y: 0 }, { x: 10, y: 10 }],
+  })[0];
+  assert(rectFigDefault.styles.borderColor === '#2962ff' && rectFigDefault.styles.borderSize === 1,
+    'кастомный прямоугольник: без styles инстанса — прежний дефолт (синий TV, 1px)');
+  const arrowFig = registeredOverlays['tc-arrow'].createPointFigures({
+    coordinates: [{ x: 0, y: 0 }, { x: 10, y: -10 }],
+    overlay: { styles: { line: { color: '#f5c451', size: 3 } } },
+  });
+  assert(arrowFig[0].styles.color === '#f5c451' && arrowFig[0].styles.size === 3
+    && arrowFig[1].styles.color === '#f5c451',
+    'кастомная стрелка: линия и наконечник — цветом/толщиной инстанса');
+  const brushFig = registeredOverlays['tc-brush'].createPointFigures({
+    coordinates: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }],
+    overlay: { styles: { line: { color: '#c86fd1', size: 4, style: 'dashed', dashedValue: [6, 4] } } },
+  })[0];
+  assert(brushFig.styles.color === '#c86fd1' && brushFig.styles.size === 4
+    && brushFig.styles.style === 'dashed',
+    'кастомная кисть: цвет/толщина/стиль — из инстанса');
+
+  // Корзина: удаляет выделенную фигуру (в стек undo), панель прячет;
+  // Ctrl+Z возвращает фигуру ВМЕСТЕ со стилями
+  ovDs.opts.onSelected({ overlay: ovDs });
+  assert(els['tc-draw-settings']._classes.has('show'), 'панель настроек: снова показана перед удалением');
+  els['tc-ds-trash']._listeners.click();
+  assert(ovDs.removed === true && !els['tc-draw-settings']._classes.has('show'),
+    'корзина: фигура удалена, панель настроек спрятана');
+  assert(!JSON.parse(store.get('wl_chart_markup')).SBER
+    .some(s => s.styles && s.styles.line && s.styles.line.color === '#089981'),
+    'корзина: удаление сохранено в localStorage (стилизованного segment больше нет)');
+  assert(!els['tc-undo'].disabled, 'корзина: удаление — операция в стеке (undo доступен)');
+  sandbox.window.tcUndo();
+  const restoredDs = [...overlayStore.values()].filter(o => o.name === 'segment' && !o.removed).pop();
+  assert(!!restoredDs && restoredDs.styles && restoredDs.styles.line.color === '#089981'
+    && restoredDs.styles.line.size === 3,
+    'корзина: Ctrl+Z вернул фигуру вместе со стилями (цвет/толщина)');
+
+  // Очистка всей разметки тоже прячет панель настроек
+  restoredDs.opts.onSelected({ overlay: restoredDs });
+  assert(els['tc-draw-settings']._classes.has('show'),
+    'панель настроек: показана для восстановленной фигуры');
+  sandbox.window.tcClearOverlays();
+  assert(!els['tc-draw-settings']._classes.has('show'),
+    'очистка разметки: панель настроек спрятана');
+
+  // ---- Миграция styles старых сборок: разметка с line.style 'dash'
+  // (неверное значение LineType до фикса — в klinecharts 9.6
+  // LineType.Dashed = 'dashed', с 'dash' линия рисуется сплошной)
+  // нормализуется в 'dashed' при восстановлении И при записи
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
+    candles: [candle(18, 103), candle(19, 104)] }];
+  await sandbox.window.wlChartLoad('GAZP'); // уходим с SBER — его хранилище пусто
+  await flush();
+  store.set('wl_chart_markup', JSON.stringify({
+    SBER: [{
+      name: 'segment',
+      styles: { line: { color: '#089981', size: 3, style: 'dash', dashedValue: [6, 4] } },
+      points: [
+        { timestamp: Date.UTC(2026, 10, 18), value: 300 },
+        { timestamp: Date.UTC(2026, 10, 19), value: 310 },
+      ],
+    }],
+  }));
+  fetchQueue = [{ symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк',
+    candles: [candle(18, 305), candle(19, 308)] }];
+  await sandbox.window.wlChartLoad('SBER'); // возврат: восстановление с миграцией
+  await flush();
+  const migrated = liveOverlays().find(o => o.name === 'segment' && !o.removed && o.styles && o.styles.line);
+  assert(!!migrated && migrated.styles.line.style === 'dashed'
+    && JSON.stringify(migrated.styles.line.dashedValue) === '[6,4]',
+    'миграция styles: line.style «dash» из старых сборок → «dashed» при восстановлении');
+  // Запись тоже нормализует: «старые» styles живого объекта не утекут в localStorage
+  migrated.styles.line.style = 'dash';
+  migrated.opts.onDeselected(); // persistOverlays → serializeOverlays
+  assert(JSON.parse(store.get('wl_chart_markup')).SBER[0].styles.line.style === 'dashed',
+    'миграция styles: «dash» → «dashed» при записи разметки в localStorage');
+  // Чистим за собой разметку тестовых тикеров
+  const markupCleanup = JSON.parse(store.get('wl_chart_markup'));
+  delete markupCleanup.SBER;
+  delete markupCleanup.GAZP;
+  store.set('wl_chart_markup', JSON.stringify(markupCleanup));
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');
