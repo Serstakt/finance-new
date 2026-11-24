@@ -86,6 +86,13 @@
 //   - undo/redo разметки: стек операций создать/удалить/сдвинуть/очистить
 //     (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и две стрелки в шапке) — удалённая
 //     правым кликом фигура возвращается, как в TradingView;
+//   - панель настроек выбранной разметки (как строка настроек фигуры в
+//     TradingView): клик по фигуре (или её достройка) показывает плавающую
+//     строку у фигуры — три дропдауна (цвет: палитра + «Свой цвет…»,
+//     толщина, стиль линии; триггер показывает текущее значение иконкой)
+//     и корзина (удалить выделенную фигуру); клик мимо фигуры панель
+//     закрывает, правки применяются overlay.setStyles и переживают
+//     перезагрузку (styles в сериализации разметки);
 //   - Escape снимает рисование: недостроенная фигура убирается, режим
 //     рисования выключается (взведённая кисть/измеритель разоружаются);
 //   - контекстное меню правого клика богаче одного «Reset chart»:
@@ -758,7 +765,16 @@
 
   // Кастомный прямоугольник: в KLineChart v9.6 нет встроенного шаблона
   // overlay «rect» (rect — только тип фигуры), поэтому регистрируем свой
-  // шаблон из двух точек с фигурой-прямоугольником между ними.
+  // шаблон из двух точек с фигурой-прямоугольником между ними. Стили
+  // фигуры читаются из styles инстанса (line/rect-ключи) — их пишет
+  // панель настроек разметки; по умолчанию — прежний вид (синий TV).
+  const RECT_DEFAULT_STYLES = {
+    color: 'rgba(41, 98, 255, 0.12)',
+    borderColor: '#2962ff',
+    borderSize: 1,
+    borderStyle: 'solid',
+    borderDashedValue: [2, 2],
+  };
   const registerRectOverlay = () => {
     if (typeof klinecharts === 'undefined') return;
     klinecharts.registerOverlay({
@@ -767,9 +783,10 @@
       needDefaultPointFigure: true,
       needDefaultXAxisFigure: true,
       needDefaultYAxisFigure: true,
-      createPointFigures: ({ coordinates }) => {
+      createPointFigures: ({ coordinates, overlay }) => {
         if (!coordinates || coordinates.length < 2) return [];
         const [a, b] = coordinates;
+        const st = { ...RECT_DEFAULT_STYLES, ...((overlay && overlay.styles && overlay.styles.rect) || {}) };
         return [{
           type: 'rect',
           attrs: {
@@ -780,9 +797,11 @@
           },
           styles: {
             style: 'stroke_fill',
-            color: 'rgba(41, 98, 255, 0.12)',
-            borderColor: '#2962ff',
-            size: 1,
+            color: st.color,
+            borderColor: st.borderColor,
+            borderSize: st.borderSize,
+            borderStyle: st.borderStyle,
+            borderDashedValue: st.borderDashedValue,
           },
         }];
       },
@@ -800,9 +819,13 @@
       name: 'tc-arrow',
       totalStep: 3, // 2 точки: начало → конец
       needDefaultPointFigure: true,
-      createPointFigures: ({ coordinates }) => {
+      createPointFigures: ({ coordinates, overlay }) => {
         if (!coordinates || coordinates.length < 2) return [];
         const [a, b] = coordinates;
+        // Цвет/толщина/стиль — из styles инстанса (панель настроек
+        // разметки), по умолчанию — прежний вид
+        const st = (overlay && overlay.styles && overlay.styles.line) || {};
+        const color = st.color ?? ARROW_COLOR;
         // Наконечник: равнобедренный треугольник при вершине b,
         // ось — вдоль a→b (длина 10 px, полуугол ~26°)
         const ang = Math.atan2(b.y - a.y, b.x - a.x);
@@ -815,12 +838,17 @@
           {
             type: 'line',
             attrs: { coordinates: [a, b] },
-            styles: { style: 'stroke', color: ARROW_COLOR, size: 1.6 },
+            styles: {
+              style: st.style ?? 'solid',
+              color,
+              size: st.size ?? 1.6,
+              dashedValue: st.dashedValue ?? [2, 2],
+            },
           },
           {
             type: 'polygon',
             attrs: { coordinates: [b, wing(half), wing(-half)] },
-            styles: { style: 'fill', color: ARROW_COLOR },
+            styles: { style: 'fill', color },
           },
         ];
       },
@@ -844,12 +872,20 @@
       name: 'tc-brush',
       totalStep: 2,
       needDefaultPointFigure: false, // кружки на узлах кисти не нужны
-      createPointFigures: ({ coordinates }) => {
+      createPointFigures: ({ coordinates, overlay }) => {
         if (!coordinates || coordinates.length < 2) return [];
+        // Цвет/толщина/стиль — из styles инстанса (панель настроек
+        // разметки), по умолчанию — прежний вид
+        const st = (overlay && overlay.styles && overlay.styles.line) || {};
         return [{
           type: 'line',
           attrs: { coordinates },
-          styles: { style: 'stroke', color: BRUSH_COLOR, size: 2 },
+          styles: {
+            style: st.style ?? 'solid',
+            color: st.color ?? BRUSH_COLOR,
+            size: st.size ?? 2,
+            dashedValue: st.dashedValue ?? [2, 2],
+          },
         }];
       },
     });
@@ -1302,9 +1338,13 @@
         });
         // Сдвиг/зум меняют положение цены на шкале — отсчёт под тегом
         // последней цены догоняет (секундный тик подстрахует, если тип
-        // события этой версией библиотеки не отдаётся)
+        // события этой версией библиотеки не отдаётся); панель настроек
+        // разметки двигается вместе с фигурой
         for (const evName of ['onScroll', 'onZoom', 'onPaneMouseZoom']) {
-          chartInstance.subscribeAction(evName, () => renderCountdown());
+          chartInstance.subscribeAction(evName, () => {
+            renderCountdown();
+            repositionDrawSettings();
+          });
         }
       }
     }
@@ -1560,6 +1600,13 @@
           && e.target.closest('#tc-ind-dropdown'))) {
         hideIndicatorMenu();
       }
+      // Меню панели настроек разметки: закрыть при клике мимо панели
+      // (клики по триггерам/пунктам не «мимо» — target внутри #tc-draw-settings)
+      if (anyDrawSettingsMenuOpen()
+        && !(e && e.target && typeof e.target.closest === 'function'
+          && e.target.closest('#tc-draw-settings'))) {
+        hideDrawSettingsMenus();
+      }
       if (ctxMenuOpen) hideCtxMenu();
     });
     document.addEventListener('keydown', (e) => {
@@ -1568,6 +1615,9 @@
         if (hideTypeMenu()) return;
         if (hideScaleMenu()) return;
         if (hideIndicatorMenu()) return;
+        // Меню панели настроек разметки — раньше контекстного меню и
+        // отмены рисования (как в TV: Esc сначала закрывает меню)
+        if (hideDrawSettingsMenus()) return;
         if (ctxMenuOpen) { hideCtxMenu(); return; }
         if (dialogCtx) return; // открытый диалог закроет window-обработчик
         if (cancelActiveDrawing()) {
@@ -1663,6 +1713,7 @@
     const id = chartInstance.createOverlay({
       name: specs.name,
       extendData: specs.extendData ?? undefined,
+      styles: normalizeSpecStyles(specs.styles) ?? undefined,
       points,
       ...overlayCallbacks(),
     });
@@ -1872,7 +1923,12 @@
         return vts == null ? null : { timestamp: vts, value: p.value, f: 1 };
       })
       .filter(Boolean);
-    return points.length ? { name: o.name, extendData: o.extendData ?? null, points } : null;
+    // Styles инстанса (цвет/толщина/стиль из панели настроек разметки):
+    // непустой объект — в сериализацию (с миграцией 'dash' → 'dashed'),
+    // выбор переживает перезагрузку
+    const styles = o.styles && typeof o.styles === 'object'
+      && Object.keys(o.styles).length ? normalizeSpecStyles(o.styles) : null;
+    return points.length ? { name: o.name, extendData: o.extendData ?? null, styles, points } : null;
   };
 
   const serializeOverlays = () => {
@@ -1937,6 +1993,16 @@
         if (specs) pushOp(opAdd(e.overlay.id, specs));
       }
       persistOverlays();
+      // Достроенная фигура выделяется тем же кликом — показываем панель
+      // настроек сразу («при нанесении разметки», как в TradingView)
+      if (e && e.overlay) showDrawSettings(e.overlay);
+    },
+    // Выделение фигуры (клик по ней) — панель настроек у фигуры; клик
+    // мимо (onDeselected) или удаление (onRemoved) панель закрывают
+    onSelected: (e) => { if (e && e.overlay) showDrawSettings(e.overlay); },
+    onDeselected: () => {
+      hideDrawSettings();
+      persistOverlays(); // страховка после правок (как раньше)
     },
     onPressedMoveStart: (e) => {
       if (opsMuted || !e || !e.overlay) return;
@@ -1953,7 +2019,6 @@
       moveBeforeSpecs.delete(e && e.overlay ? e.overlay.id : undefined);
       persistOverlays();
     },
-    onDeselected: () => persistOverlays(),
     onRightClick: () => {
       // Правый клик попал по фигуре: библиотека на mousedown зовёт колбэк
       // и удаляет объект (или отменяет рисование), если колбэк вернул не
@@ -1966,6 +2031,7 @@
       const id = e && e.overlay && e.overlay.id;
       if (id) overlayIds = overlayIds.filter(x => x !== id);
       clearToolActive();
+      hideDrawSettings();
       // Удаление фигуры любым способом становится операцией — Ctrl+Z её
       // вернёт. Свои снятия (undo/redo, отмена рисования, очистка) замьючены
       if (!opsMuted && id != null && !isTemporaryOverlay(e.overlay)) {
@@ -2008,6 +2074,7 @@
       const id = chartInstance.createOverlay({
         name: s.name,
         extendData: s.extendData ?? undefined,
+        styles: normalizeSpecStyles(s.styles) ?? undefined,
         points,
         ...overlayCallbacks(),
       });
@@ -2457,6 +2524,9 @@
         // «цена + отсчёт» выравнивается по новой оси не дожидаясь
         // секундного тика (syncAxisPriceTag вызывается и оттуда)
         syncAxisPriceTag();
+        // Панель настроек разметки держится у своей фигуры — позиция
+        // пересчитывается под новые габариты холста
+        repositionDrawSettings();
       }
     }, 50);
   };
@@ -2918,6 +2988,9 @@
   };
 
   const onStageMouseDown = (e) => {
+    // Клик по панели настроек разметки — не рисование (кисть/измеритель
+    // не стартуют, «висящее» измерение не убирается)
+    if (inDrawSettings(e)) return;
     // Измеритель построен и инструмент не активен — клик его убирает
     // (поведение TradingView), остальное событие пропускаем дальше.
     if (!armedStageTool && measureLiveId != null) {
@@ -3116,12 +3189,15 @@
   };
 
   const onStageClickDown = (e) => {
+    // Клик по панели настроек — не «догоняющий клик» фигуры
+    if (inDrawSettings(e)) return;
     stageClickDownXY = e && (e.button === undefined || e.button === 0)
       ? { x: e.clientX, y: e.clientY }
       : null;
   };
 
   const onStageClickUp = (e) => {
+    if (inDrawSettings(e)) return;
     const down = stageClickDownXY;
     stageClickDownXY = null;
     if (!down || !e || (e.button !== undefined && e.button !== 0)) return;
@@ -3235,6 +3311,7 @@
     stageToolDrawing = false;
     stageToolOverlayId = null;
     measureLiveId = null;
+    hideDrawSettings();
     // Сериализуем до удаления: очистка станет операцией — Ctrl+Z вернёт
     // всю разметку (включая «будущие» точки, см. convertSpecPoints)
     const specs = serializeOverlays();
@@ -3247,6 +3324,415 @@
     persistOverlays();
     setStatus('Разметка удалена');
   };
+
+  // ---- Плавающая панель настроек выбранной разметки (как в TradingView)
+  // ---- Клик по фигуре (или её достройка) показывает строку кастомизации
+  // у фигуры: три дропдауна (цвет с палитрой и «Своим цветом…», толщина,
+  // стиль линии) и корзина — удалить выделенную фигуру. Триггер каждого
+  // дропдауна показывает текущее значение иконкой (кружок цвета / линия
+  // толщиной выбора / линия со штрихом выбранного стиля), как в TV; меню
+  // в стиле дропдауна типа графика: открытие по клику, закрытие — выбор
+  // пункта, клик мимо, Escape или переключение на другой дропдаун.
+  // Клик мимо фигуры (onDeselected) или её удаление (onRemoved) закрывают
+  // всю панель; сдвиг/зум графика двигают панель вместе с фигурой
+  // (подписки onScroll/onZoom в init). Правки применяются через
+  // overlay.setStyles (9.6 мерджит partial-стили по ключам типов фигур:
+  // line/arc/rect/polygon/circle/point/text) и переживают перезагрузку:
+  // styles попадают в сериализацию разметки (overlaySpec → createOverlay
+  // при восстановлении/undo). У измерителя панель не показывается: его
+  // цвета семантические (рост/падение).
+
+  let drawSettingsOverlayId = null; // id выделенной фигуры (панель открыта)
+
+  // Палитра в духе TradingView (два ряда по шесть; первый — синий TV)
+  const DS_COLORS = [
+    '#2962ff', '#089981', '#f23645', '#ff9800', '#fdd835', '#26c6da',
+    '#9c27b0', '#e91e63', '#787b86', '#d1d4dc', '#ffffff', '#5d606b',
+  ];
+  const DS_WIDTHS = [1, 2, 3, 4];
+  // style — значения LineType из klinecharts 9.6: Dashed='dashed'
+  // (не 'dash'! — с 'dash' сравнение в drawLine не срабатывает и линия
+  // рисуется сплошной), пунктир и точки отличаются только dashedValue
+  const DS_STYLES = [
+    { key: 'solid', title: 'Сплошная', style: 'solid', dashedValue: [2, 2] },
+    { key: 'dash', title: 'Пунктир', style: 'dashed', dashedValue: [6, 4] },
+    { key: 'dotted', title: 'Точки', style: 'dashed', dashedValue: [1, 3] },
+  ];
+
+  // '#rrggbb' → 'rgba(r, g, b, a)' (заливка фигур при смене цвета;
+  // непарсимое — возвращается как есть)
+  const hexToRgba = (hex, alpha) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m) return hex;
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  };
+
+  // Дефолтный цвет шаблона: у кастомных фигур — синий TV, у встроенных —
+  // библиотечный (край — на случай недоступности стилей инстанса)
+  const dsTemplateColor = (name) => ({
+    'tc-rect': '#2962ff',
+    'tc-arrow': ARROW_COLOR,
+    'tc-brush': BRUSH_COLOR,
+  }[name] || '#1677FF');
+
+  // Текущий цвет/толщина/стиль фигуры: styles инстанса (их пишет панель),
+  // затем дефолт шаблона. Толщина возвращается «как есть» — триггер рисует
+  // линию любой фактической толщины (у стрелки 1.6), пункт меню
+  // подсвечивается только при попадании в пресет DS_WIDTHS
+  const dsCurrentColor = (ov) => {
+    const st = (ov && ov.styles) || {};
+    return st.line?.color ?? st.rect?.borderColor ?? st.polygon?.color
+      ?? st.circle?.borderColor ?? st.text?.backgroundColor
+      ?? dsTemplateColor(ov && ov.name);
+  };
+  const dsCurrentWidth = (ov) => {
+    const st = (ov && ov.styles) || {};
+    return st.line?.size ?? st.rect?.borderSize ?? 1;
+  };
+  const dsCurrentStyleKey = (ov) => {
+    const line = ((ov && ov.styles) || {}).line || {};
+    // 'dash' — стили из сборок с неверным значением LineType (до миграции)
+    if (line.style === 'dashed' || line.style === 'dash') {
+      return JSON.stringify(line.dashedValue) === JSON.stringify([1, 3]) ? 'dotted' : 'dash';
+    }
+    return 'solid';
+  };
+
+  // Стили из старых сборок: фигуры с line.style 'dash' библиотека рисует
+  // сплошной (в 9.6 LineType.Dashed = 'dashed') — нормализуем при записи
+  // разметки (overlaySpec) и при восстановлении/undo (createOverlay)
+  const normalizeSpecStyles = (styles) => {
+    if (!styles || typeof styles !== 'object') return styles;
+    const fixStyle = (s) => (s && s.style === 'dash' ? { ...s, style: 'dashed' } : s);
+    const fixBorder = (s) => (s && s.borderStyle === 'dash' ? { ...s, borderStyle: 'dashed' } : s);
+    const out = { ...styles };
+    for (const key of ['line', 'arc']) {
+      if (out[key]) out[key] = fixStyle(out[key]);
+    }
+    for (const key of ['rect', 'polygon', 'circle']) {
+      if (out[key]) out[key] = fixBorder(out[key]);
+    }
+    return out;
+  };
+
+  // Применение правки: overlay.setStyles мерджит partial по ключам типов
+  // фигур — пишем во все, что фигура использует (лишние безвредны), затем
+  // перерисовка панели и сохранение разметки
+  const applyDrawSettingsPatch = (patch) => {
+    const ov = drawSettingsOverlayId != null && chartInstance
+      ? chartInstance.getOverlayById(drawSettingsOverlayId) : null;
+    if (!ov || typeof ov.setStyles !== 'function') return;
+    ov.setStyles(patch);
+    syncDrawSettings(ov);
+    redrawOverlayPane();
+    persistOverlays();
+  };
+
+  const dsApplyColor = (color) => applyDrawSettingsPatch({
+    line: { color },
+    arc: { color },
+    rect: { borderColor: color, color: hexToRgba(color, 0.12) },
+    polygon: { color, borderColor: color },
+    circle: { borderColor: color, color: hexToRgba(color, 0.12) },
+    point: {
+      color,
+      activeColor: color,
+      borderColor: hexToRgba(color, 0.35),
+      activeBorderColor: hexToRgba(color, 0.35),
+    },
+    text: { backgroundColor: color, borderColor: color },
+  });
+
+  const dsApplyWidth = (size) => applyDrawSettingsPatch({
+    line: { size },
+    arc: { size },
+    rect: { borderSize: size },
+    polygon: { borderSize: size },
+    circle: { borderSize: size },
+  });
+
+  const dsApplyStyle = (key) => {
+    const s = DS_STYLES.find(x => x.key === key) || DS_STYLES[0];
+    const dash = s.dashedValue.slice();
+    applyDrawSettingsPatch({
+      line: { style: s.style, dashedValue: dash },
+      arc: { style: s.style, dashedValue: dash.slice() },
+      rect: { borderStyle: s.style, borderDashedValue: dash.slice() },
+      polygon: { borderStyle: s.style, borderDashedValue: dash.slice() },
+      circle: { borderStyle: s.style, borderDashedValue: dash.slice() },
+    });
+  };
+
+  // ---- Дропдауны панели (цвет / толщина / стиль) — каркас как у
+  // ---- дропдауна типа графика: триггер открывает своё меню и гасит
+  // остальные (и контекстное меню), закрытие — выбор пункта, клик мимо
+  // (общий document-обработчик из bindResetViewUi) или Escape.
+
+  const DS_MENUS = [
+    { toggle: 'tc-ds-color-toggle', menu: 'tc-ds-color-menu' },
+    { toggle: 'tc-ds-width-toggle', menu: 'tc-ds-widths' },
+    { toggle: 'tc-ds-style-toggle', menu: 'tc-ds-styles' },
+  ];
+
+  // Спрятать все меню панели. Возвращает true, если было открыто хоть
+  // одно (для Escape: он должен закрыть меню и не «провалиться» дальше)
+  const hideDrawSettingsMenus = () => {
+    let any = false;
+    for (const m of DS_MENUS) {
+      const menu = document.getElementById(m.menu);
+      if (menu && menu.classList.contains('open')) {
+        menu.classList.remove('open');
+        any = true;
+      }
+      const toggle = document.getElementById(m.toggle);
+      if (toggle && typeof toggle.setAttribute === 'function') {
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+    return any;
+  };
+
+  const anyDrawSettingsMenuOpen = () => DS_MENUS.some((m) => {
+    const menu = document.getElementById(m.menu);
+    return !!(menu && menu.classList.contains('open'));
+  });
+
+  // Иконки-триггеры толщины/стиля: горизонтальная линия-образец текущего
+  // значения (как в TV: ширина — толщиной линии, стиль — её штрихом).
+  // У толщины рядом с линией стоит ЧИСЛО — иначе на дефолтных 1px
+  // «сплошная» триггеры толщины и стиля неразличимы
+  const dsWidthIconSvg = (w) => `<svg viewBox="0 0 30 12" fill="none" stroke="currentColor" aria-hidden="true"><line x1="2" y1="6" x2="16" y2="6" stroke-width="${w}" stroke-linecap="round"/><text x="19" y="9.5" font-size="9" fill="currentColor" stroke="none">${w}</text></svg>`;
+  const DS_DASH_ATTRS = { solid: { dasharray: null, cap: false }, dash: { dasharray: '6 3', cap: false }, dotted: { dasharray: '0.1 3.5', cap: true } };
+  const dsStyleIconSvg = (key) => {
+    const a = DS_DASH_ATTRS[key] || DS_DASH_ATTRS.solid;
+    const cap = a.cap ? ' stroke-linecap="round"' : '';
+    const extra = a.dasharray ? ` stroke-dasharray="${a.dasharray}"` : '';
+    return `<svg viewBox="0 0 20 12" fill="none" stroke="currentColor" stroke-width="1.6"${cap} aria-hidden="true"><line x1="3" y1="6" x2="17" y2="6"${extra}/></svg>`;
+  };
+  // Образец линии для строк меню толщины (рядом подпись «Npx», как в TV)
+  const dsWidthSampleSvg = (w) => `<svg viewBox="0 0 26 12" fill="none" stroke="currentColor" aria-hidden="true"><line x1="2" y1="6" x2="24" y2="6" stroke-width="${w}" stroke-linecap="round"/></svg>`;
+
+  // Подсветка выбранных значений в меню и текущих значений на триггерах
+  // (кружок цвета, линия толщины, линия со штрихом стиля)
+  const syncDrawSettings = (ov) => {
+    const hex = toHexColor(dsCurrentColor(ov));
+    const dot = document.getElementById('tc-ds-color-dot');
+    if (dot) dot.style.background = hex;
+    const colorsHost = document.getElementById('tc-ds-colors');
+    if (colorsHost) {
+      for (const sw of colorsHost.children) {
+        sw.classList.toggle('active', toHexColor(sw.dataset.color) === hex);
+      }
+    }
+    const colorInput = document.getElementById('tc-ds-color-input');
+    if (colorInput) colorInput.value = hex;
+    const w = dsCurrentWidth(ov);
+    const widthToggle = document.getElementById('tc-ds-width-toggle');
+    if (widthToggle) {
+      widthToggle.innerHTML = dsWidthIconSvg(w);
+      if (typeof widthToggle.dataset === 'object') widthToggle.dataset.width = String(w);
+      widthToggle.title = `Толщина линии: ${w}`;
+    }
+    const widthsHost = document.getElementById('tc-ds-widths');
+    if (widthsHost) {
+      for (const b of widthsHost.children) {
+        b.classList.toggle('active', Number(b.dataset.width) === w);
+      }
+    }
+    const key = dsCurrentStyleKey(ov);
+    const styleToggle = document.getElementById('tc-ds-style-toggle');
+    if (styleToggle) {
+      styleToggle.innerHTML = dsStyleIconSvg(key);
+      if (typeof styleToggle.dataset === 'object') styleToggle.dataset.style = key;
+      const s = DS_STYLES.find(x => x.key === key);
+      styleToggle.title = `Стиль линии: ${s ? s.title.toLowerCase() : key}`;
+    }
+    const stylesHost = document.getElementById('tc-ds-styles');
+    if (stylesHost) {
+      for (const b of stylesHost.children) {
+        b.classList.toggle('active', b.dataset.style === key);
+      }
+    }
+  };
+
+  // Позиция — над фигурой: по центру bbox её точек (convertToPixel),
+  // с прижимом внутрь холста; не помещается сверху — под фигуру.
+  // Геометрия недоступна (мини-DOM тестов, холст ещё не разложился) —
+  // панель остаётся там, где была
+  const positionDrawSettings = (overlay) => {
+    const bar = document.getElementById('tc-draw-settings');
+    const stage = document.getElementById('tc-chart-stage');
+    if (!bar || !stage) return;
+    const rect = typeof stage.getBoundingClientRect === 'function'
+      ? stage.getBoundingClientRect() : null;
+    const pts = (overlay.points || []).filter(p => p && p.value != null
+      && (p.timestamp != null || Number.isFinite(p.dataIndex)));
+    if (!rect || !pts.length || typeof chartInstance.convertToPixel !== 'function') return;
+    const coords = chartInstance.convertToPixel(pts.map(p => p.timestamp != null
+      ? { timestamp: p.timestamp, value: p.value }
+      : { dataIndex: p.dataIndex, value: p.value }), { paneId: overlay.paneId || 'candle_pane' });
+    const list = Array.isArray(coords) ? coords : [coords];
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    for (const c of list) {
+      if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+      minX = Math.min(minX, c.x);
+      maxX = Math.max(maxX, c.x);
+      minY = Math.min(minY, c.y);
+    }
+    if (!Number.isFinite(minX)) return;
+    const barW = bar.offsetWidth || 280;
+    const barH = bar.offsetHeight || 34;
+    const margin = 8;
+    const left = Math.min(Math.max((minX + maxX) / 2 - barW / 2, margin), rect.width - barW - margin);
+    let top = minY - barH - margin;
+    if (top < margin) top = Math.min(minY + margin, rect.height - barH - margin);
+    bar.style.left = `${Math.round(Math.max(left, margin))}px`;
+    bar.style.top = `${Math.round(Math.max(top, margin))}px`;
+  };
+
+  // Панель открыта, но фигура могла исчезнуть мимо onRemoved (undo/redo) —
+  // сдвиг/зум проверяют и это
+  const repositionDrawSettings = () => {
+    if (drawSettingsOverlayId == null) return;
+    const ov = chartInstance ? chartInstance.getOverlayById(drawSettingsOverlayId) : null;
+    if (ov) positionDrawSettings(ov);
+    else hideDrawSettings();
+  };
+
+  const hideDrawSettings = () => {
+    const bar = document.getElementById('tc-draw-settings');
+    if (bar) bar.classList.remove('show');
+    hideDrawSettingsMenus();
+    drawSettingsOverlayId = null;
+  };
+
+  const showDrawSettings = (overlay) => {
+    if (!overlay) return false;
+    // У измерителя цвета семантические (рост/падение) — настроек нет
+    if (overlay.name === 'tc-measure') return false;
+    const bar = document.getElementById('tc-draw-settings');
+    if (!bar) return false;
+    drawSettingsOverlayId = overlay.id;
+    // Меню всегда стартуют закрытыми: выделение другой фигуры не должно
+    // «протащить» открытое меню прежней
+    hideDrawSettingsMenus();
+    syncDrawSettings(overlay);
+    positionDrawSettings(overlay);
+    bar.classList.add('show');
+    return true;
+  };
+
+  // Корзина: удалить выделенную фигуру (onRemoved запишет операцию —
+  // Ctrl+Z вернёт её вместе со стилями)
+  const removeDrawSettingsTarget = () => {
+    const id = drawSettingsOverlayId;
+    hideDrawSettings();
+    if (id != null) removeStageOverlay(id);
+  };
+
+  const buildDrawSettings = () => {
+    const bar = document.getElementById('tc-draw-settings');
+    if (!bar || bar.dataset.dsBound) return;
+    bar.dataset.dsBound = '1';
+    // Триггеры дропдаунов: открыть своё меню, погасив остальные меню
+    // панели, дропдауны шапки и контекстное меню графика. stopPropagation
+    // не даёт общему «клик мимо — закрыть» тут же погасить открытое меню
+    for (const m of DS_MENUS) {
+      const toggle = document.getElementById(m.toggle);
+      const menu = document.getElementById(m.menu);
+      if (!toggle || !menu) continue;
+      toggle.addEventListener('click', (e) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (ctxMenuOpen) hideCtxMenu();
+        hideTypeMenu();
+        hideScaleMenu();
+        hideIndicatorMenu();
+        const wasOpen = menu.classList.contains('open');
+        hideDrawSettingsMenus();
+        if (wasOpen) return;
+        menu.classList.add('open');
+        if (typeof toggle.setAttribute === 'function') {
+          toggle.setAttribute('aria-expanded', 'true');
+        }
+      });
+    }
+    // Цвет: свотчи применяют цвет и закрывают меню (как выбор палитры в TV)
+    const colorsHost = document.getElementById('tc-ds-colors');
+    if (colorsHost) {
+      for (const c of DS_COLORS) {
+        const sw = document.createElement('button');
+        sw.type = 'button';
+        sw.className = 'tc-ds-swatch';
+        sw.dataset.color = c;
+        sw.style.background = c;
+        sw.title = 'Цвет фигуры';
+        sw.addEventListener('click', () => {
+          dsApplyColor(c);
+          hideDrawSettingsMenus();
+        });
+        colorsHost.appendChild(sw);
+      }
+    }
+    // «Свой цвет…» — нативный виджет цвета (input.click()), правки
+    // красят фигуру на лету (input), закрытие меню — после выбора (change)
+    const colorCustom = document.getElementById('tc-ds-color-custom');
+    const colorInput = document.getElementById('tc-ds-color-input');
+    if (colorCustom && colorInput) {
+      colorCustom.addEventListener('click', () => {
+        if (typeof colorInput.click === 'function') colorInput.click();
+      });
+      colorInput.addEventListener('input', () => dsApplyColor(colorInput.value));
+      colorInput.addEventListener('change', () => {
+        dsApplyColor(colorInput.value);
+        hideDrawSettingsMenus();
+      });
+    }
+    // Толщина: строки «образец линии + Npx» (подписи как в TV)
+    const widthsHost = document.getElementById('tc-ds-widths');
+    if (widthsHost) {
+      for (const w of DS_WIDTHS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tc-ds-opt';
+        b.dataset.width = String(w);
+        b.title = `Толщина ${w}`;
+        b.innerHTML = `${dsWidthSampleSvg(w)}<span class="tc-ds-opt-label">${w}px</span>`;
+        b.addEventListener('click', () => {
+          dsApplyWidth(w);
+          hideDrawSettingsMenus();
+        });
+        widthsHost.appendChild(b);
+      }
+    }
+    // Стиль: строки с образцом штриха — сплошная / пунктир / точки
+    const stylesHost = document.getElementById('tc-ds-styles');
+    if (stylesHost) {
+      for (const s of DS_STYLES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tc-ds-opt';
+        b.dataset.style = s.key;
+        b.title = s.title;
+        b.innerHTML = dsStyleIconSvg(s.key);
+        b.addEventListener('click', () => {
+          dsApplyStyle(s.key);
+          hideDrawSettingsMenus();
+        });
+        stylesHost.appendChild(b);
+      }
+    }
+    const trash = document.getElementById('tc-ds-trash');
+    if (trash) trash.addEventListener('click', () => removeDrawSettingsTarget());
+  };
+
+  // Клик по HTML-панели настроек не должен начинать рисование кистью/
+  // измерителем и не считается кликом фигуры (перехваты холста)
+  const inDrawSettings = (e) => !!(e && e.target && typeof e.target.closest === 'function'
+    && e.target.closest('#tc-draw-settings'));
+
 
   // ---- Индикаторы: dropdown всех встроенных + чипы с настройкой периодов ----
   // В 9.6.0 removeIndicator требует (paneId, name?) — раньше передавали имя
@@ -4286,6 +4772,9 @@
     buildScaleDropdown();
     syncScaleButtons();
     buildIndicatorDropdown();
+    // Плавающая панель настроек разметки: палитра/толщина/стиль/корзина
+    // (показ — по выделению фигуры, см. overlayCallbacks)
+    buildDrawSettings();
     syncUndoButtons(); // стеки пусты — стрелки в шапке приглушены
     // Отсчёт до закрытия бара: тикает раз в секунду, но пишет в DOM
     // только когда есть живая свеча и раздел виден (renderCountdown)

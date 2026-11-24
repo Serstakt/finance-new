@@ -6,7 +6,7 @@
     <!-- Версионный параметр — одноразовый сброс эвристического кэша браузеров,
          закэшировавших статику до включения Cache-Control: no-cache на бэкенде;
          дальше ревалидация по etag держит файлы свежими без него -->
-    <link rel="stylesheet" href="css/styles.css?v=20261123">
+    <link rel="stylesheet" href="css/styles.css?v=20261124">
     <!-- ВАЖНО: внешние скрипты (Sortable, KLineChart) загружаются АСИНХРОННО (defer).
          Обычный <script src="..."> блокирует разбор страницы: если CDN недоступен
          (блокировка провайдером/регионом, файрвол, антивирус, прокси), вкладка
@@ -479,6 +479,54 @@
                             <button type="button" id="tc-ctx-copy" disabled title="Цена под курсором — в буфер обмена">Скопировать цену</button>
                             <button type="button" id="tc-ctx-shot">Снимок PNG</button>
                             <button type="button" id="tc-ctx-clear">Удалить всю разметку</button>
+                        </div>
+                        <!-- Плавающая панель настроек выбранной разметки (как
+                             строка настроек фигуры в TradingView): появляется
+                             при выделении фигуры (клик по ней) и сразу после её
+                             построения. Слева направо — три дропдауна: цвет
+                             (палитра + «Свой цвет…»), толщина линии, стиль
+                             линии; триггер каждого показывает текущее значение
+                             иконкой (кружок цвета / линия толщиной выбора /
+                             линия со штрихом выбранного стиля), меню в стиле
+                             дропдауна типа графика. Справа — корзина: удалить
+                             выделенную фигуру. Кнопки строит
+                             js/watchlist_chart.js (buildDrawSettings),
+                             показ/подсветка/позиция — showDrawSettings/
+                             syncDrawSettings/positionDrawSettings; правки
+                             применяются overlay.setStyles и переживают
+                             перезагрузку (styles в сериализации разметки) -->
+                        <div class="tc-draw-settings" id="tc-draw-settings">
+                            <div class="tc-ds-dd" id="tc-ds-color-dd">
+                                <button type="button" class="tc-ds-btn" id="tc-ds-color-toggle" aria-haspopup="menu" aria-expanded="false" title="Цвет фигуры">
+                                    <span class="tc-ds-color-dot" id="tc-ds-color-dot"></span>
+                                </button>
+                                <div class="tc-ds-menu" id="tc-ds-color-menu" role="menu">
+                                    <div class="tc-ds-swatches" id="tc-ds-colors"></div>
+                                    <div class="tc-ds-menu-sep"></div>
+                                    <button type="button" class="tc-ds-custom" id="tc-ds-color-custom" title="Произвольный цвет фигуры">
+                                        <span class="tc-ds-rainbow"></span>
+                                        <span>Свой цвет…</span>
+                                    </button>
+                                    <input type="color" class="tc-ds-color-input" id="tc-ds-color-input" tabindex="-1" title="Произвольный цвет фигуры">
+                                </div>
+                            </div>
+                            <div class="tc-ds-dd" id="tc-ds-width-dd">
+                                <button type="button" class="tc-ds-btn" id="tc-ds-width-toggle" aria-haspopup="menu" aria-expanded="false" title="Толщина линии"></button>
+                                <div class="tc-ds-menu" id="tc-ds-widths" role="menu"></div>
+                            </div>
+                            <div class="tc-ds-dd" id="tc-ds-style-dd">
+                                <button type="button" class="tc-ds-btn" id="tc-ds-style-toggle" aria-haspopup="menu" aria-expanded="false" title="Стиль линии"></button>
+                                <div class="tc-ds-menu" id="tc-ds-styles" role="menu"></div>
+                            </div>
+                            <span class="tc-ds-sep"></span>
+                            <button type="button" class="tc-ds-trash" id="tc-ds-trash" title="Удалить выделенную фигуру">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M4 7h16"/>
+                                    <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                    <path d="M6 7l1 13a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 20l1-13"/>
+                                    <path d="M10 11v6M14 11v6"/>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
