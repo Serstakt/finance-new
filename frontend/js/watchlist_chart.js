@@ -2184,15 +2184,19 @@
     { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
   // Дельта со знаком «+/-» в формате списка (ui.js formatChange):
-  // проценты — 2 знака, числа — 2, но у значений < 1 — 4 (дешёвые тикеры).
-  // decimalsOverride — явная десятичность (фолбэк по свечам печатает
-  // дельту с точностью инструмента, как раньше)
+  // проценты — 2 знака, числа — адаптивная точность инструмента
+  // (window.autoPriceDecimals из ui.js: дешёвая крипта при фикс. 4 знаках
+  // печаталась «0,0000»). decimalsOverride — явная десятичность (фолбэк
+  // по свечам печатает дельту с точностью инструмента, как раньше)
   const fmtListChange = (v, isPercent, decimalsOverride) => {
     const n = Number(v);
     if (!Number.isFinite(n)) return null;
     const decimals = decimalsOverride != null
       ? decimalsOverride
-      : (isPercent ? 2 : (Math.abs(n) < 1 ? 4 : 2));
+      : (isPercent ? 2
+        : (typeof window.autoPriceDecimals === 'function'
+          ? window.autoPriceDecimals(n)
+          : (Math.abs(n) < 1 ? 4 : 2)));
     const sign = n >= 0 ? '+' : '';
     return `${sign}${fmtListNum(n, decimals)}`;
   };

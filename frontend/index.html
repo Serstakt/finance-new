@@ -121,7 +121,7 @@
                 </div>
             </div>
             <div id="add-form">
-                <input id="add-input" placeholder="SBER, AAPL, BTCUSDT" title="Введите тикер. Биржа определяется автоматически." />
+                <input id="add-input" placeholder="SBER, Сбербанк, BTCUSDT" title="Тикер или название: подсказки с типом актива появляются по мере ввода (↑/↓ — выбор, Enter — добавить). Биржа определяется автоматически." />
                 <button id="add-btn" type="button" title="Добавить тикер">+</button>
                 <button id="add-section-btn" type="button" title="Добавить раздел">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
@@ -701,6 +701,10 @@
      но не будут блокировать отрисовку страницы -->
 <script defer src="js/state.js"></script>
 <script defer src="js/api.js"></script>
+<!-- Поиск символов с автодополнением (выпадающие подсказки /api/search/symbols).
+     Подключён ДО main.js/watchlist_chart.js намеренно: наши Enter/Escape-
+     обработчики полей регистрируются раньше их (см. js/symbol_search.js) -->
+<script defer src="js/symbol_search.js"></script>
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/portfolio.js"></script>

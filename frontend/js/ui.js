@@ -3,10 +3,50 @@ window.formatNumber = function(num, decimals = 2) {
   return num.toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 };
 
+// === АДАПТИВНАЯ ТОЧНОСТЬ ЦЕНЫ (как в TradingView) ===
+// Раньше цены писались жёстко с 2 знаками: дешёвая крипта (SHIB ~0.0000154,
+// XRP в сатоши) показывалась «0,00». Число знаков подстраивается под
+// величину инструмента:
+//   >= 1000 — 2 знака (BTC, индексы, дорогие акции);
+//   1..1000 — 2..4 знака (акции MOEX дают 2, валютные котировки CETS — 4);
+//   < 1 — 4 значащих цифры, не меньше 4 и не больше 10 знаков
+//   (SHIB 0.00001541 → 8, PEPE 0.0000055 → 9 — как в TradingView).
+const countDecimalsOf = (n) => {
+  const s = String(Math.abs(n));
+  // Малые числа JS печатает экспонентой («1.54e-7» → 5 порядков + 2 разряда мантиссы)
+  if (s.includes('e-')) {
+    const [mantissa, exp] = s.split('e-');
+    const mantissaDecimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
+    return Number(exp) + mantissaDecimals;
+  }
+  return s.includes('.') ? s.split('.')[1].length : 0;
+};
+
+window.autoPriceDecimals = function(num) {
+  const n = Math.abs(Number(num));
+  if (!Number.isFinite(n) || n === 0) return 2;
+  if (n >= 1000) return 2;
+  if (n >= 1) return Math.min(Math.max(countDecimalsOf(n), 2), 4);
+  // < 1: первая ненулевая цифра + ещё 3 значащих
+  const d = Math.ceil(-Math.log10(n)) + 3;
+  return Math.min(Math.max(d, 4), 10);
+};
+
+// Цена с адаптивной точностью и ru-форматом (запятая, разделители разрядов).
+window.formatPriceAuto = function(num) {
+  if (num === null || num === undefined) return '—';
+  const n = Number(num);
+  if (!Number.isFinite(n)) return '—';
+  const d = window.autoPriceDecimals(n);
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+
 window.formatChange = function(change, isPercent = true) {
   if (change === null || change === undefined) return '<span class="loading">—</span>';
   const sign = change >= 0 ? '+' : '';
-  const decimals = isPercent ? 2 : (Math.abs(change) < 1 ? 4 : 2);
+  // Абсолютная дельта — с той же адаптивной точностью, что и цена: у SHIB
+  // изменение ~0.0000001 при фиксированных 4 знаках печаталось «0,0000».
+  const decimals = isPercent ? 2 : window.autoPriceDecimals(change);
   const formatted = isPercent ? formatNumber(change, decimals) + '%' : formatNumber(change, decimals);
   return `<span>${sign}${formatted}</span>`;
 };
@@ -556,7 +596,9 @@ window.updateRow = function(div, sym, data, list, prev) {
   if (changed) {
     if (data && data.price) {
       const newPrice = Number(data.price);
-      priceEl.textContent = formatNumber(data.price);
+      // Адаптивная точность (как в TradingView): 2 знака у акций/индексов,
+      // больше — у дешёвой крипты (SHIB, PEPE), у которой 2 знака давали «0,00»
+      priceEl.textContent = formatPriceAuto(data.price);
       // Направленная flash-подсветка цены: рост — зелёная, падение — красная.
       // Только при переходе цена->цена с реальным изменением: при real-time
       // тиках подпись (sig) меняется и от объёмов/процентов, где направления

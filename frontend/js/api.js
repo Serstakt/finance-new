@@ -9,11 +9,28 @@ window.API_BASE = (location.protocol === 'http:' || location.protocol === 'https
 // === БЕЗОПАСНЫЙ FETCH С ТАЙМАУТОМ ===
 // Обычный fetch к внешнему/зависшему сервису может «висеть» бесконечно —
 // из-за этого вкладки крутят индикатор загрузки. Обрываем такие запросы по таймеру.
+// Вызывающий код может передать свой options.signal (AbortController) — тогда
+// запрос прерывается по любому из двух поводов: внешний сигнал или таймаут
+// (поиск символов так отменяет устаревший запрос при продолжении ввода).
 window.fetchWithTimeout = function(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = options.signal;
+  let onExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else {
+      onExternalAbort = () => controller.abort();
+      externalSignal.addEventListener('abort', onExternalAbort);
+    }
+  }
   return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+    .finally(() => {
+      clearTimeout(timer);
+      if (externalSignal && onExternalAbort) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
+    });
 };
 
 // === ПОЛУЧЕНИЕ ДАННЫХ ПО ТИКЕРУ ===
