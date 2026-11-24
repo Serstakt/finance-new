@@ -298,6 +298,28 @@ def get_list_symbols(list_id: str) -> list[dict]:
             ]
 
 
+def get_all_symbols_by_list() -> dict[str, list[str]]:
+    """Состав всех списков одним запросом: {list_id: [symbol, ...]}.
+
+    SECTION-заголовки исключаются (тепловой карте «Главная» нужны только
+    тикеры), порядок — как в get_list_symbols (position, id). Один запрос
+    вместо N вызовов /api/watchlist/{id}: фронтенд собирает полный набор
+    тикеров всех списков за один заход.
+    """
+    with get_session() as db:
+        rows = (
+            db.query(WatchlistItem.list_id, WatchlistItem.symbol)
+            .filter(~WatchlistItem.symbol.like("SECTION:%"))
+            .order_by(WatchlistItem.list_id.asc(), WatchlistItem.position.asc(),
+                      WatchlistItem.id.asc())
+            .all()
+        )
+        out: dict[str, list[str]] = {}
+        for list_id, symbol in rows:
+            out.setdefault(list_id, []).append(symbol)
+        return out
+
+
 def get_all_flags() -> dict[str, str]:
     """Все непустые флажки из БД: {"list_id|SYMBOL": color}.
 

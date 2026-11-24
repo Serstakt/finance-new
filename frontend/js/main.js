@@ -28,6 +28,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadState();
   setupColumnHeaders();
   startAutoRefresh();
+  // Тепловая карта «Главная»: свой опрос (пока открыта «Главная»), независимый
+  // от watchlist-цикла выше — тот при activePage !== 'watchlist' пропускает тики.
+  if (typeof window.startHeatmapPolling === 'function') window.startHeatmapPolling();
   requestNotificationPermission();
 
   // Алерты: сначала переносим старые клиентские алерты из localStorage
@@ -92,6 +95,11 @@ window.navigateTo = function(pageName) {
       // когда render() ещё не создал график (например, после сбоя загрузки).
       setTimeout(() => { createChart(currentList.activeSymbol); }, 100);
     }
+  }
+  if (pageName === 'home') {
+    // Тепловая карта: пересобираем состав тикеров списков и данные окраски
+    // при каждом открытии «Главной» (состав мог измениться в Watchlist).
+    if (typeof window.loadHeatmap === 'function') window.loadHeatmap();
   }
   log(`Переход на страницу: ${pageName}`, 'info');
 };
