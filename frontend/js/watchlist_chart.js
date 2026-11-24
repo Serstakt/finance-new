@@ -331,6 +331,96 @@
     menu.addEventListener('click', () => hideScaleMenu());
   };
 
+  // ---- Дропдаун «Индикаторы» в шапке (как кнопка Indicators в TradingView)
+  // ---- Триггер — иконка ƒx + подпись, меню — те же группы, что были в
+  // select: «На графике цены» и «В под-окнах». Включённые индикаторы
+  // подсвечены, клик по пункту переключает (добавить/убрать). Закрытие:
+  // выбор, клик мимо и Escape — общие document-обработчики из
+  // bindResetViewUi (hideIndicatorMenu), как у дропдаунов типа и шкалы.
+
+  // Группы меню: имя индикатора → подпись (VOL_MAIN переименован, как был
+  // в option списка; остальные — имена библиотечных индикаторов)
+  const INDICATOR_MENU_GROUPS = [
+    { title: 'На графике цены', items: { MA: 'MA', EMA: 'EMA', BOLL: 'BOLL', SAR: 'SAR', BBI: 'BBI', VOL_MAIN: 'Объем (гистограмма)' } },
+    { title: 'В под-окнах', items: { VOL: 'VOL', MACD: 'MACD', RSI: 'RSI', KDJ: 'KDJ', WR: 'WR', CCI: 'CCI', DMI: 'DMI', OBV: 'OBV', ROC: 'ROC', DMA: 'DMA', BIAS: 'BIAS', TRIX: 'TRIX' } },
+  ];
+
+  const hideIndicatorMenu = () => {
+    const menu = document.getElementById('tc-ind-menu');
+    if (!menu || !menu.classList.contains('open')) return false;
+    menu.classList.remove('open');
+    const toggle = document.getElementById('tc-ind-toggle');
+    if (toggle && typeof toggle.setAttribute === 'function') {
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    return true;
+  };
+
+  // Подсветка включённых: зовётся из renderIndicatorLegends — она вызывается
+  // и при добавлении/удалении индикатора, и при init
+  const syncIndicatorMenu = () => {
+    const menu = document.getElementById('tc-ind-menu');
+    if (!menu) return;
+    for (const item of menu.children) {
+      if (item.dataset && item.dataset.ind) {
+        item.classList.toggle('active', indicators.has(item.dataset.ind));
+      }
+    }
+  };
+
+  const buildIndicatorDropdown = () => {
+    const root = document.getElementById('tc-ind-dropdown');
+    const toggle = document.getElementById('tc-ind-toggle');
+    const menu = document.getElementById('tc-ind-menu');
+    if (!root || !toggle || !menu || root.dataset.indDropdownBound) return;
+    root.dataset.indDropdownBound = '1';
+    // Пункты из тех же групп, что были option'ы select: заголовок группы —
+    // не кликабелен, пункт — кнопка с data-ind
+    for (const group of INDICATOR_MENU_GROUPS) {
+      const title = document.createElement('div');
+      title.className = 'tc-ind-menu-title';
+      title.textContent = group.title;
+      menu.appendChild(title);
+      for (const [name, label] of Object.entries(group.items)) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'tc-ind-item';
+        item.dataset.ind = name; // имя для переключения в обработчике ниже
+        item.textContent = label;
+        item.title = indicators.has(name) ? `Убрать ${label}` : `Добавить ${label}`;
+        menu.appendChild(item);
+      }
+    }
+    // Триггер: открыть/закрыть меню. Заодно гасим контекстное меню графика,
+    // если открыто; stopPropagation не даёт общему «клик мимо — закрыть»
+    // тут же погасить только что открытое меню
+    toggle.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (ctxMenuOpen) hideCtxMenu();
+      if (menu.classList.contains('open')) {
+        hideIndicatorMenu();
+        return;
+      }
+      menu.classList.add('open');
+      if (typeof toggle.setAttribute === 'function') {
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+    // Клик по пункту — переключить индикатор (включён → убрать, иначе
+    // добавить) и обновить подсветку. Клик всплывает и в document-обработчик,
+    // но target внутри #tc-ind-dropdown — «клик мимо» не сработает
+    menu.addEventListener('click', (e) => {
+      const item = e.target && typeof e.target.closest === 'function'
+        ? e.target.closest('.tc-ind-item') : null;
+      if (!item || !item.dataset.ind) return;
+      const name = item.dataset.ind;
+      if (indicators.has(name)) window.tcRemoveIndicator(name);
+      else window.tcAddIndicator(name);
+      syncIndicatorMenu();
+    });
+    syncIndicatorMenu();
+  };
+
   // Ось цены главной панели — внутреннее API 9.6 (как getChartStore в
   // isOverlayDrawing): нужен только флаг автоподгона; недоступен —
   // считаем автоскейл включённым
@@ -1020,8 +1110,11 @@
             // (см. renderIndicatorLegends)
             tooltip: { showRule: 'none' },
           },
-          xAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
-          yAxis: { tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
+          // Границы осей без линии: у библиотеки axisLine по умолчанию
+          // светло-серый (#DDDDDD) — на тёмном фоне читался как белая
+          // полоса вдоль осей даты и цены. В TradingView рамки осей нет.
+          xAxis: { axisLine: { show: false }, tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
+          yAxis: { axisLine: { show: false }, tickText: { color: '#787b86' }, tickLine: { color: '#2a2e39' } },
           crosshair: {
             horizontal: { text: { backgroundColor: '#434651' } },
             vertical: { text: { backgroundColor: '#434651' } },
@@ -1325,6 +1418,12 @@
           && e.target.closest('#tc-scale-dropdown'))) {
         hideScaleMenu();
       }
+      const indMenu = document.getElementById('tc-ind-menu');
+      if (indMenu && indMenu.classList.contains('open')
+        && !(e && e.target && typeof e.target.closest === 'function'
+          && e.target.closest('#tc-ind-dropdown'))) {
+        hideIndicatorMenu();
+      }
       if (ctxMenuOpen) hideCtxMenu();
     });
     document.addEventListener('keydown', (e) => {
@@ -1332,6 +1431,7 @@
       if (e.key === 'Escape') {
         if (hideTypeMenu()) return;
         if (hideScaleMenu()) return;
+        if (hideIndicatorMenu()) return;
         if (ctxMenuOpen) { hideCtxMenu(); return; }
         if (dialogCtx) return; // открытый диалог закроет window-обработчик
         if (cancelActiveDrawing()) {
@@ -1902,10 +2002,14 @@
   // «287,45 · 00:32:41» в TradingView, только колонкой). Встроенный тег
   // цены библиотеки отключён (priceMark.last.show=false) — иначе два
   // тега наслаивались бы. Позиция по Y — внутреннее API оси главной
-  // панели (convertToPixel последней цены), плашка центрируется на цене
-  // и прижимается внутрь холста у краёв; цена вне видимого диапазона —
-  // поле прячется. Обновляется раз в секунду и на сдвиг/зум (подписки
-  // в init) — между кадрами положение может отставать на пиксели.
+  // панели (convertToPixel последней цены), плашка центрируется на цене.
+  // По X плашка вровень с оси цены: габариты виджета оси даёт публичный
+  // getSize(paneId, 'yAxis') — ширина плашки равна ширине оси, правый
+  // край прижат к краю оси (как тег цены в TradingView), вертикаль не
+  // выходит за пределы панели свечей. API недоступен — прежнее поведение:
+  // плашка у правого края холста. Цена вне видимого диапазона — поле
+  // прячется. Обновляется раз в секунду и на сдвиг/зум (подписки в init)
+  // — между кадрами положение может отставать на пиксели.
   const syncAxisPriceTag = () => {
     const tag = document.getElementById('tc-axis-price-tag');
     if (!tag) return;
@@ -1920,11 +2024,38 @@
     const px = axis && typeof axis.convertToPixel === 'function'
       ? axis.convertToPixel(last.close) : null;
     const stage = document.getElementById('tc-chart-stage');
+    const stageW = stage ? stage.clientWidth : 0;
     const stageH = stage ? stage.clientHeight : 0;
     if (!Number.isFinite(px) || stageH <= 0) { tag.style.top = '-9999px'; return; }
-    // Центрируем плашку (~34px) на цене, у краёв холста прижимаем внутрь
+    // Габариты оси цены: getSize(paneId, 'yAxis') — {left, top, width,
+    // height} координат контейнера (поля right/bottom/top у виджета оси
+    // не заполняются — остаются нулями из фабрики bounding, правый край и
+    // низ считаем сами). top/bottom = пределы панели свечей — плашка не
+    // заезжает на ось времени и не улетает выше панели.
+    let topBound = 2;
+    let bottomBound = stageH;
+    let axisRect = null;
+    try {
+      const b = typeof chartInstance.getSize === 'function'
+        ? chartInstance.getSize('candle_pane', 'yAxis') : null;
+      if (b && Number.isFinite(b.left) && Number.isFinite(b.width) && b.width > 0) axisRect = b;
+    } catch (e) { /* internals недоступны — остаётся прижатие к краю холста */ }
+    if (axisRect) {
+      const axisRight = axisRect.left + axisRect.width;
+      const axisTop = Number.isFinite(axisRect.top) ? axisRect.top : 0;
+      const axisBottom = axisTop + (Number.isFinite(axisRect.height) ? axisRect.height : stageH);
+      tag.style.width = `${Math.round(axisRect.width)}px`;
+      tag.style.right = `${Math.max(0, Math.round(stageW - axisRight))}px`;
+      topBound = axisTop;
+      bottomBound = axisBottom;
+    } else {
+      // Точную геометрию дать нечем — сбрасываем к CSS-дефолту (right: 4px)
+      tag.style.width = '';
+      tag.style.right = '';
+    }
+    // Центрируем плашку (~34px) на цене, у краёв панели прижимаем внутрь
     const half = 17;
-    const top = Math.min(Math.max(px - half, 2), Math.max(2, stageH - half * 2 - 2));
+    const top = Math.min(Math.max(px - half, topBound + 2), Math.max(topBound + 2, bottomBound - half * 2 - 2));
     tag.style.top = `${Math.round(top)}px`;
     tag.classList.toggle('up', last.close >= last.open);
     tag.classList.toggle('down', last.close < last.open);
@@ -2034,30 +2165,99 @@
     nameEl.style.display = name ? '' : 'none';
   };
 
-  // Дельта к предыдущей свече «+10.00 (+3.25%)» — зелёным/красным в
-  // легенде на холсте (после «Закр»). Текущую цену показывает сама
-  // библиотека — цветной тег на шкале цены справа
+  // ---- Изменение в легенде — как в списке watchlist ----
+  // Список показывает официальную дневную дельту источника (MOEX:
+  // LASTTOPREVPRICE/CHANGE к цене прошлого закрытия, крипта: изменение
+  // за 24 ч) — ручка /api/prices/{symbol}. Дельта «последняя свеча минус
+  // предыдущая» отличается от неё даже на дневном ТФ: у MOEX вечерняя
+  // сессия вливается в свечу следующего дня, и close предыдущей свечи не
+  // равен официальной цене закрытия (SBER: -1.06 по свечам против -1,17
+  // в списке). Поэтому дельту берём из той же ручки, что и список
+  // (fetchSymbolQuote, обновляется на поллинге), а расчёт по свечам
+  // остаётся фолбэком на случай сбоя ручки.
+
+  let dailyQuote = null;       // {changeValue, changeDay} текущего тикера (как в списке)
+  let dailyQuoteTicker = null; // тикер, к которому относится dailyQuote — защита от гонки смены
+
+  // ru-формат числа как в списке (ui.js formatNumber): запятая, фикс. знаки
+  const fmtListNum = (n, decimals) => Number(n).toLocaleString('ru-RU',
+    { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+  // Дельта со знаком «+/-» в формате списка (ui.js formatChange):
+  // проценты — 2 знака, числа — 2, но у значений < 1 — 4 (дешёвые тикеры).
+  // decimalsOverride — явная десятичность (фолбэк по свечам печатает
+  // дельту с точностью инструмента, как раньше)
+  const fmtListChange = (v, isPercent, decimalsOverride) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    const decimals = decimalsOverride != null
+      ? decimalsOverride
+      : (isPercent ? 2 : (Math.abs(n) < 1 ? 4 : 2));
+    const sign = n >= 0 ? '+' : '';
+    return `${sign}${fmtListNum(n, decimals)}`;
+  };
+
+  // Котировка из ручки списка: changeValue/changeDay официальной дельты.
+  // Свой try/catch — сбой ручки не мешает графику (легенда останется
+  // на расчёте по свечам). Запускается до запроса свечей в load/poll —
+  // ответ применяется, только если тикер к тому моменту не сменился
+  // (загружен или ещё грузится — ответ часто приходит раньше свечей).
+  const isQuoteTickerCurrent = (ticker) => lastTicker === ticker
+    || (typeof loadInFlightKey === 'string' && loadInFlightKey.startsWith(`${ticker}|`));
+
+  const fetchSymbolQuote = (ticker) => {
+    const url = `${API_BASE}/api/prices/${encodeURIComponent(ticker)}`;
+    return window.fetchWithTimeout(url, {}, 30000)
+      .then(r => r.json())
+      .then(data => {
+        if (data && !data.error && isQuoteTickerCurrent(ticker)) {
+          dailyQuoteTicker = ticker;
+          dailyQuote = {
+            changeValue: Number.isFinite(Number(data.changeValue)) ? Number(data.changeValue) : null,
+            changeDay: Number.isFinite(Number(data.changeDay)) ? Number(data.changeDay) : null,
+          };
+          // Легенда обновится сразу, не дожидаясь следующего тика поллинга
+          updateSymbolQuote(chartInstance ? chartInstance.getDataList() : []);
+        }
+      })
+      .catch(e => { console.debug('Котировка для легенды не получена:', e); });
+  };
+
+  // Дельта в легенде на холсте (после «Закр»). Источник — котировка из
+  // ручки списка (dailyQuote): те же числа и тот же ru-формат, что в
+  // строке watchlist («-1,17 (-0,40%)»). Нет котировки (ручка сбойнула/
+  // ещё грузится) — расчёт по последним двум свечам того же формата.
+  // Текущую цену показывает цветной тег на шкале цены
   const updateSymbolQuote = (list) => {
     const priceEl = document.getElementById('tc-sym-price');
     const changeEl = document.getElementById('tc-leg-change');
-    if ((!priceEl && !changeEl) || !list || !list.length) return;
-    const last = list[list.length - 1];
-    // Цена — верхняя строка поля «цена + отсчёт» на шкале цены
-    if (priceEl) priceEl.textContent = fmtNum(last.close);
+    // Цена — верхняя строка поля «цена + отсчёт» на шкале цены: всегда из
+    // данных графика (последняя свеча), независимо от источника дельты
+    if (priceEl && list && list.length) priceEl.textContent = fmtNum(list[list.length - 1].close);
     if (!changeEl) return;
-    const prev = list.length > 1 ? list[list.length - 2] : null;
-    if (!prev || !Number.isFinite(prev.close) || !prev.close) {
-      changeEl.textContent = '';
-      changeEl.classList.remove('up', 'down');
-      return;
+    const render = (text, up) => {
+      changeEl.textContent = text || '';
+      changeEl.classList.toggle('up', !!text && up);
+      changeEl.classList.toggle('down', !!text && !up);
+    };
+    // Котировка списка: value/pct приходят готовыми — только формат.
+    // Окрашивание — по направлению дельты (как в списке)
+    if (dailyQuote && dailyQuoteTicker === lastTicker
+      && (dailyQuote.changeValue != null || dailyQuote.changeDay != null)) {
+      const valuePart = fmtListChange(dailyQuote.changeValue, false);
+      const pctPart = fmtListChange(dailyQuote.changeDay, true);
+      const up = (dailyQuote.changeValue ?? dailyQuote.changeDay) >= 0;
+      render(`${valuePart || '—'} (${pctPart || '—'}%)`, up);
+    } else {
+      // Фолбэк: дельта к предыдущей свече (последний известный ориентир)
+      if (!list || !list.length) { render('', false); return; }
+      const last = list[list.length - 1];
+      const prev = list.length > 1 ? list[list.length - 2] : null;
+      if (!prev || !Number.isFinite(prev.close) || !prev.close) { render('', false); return; }
+      const delta = last.close - prev.close;
+      const pct = (delta / prev.close) * 100;
+      render(`${fmtListChange(delta, false, pricePrecision)} (${fmtListChange(pct, true)}%)`, delta >= 0);
     }
-    const delta = last.close - prev.close;
-    const pct = (delta / prev.close) * 100;
-    const up = delta >= 0;
-    const sign = up ? '+' : '';
-    changeEl.textContent = `${sign}${delta.toFixed(pricePrecision)} (${sign}${pct.toFixed(2)}%)`;
-    changeEl.classList.toggle('up', up);
-    changeEl.classList.toggle('down', !up);
   };
 
   const renderLegend = (k) => {
@@ -2111,6 +2311,10 @@
         chartInstance.resize();
         // Панели переложились — легенды индикаторов догоняют верх своей панели
         updateIndicatorLegendPositions();
+        // Геометрия оси цены сменилась вместе с холстом — плашка
+        // «цена + отсчёт» выравнивается по новой оси не дожидаясь
+        // секундного тика (syncAxisPriceTag вызывается и оттуда)
+        syncAxisPriceTag();
       }
     }, 50);
   };
@@ -2142,6 +2346,9 @@
       // её (свеча ещё формируется) и всё, что новее. Чужой пояс даёт
       // смещение на день — безвредно, лишняя свеча отфильтруется ниже.
       const from = fmtDay(new Date(lastTs));
+      // Дельта легенды держится в одном темпе со списком: котировка
+      // официальной дельты запрашивается тем же тиком, что и свечи
+      fetchSymbolQuote(ticker);
       const url = `${API_BASE}/api/candles/${encodeURIComponent(ticker)}`
         + `?interval=${interval}&from=${from}`;
       const response = await window.fetchWithTimeout(url, {}, 30000);
@@ -2282,6 +2489,12 @@
     if (!instance) { done(); return; }
 
     setStatus(`Загрузка свечей ${ticker}…`);
+
+    // Дельта для легенды — из ручки списка (см. блок над updateSymbolQuote):
+    // прежняя котировка сбрасывается сразу, свежая придёт параллельно свечам
+    dailyQuote = null;
+    dailyQuoteTicker = null;
+    fetchSymbolQuote(ticker);
 
     try {
       // Оконная загрузка: последний экран истории (~600 баров) через
@@ -3011,6 +3224,9 @@
     // Чипы убраны — строка «Объем» в легенде должна повторять состояние
     // гистограммы (выключена — строки и её × нет)
     syncVolumeLegend();
+    // Подсветка включённых в дропдауне «Индикаторы» (там пункты кликом
+    // переключаются — добавить/убрать)
+    syncIndicatorMenu();
   };
 
   // Значения легенд по бару (под курсором или последний): figures/result
@@ -3068,8 +3284,6 @@
       renderIndicatorLegendValues();
     }, 400);
     refreshLegendPositionsSoon();
-    const select = document.getElementById('tc-indicator-select');
-    if (select) select.value = '';
     setStatus(name === VOL_MAIN
       ? 'Гистограмма объёма включена'
       : `Индикатор ${name} включён — закрытие и периоды на легенде графика`);
@@ -3234,12 +3448,14 @@
     // загрузки: init графика применит его стилями (apply…Type/ScaleMode)
     loadSavedView();
     syncTfButtons();
-    // Дропдауны типа графика и шкалы цены: триггер + меню, подсветку
-    // активных пунктов ведут syncTypeButtons/syncScaleButtons
+    // Дропдауны типа графика, шкалы цены и «Индикаторы»: триггер + меню,
+    // подсветку активных пунктов ведут syncTypeButtons/syncScaleButtons/
+    // syncIndicatorMenu
     buildTypeDropdown();
     syncTypeButtons();
     buildScaleDropdown();
     syncScaleButtons();
+    buildIndicatorDropdown();
     syncUndoButtons(); // стеки пусты — стрелки в шапке приглушены
     // Отсчёт до закрытия бара: тикает раз в секунду, но пишет в DOM
     // только когда есть живая свеча и раздел виден (renderCountdown)
@@ -3255,8 +3471,6 @@
     // Закрытие гистограммы объёма — × в строке «Объем» легенды OHLCV
     const volClose = document.getElementById('tc-leg-volume-close');
     if (volClose) volClose.addEventListener('click', () => window.tcRemoveIndicator(VOL_MAIN));
-    const select = document.getElementById('tc-indicator-select');
-    if (select) select.addEventListener('change', () => window.tcAddIndicator(select.value));
     // Страховочные сохранения разметки: перед выгрузкой вкладки и при
     // сворачивании/переключении вкладки (перетаскивание точек без
     // onPressedMoveEnd всё равно попадёт в один из этих моментов).
