@@ -524,7 +524,6 @@ window.buildRowElement = function(sym) {
   const smartLabUrl = `https://smart-lab.ru/forum/${baseTicker}/`;
 
   div.innerHTML = `
-    <span class="drag-handle" title="Перетащить">⋮</span>
     <div class="favorite-wrapper" onclick="toggleFavoritePicker('${escapeHtml(sym)}', event)" title="Флажок избранного">
       <span class="favorite-flag empty" style="color: #363a45">${BOOKMARK_SVG}</span>
       <div class="favorite-picker">
@@ -549,8 +548,7 @@ window.buildRowElement = function(sym) {
       removeTickerFromList(sym);
       return;
     }
-    if (e.target.classList.contains('drag-handle') ||
-        e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper')) return;
+    if (e.target.classList.contains('ticker-symbol-link') || e.target.closest('.favorite-wrapper')) return;
     const cur = getCurrentList();
     cur.activeSymbol = sym;
     setActiveSymbolInDb(appState.activeListId, sym); // выбор тикера — в БД (watchlists.active_symbol)
@@ -775,9 +773,8 @@ window.buildSectionElement = function(sym) {
   div.className = 'section-header wl-row-grid'; // общая сетка колонок (A1/A8)
   div.dataset.symbol = sym;
   const sectionName = sym.replace('SECTION:', '');
-  // Колонки сетки: drag | collapse | счётчик-заглушка | название (col-span до цены) | меню
+  // Колонки сетки: collapse | счётчик-заглушка | название (col-span до цены) | меню
   div.innerHTML = `
-    <span class="drag-handle" title="Перетащить">⋮</span>
     <span class="section-collapse-btn" title="Свернуть/Развернуть">${CHEVRON_SVG}</span>
     <span class="section-count" title="Инструментов в разделе"></span>
     <span class="section-title col-section-name" title="Дважды кликните, чтобы переименовать">${escapeHtml(sectionName)}</span>

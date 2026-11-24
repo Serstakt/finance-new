@@ -533,7 +533,15 @@ window.playAlertSound = function() {
 // иначе при недоступности cdnjs здесь падал ReferenceError и весь код ниже не выполнялся)
 if (typeof Sortable !== 'undefined') {
   new Sortable(document.getElementById('ticker-list'), {
-    animation: 150, handle: '.drag-handle', ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+    animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+    // Перетаскивание за всю строку (ручки «⋮» больше нет). Интерактивные
+    // контролы исключены из драга: клики по ним не должны превращаться в
+    // перенос строки, preventOnFilter=false оставляет им обычный клик.
+    filter: '.ticker-remove, .favorite-wrapper, .section-collapse-btn, .section-menu-btn',
+    preventOnFilter: false,
+    // На тач-устройствах драг стартует только после удержания — иначе
+    // жест прокрутки списка перехватывается переносом строки.
+    delay: 150, delayOnTouchOnly: true,
     onEnd: function (evt) {
       // Собираем новый порядок по DOM и находим перемещённый элемент.
       const newList = [];

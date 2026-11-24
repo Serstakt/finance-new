@@ -394,7 +394,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    контейнера, и правый край (корзина) обрезался. Текст тикера при сжатии
    режется многоточием (.ticker-symbol-link) */
 #watchlist {
-  --wl-grid-cols: 16px 20px 22px minmax(0, 1fr) 68px 62px 66px 24px;
+  --wl-grid-cols: 20px 22px minmax(0, 1fr) 68px 62px 66px 24px;
   --wl-grid-gap: 6px;
 }
 .wl-row-grid {
@@ -544,11 +544,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   box-shadow: inset 3px 0 0 #2962ff;
 }
 
-/* --- Drag & Drop: ручка появляется сразу при hover строки (не только при hover
-   самой ручки) и заранее занимает место в сетке — строка не «прыгает» --- */
-.drag-handle { color: #787b86; cursor: grab; opacity: 0; transition: opacity 0.15s; font-size: 14px; user-select: none; line-height: 1; text-align: center; }
-.ticker-item:hover .drag-handle, .section-header:hover .drag-handle { opacity: 0.85; }
-.drag-handle:active { cursor: grabbing; }
+/* --- Drag & Drop: строка перетаскивается целиком (ручки «⋮» больше нет) --- */
 
 /* --- Избранное (флажки) --- */
 .favorite-wrapper { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
@@ -1124,7 +1120,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 .section-header .section-title:hover { color: #d1d4dc; }
 /* Название раздела растянуто на колонки тикер+цена+изм. (сетка общая со строками) */
-.section-header .col-section-name { grid-column: 4 / span 4; }
+.section-header .col-section-name { grid-column: 3 / span 4; }
 /* Счётчик инструментов в разделе (заполняется в updateSectionElement) */
 .section-count {
   font-size: 10px; font-weight: 500; color: #787b86; text-transform: none; letter-spacing: 0;
@@ -1140,8 +1136,6 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .section-collapse-btn svg { width: 12px; height: 12px; display: block; transition: transform 0.15s ease; }
 .section-header.collapsed .section-collapse-btn svg { transform: rotate(-90deg); }
 .section-collapse-btn:hover { background: #363a45; color: #d1d4dc; }
-.section-header .drag-handle { cursor: grab; opacity: 0.5; font-size: 14px; }
-.section-header:hover .drag-handle { opacity: 0.85; }
 .section-header .section-menu-btn { opacity: 0; transition: opacity 0.2s ease; }
 .section-header:hover .section-menu-btn { opacity: 1; }
 
