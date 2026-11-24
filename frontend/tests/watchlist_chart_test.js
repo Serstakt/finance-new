@@ -365,6 +365,31 @@ const chart = {
   _candlePane: {
     getAxisComponent: () => fakeYAxis,
   },
+  // перетаскивание шкалы цены: инстанс событий графика 9.6. Оригинальный
+  // _findWidgetByEvent ищет виджет по координатам события: правая полоса
+  // (x > 800) — ось цены, остальное — главный виджет панели (pin-патч
+  // перетаскивания обязан подменять результат только при зажатой оси)
+  _chartEvent: (() => {
+    const pane = { getId: () => 'candle_pane' };
+    const widgets = {
+      main: { getName: () => 'main', getPane: () => pane },
+      yAxis: { getName: () => 'yAxis', getPane: () => pane },
+    };
+    const ev = {
+      _mouseDownWidget: null,
+      _findWidgetByEvent: e => ({ pane, widget: e.x > 800 ? widgets.yAxis : widgets.main }),
+    };
+    ev._testWidgets = widgets;
+    return ev;
+  })(),
+  // геометрия панелей для плашки последней цены (syncAxisPriceTag):
+  // главная область и ось цены панели свечей в координатах холста
+  getSize: (paneId, position) => {
+    if (paneId !== 'candle_pane') return null;
+    if (position === 'main') return { left: 0, top: 0, width: 800, height: 400 };
+    if (position === 'yAxis') return { left: 800, top: 0, width: 100, height: 400 };
+    return null;
+  },
   // сброс вида/догоняющий клик: OverlayStore 9.6 (isDrawing для guard'а
   // dblclick, progress-инстанс для завершения фигуры последним кликом)
   getChartStore: () => ({ getOverlayStore: () => fakeOverlayStore }),
@@ -389,6 +414,9 @@ const fakeYAxis = {
   getAutoCalcTickFlag: () => autoCalcTickFlag,
   setAutoCalcTickFlag: f => { autoCalcTickFlag = f; },
   _calcTickInterval: range => [range / 8, 2],
+  // плашка последней цены ставится по y последней цены (syncAxisPriceTag):
+  // тождественное преобразование — цена 200 стоит на y 200
+  convertToPixel: v => v,
 };
 const styleCalls = [];
 const customApi = {}; // setCustomApi ({formatDate}) — русская ось времени
@@ -2237,6 +2265,72 @@ const candle = (day, close, month = 11) => ({
   delete markupCleanup.SBER;
   delete markupCleanup.GAZP;
   store.set('wl_chart_markup', JSON.stringify(markupCleanup));
+
+  // ---- Захват шкалы цены не срывается при уходе курсора с полосы оси
+  // (как в TV: шкала тянется, пока зажата кнопка, где бы ни был курсор).
+  // pinYAxisDragCapture перекрывает _findWidgetByEvent инстанса событий:
+  // без привязки виджет под курсором переставал совпадать с нажатым,
+  // и перетаскивание замирало при зажатой кнопке
+  const evInst = chart._chartEvent;
+  assert(evInst._tcAxisDragPinned === true
+    && Object.prototype.hasOwnProperty.call(evInst, '_findWidgetByEvent'),
+    'шкала цены: _findWidgetByEvent перекрыт own-свойством инстанса событий');
+  evInst._mouseDownWidget = evInst._testWidgets.yAxis; // нажатие на полосе оси цены
+  const pinned = evInst._findWidgetByEvent({ x: 100 }); // курсор уже над графиком
+  assert(pinned.widget === evInst._testWidgets.yAxis && pinned.pane.getId() === 'candle_pane',
+    'шкала цены: при зажатой оси виджет под курсором подменяется нажатым — захват не срывается');
+  evInst._mouseDownWidget = evInst._testWidgets.main; // нажатие не на оси
+  assert(evInst._findWidgetByEvent({ x: 100 }).widget === evInst._testWidgets.main
+    && evInst._findWidgetByEvent({ x: 850 }).widget === evInst._testWidgets.yAxis,
+    'шкала цены: нажатие вне оси живёт по прежним правилам библиотеки');
+  evInst._mouseDownWidget = null; // кнопка отпущена — привязки нет
+  assert(evInst._findWidgetByEvent({ x: 100 }).widget === evInst._testWidgets.main,
+    'шкала цены: без нажатия поиск виджета — обычный, по координатам курсора');
+
+  // ---- Плашка последней цены уступает метке цены кроссхейра (как в TV:
+  // цена под курсором не прячется за тегом текущей цены — тег отъезжает на
+  // минимальный зазор, а у края панели, где обе метки не помещаются,
+  // прячется целиком: DOM-плашка стоит поверх канваса библиотеки)
+  els['tc-axis-price-tag'] = new El('div');
+  els['watchlist-kline'].getBoundingClientRect = () => ({ left: 0, top: 0 });
+  els['tc-chart-stage'].clientWidth = 900;
+  els['tc-chart-stage'].clientHeight = 400;
+  // цена 200 → y 200 (ось-двойник отдаёт пиксель = цене), плашка y 183…217
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
+    candles: [candle(19, 200), candle(20, 200)] }];
+  await sandbox.window.wlChartLoad('GAZP');
+  await flush();
+  const tagEl = els['tc-axis-price-tag'];
+  assert(tagEl.style.top === '183px' && tagEl.style.visibility === '',
+    'плашка цены: центрирована на последней цене (200 − 17), видима');
+  // Курсор над областью свечей у цены (метка кроссхейра на y 205 пересекает
+  // плашку): отступает вверх — центр не ближе 28 px (17 + 11) к метке
+  els['watchlist-kline']._listeners.pointermove({ clientX: 400, clientY: 205 });
+  assert(tagEl.style.top === '160px',
+    'плашка цены: уступила метке кроссхейра — отступила на минимальный зазор');
+  // Курсор ушёл с холста: кроссхейр скрыт, плашка вернулась на свою цену
+  els['watchlist-kline']._listeners.pointerleave();
+  assert(tagEl.style.top === '183px' && tagEl.style.visibility === '',
+    'плашка цены: после ухода курсора вернулась на свою цену');
+  // Курсор над осью цены (правее главной области): на оси панели метки
+  // кроссхейра нет — плашка не двигается
+  els['watchlist-kline']._listeners.pointermove({ clientX: 850, clientY: 205 });
+  assert(tagEl.style.top === '183px',
+    'плашка цены: курсор над осью — метки кроссхейра нет, плашка на месте');
+  els['watchlist-kline']._listeners.pointerleave();
+  // У верхнего края панели обе метки не помещаются: цена y 12, курсор y 30 —
+  // плашку прижало к границе панели, она снова перекрыла бы метку → видимость
+  // уступает цене под курсором
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, name: 'Газпром',
+    candles: [candle(19, 12), candle(20, 12)] }];
+  await sandbox.window.wlChartLoad('GAZP');
+  await flush();
+  els['watchlist-kline']._listeners.pointermove({ clientX: 400, clientY: 30 });
+  assert(tagEl.style.visibility === 'hidden',
+    'плашка цены: у края панели прячется целиком — метка кроссхейра видима');
+  els['watchlist-kline']._listeners.pointerleave();
+  assert(tagEl.style.visibility === '',
+    'плашка цены: кроссхейр ушёл — плашка снова видима');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

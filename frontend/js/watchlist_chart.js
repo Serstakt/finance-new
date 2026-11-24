@@ -515,6 +515,38 @@
     };
   };
 
+  // ---- Перетаскивание шкалы цены не срывается при уходе курсора с оси ----
+  // KLineChart 9.6 в pressedMouseMoveEvent заново ищет виджет под курсором и
+  // тянет шкалу, только пока это тот же виджет, где нажали кнопку. Курсор
+  // ушёл с узкой полосы оси цены (на график, соседнюю панель, за край
+  // холста) — масштабирование замирает: захват «сбрасывается», хотя кнопка
+  // ещё зажата. В TradingView шкала тянется, пока держат кнопку, где бы ни
+  // был курсор. Перекрывается _findWidgetByEvent инстанса событий графика
+  // (chartInstance._chartEvent, own-свойство затеняет prototype-метод —
+  // имена методов в бандле не минифицируются, см. densifyPriceAxisTicks):
+  // пока нажатие живёт на виджете оси цены (_mouseDownWidget выставляется
+  // в mousedown и сбрасывается в mouseup библиотеки), он и возвращается —
+  // перетаскивание продолжается по всей странице. Нажатие вне оси живёт по
+  // прежним правилам. Инстанс недоступен (сменилось внутреннее API) —
+  // остаётся поведение библиотеки
+  const pinYAxisDragCapture = () => {
+    try {
+      const ev = chartInstance && chartInstance._chartEvent;
+      if (!ev || ev._tcAxisDragPinned) return;
+      if (typeof ev._findWidgetByEvent !== 'function') return;
+      ev._tcAxisDragPinned = true;
+      const findWidgetByEvent = ev._findWidgetByEvent.bind(ev);
+      ev._findWidgetByEvent = function (e) {
+        const down = this._mouseDownWidget;
+        if (down && typeof down.getName === 'function' && down.getName() === 'yAxis'
+          && typeof down.getPane === 'function') {
+          return { pane: down.getPane(), widget: down };
+        }
+        return findWidgetByEvent(e);
+      };
+    } catch (e) { /* internals сменились — остаётся поведение библиотеки */ }
+  };
+
   // Автоподгонка шкалы: перетаскивание оси цены снимает её (setExtremum),
   // setStyles с yAxis.type возвращает — кнопка «авто» переключает туда и
   // обратно (см. tcAutoSizeScale ниже)
@@ -1298,6 +1330,9 @@
       // Плотные метки оси цены (см. блок densifyPriceAxisTicks) — до
       // первой загрузки данных, чтобы ось сразу строилась с делителем 16
       densifyPriceAxisTicks();
+      // Захват шкалы цены не срывается при уходе курсора с полосы оси
+      // (см. блок pinYAxisDragCapture)
+      pinYAxisDragCapture();
       // Дефолтный вид для сброса: снимаем до первого applyNewData и до
       // restoreViewport пользовательских зума/сдвига — это чистые дефолты
       defaultViewport = {
@@ -2200,6 +2235,44 @@
     syncAxisPriceTag();
   };
 
+  // Позиция курсора на холсте ({x, y} в координатах контейнера графика)
+  // — ведётся в pointermove/pointerleave (см. bindChartPointerTracking).
+  // Нужна, чтобы плашка последней цены уступала место метке цены
+  // кроссхейра, когда обе оказываются на одной высоте
+  let chartPointer = null;
+
+  // Половина высоты метки цены кроссхейра на оси (рисует библиотека на
+  // канвасе): шрифт 12 + паддинги 4+4 + рамка 2×1 ≈ 22 px
+  const CROSSHAIR_LABEL_HALF = 11;
+
+  const onChartPointerMove = (e) => {
+    const dom = chartInstance && typeof chartInstance.getDom === 'function'
+      ? chartInstance.getDom() : document.getElementById('watchlist-kline');
+    const rect = dom && typeof dom.getBoundingClientRect === 'function'
+      ? dom.getBoundingClientRect() : null;
+    if (!rect || e.clientX == null) return;
+    chartPointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    syncAxisPriceTag();
+  };
+
+  const onChartPointerLeave = () => {
+    if (chartPointer == null) return;
+    chartPointer = null;
+    syncAxisPriceTag();
+  };
+
+  // Слежение за курсором на холсте: привязывается один раз к контейнеру
+  // графика (наследник — канвасы библиотеки). pointerleave = кроссхейр
+  // скрыт библиотекой (mouseLeaveEvent → setCrosshair()) — плашка
+  // возвращается на свою цену
+  const bindChartPointerTracking = () => {
+    const dom = document.getElementById('watchlist-kline');
+    if (!dom || dom.dataset.chartPointerBound) return;
+    dom.dataset.chartPointerBound = '1';
+    dom.addEventListener('pointermove', onChartPointerMove);
+    dom.addEventListener('pointerleave', onChartPointerLeave);
+  };
+
   // Поле «цена + отсчёт» на шкале цены — ОДНА плашка в цвет направления
   // последней свечи: сверху цена, отсчёт — просто строкой ниже (как тег
   // «287,45 · 00:32:41» в TradingView, только колонкой). Встроенный тег
@@ -2211,12 +2284,12 @@
   // край прижат к краю оси (как тег цены в TradingView), вертикаль не
   // выходит за пределы панели свечей. API недоступен — прежнее поведение:
   // плашка у правого края холста. Цена вне видимого диапазона — поле
-  // прячется. Обновляется раз в секунду и на сдвиг/зум (подписки в init)
-  // — между кадрами положение может отставать на пиксели.
+  // прячется. Обновляется раз в секунду, на сдвиг/зум (подписки в init)
+  // и на каждое движение курсора по холсту — между кадрами положение
+  // может отставать на пиксели.
   const syncAxisPriceTag = () => {
     const tag = document.getElementById('tc-axis-price-tag');
     if (!tag) return;
-    tag.classList.remove('up', 'down');
     const list = chartInstance ? chartInstance.getDataList() : [];
     const last = list.length ? list[list.length - 1] : null;
     if (!last || lastTs == null || !chartSectionVisible()) {
@@ -2243,25 +2316,59 @@
         ? chartInstance.getSize('candle_pane', 'yAxis') : null;
       if (b && Number.isFinite(b.left) && Number.isFinite(b.width) && b.width > 0) axisRect = b;
     } catch (e) { /* internals недоступны — остаётся прижатие к краю холста */ }
+    let widthStyle = '';
+    let rightStyle = '';
     if (axisRect) {
       const axisRight = axisRect.left + axisRect.width;
       const axisTop = Number.isFinite(axisRect.top) ? axisRect.top : 0;
       const axisBottom = axisTop + (Number.isFinite(axisRect.height) ? axisRect.height : stageH);
-      tag.style.width = `${Math.round(axisRect.width)}px`;
-      tag.style.right = `${Math.max(0, Math.round(stageW - axisRight))}px`;
+      widthStyle = `${Math.round(axisRect.width)}px`;
+      rightStyle = `${Math.max(0, Math.round(stageW - axisRight))}px`;
       topBound = axisTop;
       bottomBound = axisBottom;
-    } else {
-      // Точную геометрию дать нечем — сбрасываем к CSS-дефолту (right: 4px)
-      tag.style.width = '';
-      tag.style.right = '';
+    } // иначе — CSS-дефолт (right: 4px), точную геометрию дать нечем
+    // Метка цены кроссхейра на оси главной панели: библиотека рисует её,
+    // пока курсор над областью свечей этой панели (или идёт прокрутка
+    // холста с зажатой кнопкой). DOM-плашка стоит поверх канваса —
+    // на одной высоте с меткой она закрывает цену под курсором. Как в
+    // TradingView: плашка отступает на минимальный зазор от метки (метка
+    // приоритетна — ею водит пользователь), а у края панели, где обе не
+    // помещаются, прячется целиком — иначе снова перекроет метку.
+    let crosshairY = null;
+    if (chartPointer) {
+      try {
+        const main = typeof chartInstance.getSize === 'function'
+          ? chartInstance.getSize('candle_pane', 'main') : null;
+        if (main && Number.isFinite(main.left) && Number.isFinite(main.width)
+          && Number.isFinite(main.top) && Number.isFinite(main.height)
+          && chartPointer.x >= main.left && chartPointer.x <= main.left + main.width
+          && chartPointer.y >= main.top && chartPointer.y <= main.top + main.height) {
+          crosshairY = chartPointer.y;
+        }
+      } catch (e) { /* internals недоступны — плашка не уступает */ }
     }
     // Центрируем плашку (~34px) на цене, у краёв панели прижимаем внутрь
     const half = 17;
-    const top = Math.min(Math.max(px - half, topBound + 2), Math.max(topBound + 2, bottomBound - half * 2 - 2));
-    tag.style.top = `${Math.round(top)}px`;
-    tag.classList.toggle('up', last.close >= last.open);
-    tag.classList.toggle('down', last.close < last.open);
+    let center = px;
+    let gap = 0; // зазор, на который плашка отступила от метки кроссхейра
+    if (crosshairY != null) {
+      gap = half + CROSSHAIR_LABEL_HALF;
+      const dy = crosshairY - px;
+      if (Math.abs(dy) < gap) center = dy >= 0 ? crosshairY - gap : crosshairY + gap;
+      else gap = 0;
+    }
+    const top = Math.min(Math.max(center - half, topBound + 2), Math.max(topBound + 2, bottomBound - half * 2 - 2));
+    const hidden = gap > 0 && Math.abs(crosshairY - (top + half)) < gap;
+    // Пишем только изменившиеся свойства: sync зовётся на каждом
+    // движении курсора, лишние записи стилей дают лишние reflow
+    const topStyle = `${Math.round(top)}px`;
+    if (tag.style.top !== topStyle) tag.style.top = topStyle;
+    if (tag.style.width !== widthStyle) tag.style.width = widthStyle;
+    if (tag.style.right !== rightStyle) tag.style.right = rightStyle;
+    if (tag.style.visibility !== (hidden ? 'hidden' : '')) tag.style.visibility = hidden ? 'hidden' : '';
+    const up = last.close >= last.open;
+    if (tag.classList.contains('up') !== up) tag.classList.toggle('up', up);
+    if (tag.classList.contains('down') !== !up) tag.classList.toggle('down', !up);
   };
 
   const startCountdownTimer = () => {
@@ -4785,6 +4892,9 @@
     // повторного навешивания
     bindResetViewUi();
     bindStageTools();
+    // Курсор на холсте: плашка последней цены уступает место метке
+    // кроссхейра (см. блок onChartPointerMove / syncAxisPriceTag)
+    bindChartPointerTracking();
     bindSettingsDialog();
     bindTickerInput();
     // Диалог настроек индикатора («Входные данные»/«Стиль») и окно
