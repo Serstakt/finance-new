@@ -74,10 +74,12 @@ function renderPortfolio(data) {
           </div>
         </td>
         <td>${pos.quantity.toFixed(2)}</td>
-        <td><strong>${pos.avg_price.toFixed(2)} ₽</strong></td>
-        <td>${pos.current_price.toFixed(2)} ₽</td>
-        <td>${(pos.quantity * pos.current_price).toFixed(2)} ₽</td>
-        <td class="${pnlClass}">${pnlSign}${pos.pnl.toFixed(2)} ₽</td>
+        <!-- Цены входа/текущая — с адаптивной точностью (formatPriceAuto):
+             дешёвая крипта при .toFixed(2) показывалась «0,00 ₽» -->
+        <td><strong>${formatPriceAuto(pos.avg_price)} ₽</strong></td>
+        <td>${formatPriceAuto(pos.current_price)} ₽</td>
+        <td>${formatPriceAuto(pos.quantity * pos.current_price)} ₽</td>
+        <td class="${pnlClass}">${pnlSign}${formatPriceAuto(pos.pnl)} ₽</td>
         <td class="${pnlClass}">${pnlSign}${pos.pnl_pct.toFixed(2)}%</td>
         <td>
           <button class="btn-icon delete" onclick="deletePosition('${pos.symbol}')" title="Удалить">

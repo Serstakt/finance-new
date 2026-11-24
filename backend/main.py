@@ -14,6 +14,7 @@ from .services import news_favorites_service
 from .services import alert_service
 from .services import notification_service
 from .services import candle_store_service
+from .services import symbol_search_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -150,6 +151,28 @@ async def get_price(symbol: str):
             return await crypto_service.fetch_crypto_price(upper.replace("BINANCE:", ""))
         # Неизвестная биржа — считаем тикером Мосбиржи (Yahoo Finance не используется)
         return await moex_service.fetch_moex_price(upper)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ПОИСК ИНСТРУМЕНТОВ (автодополнение ввода тикеров, как поиск TradingView)
+# =============================================================================
+
+@app.get("/api/search/symbols")
+async def search_symbols_endpoint(
+    q: str = Query(..., min_length=1, description="Запрос: тикер или название (SBER, Сбербанк, BTCUSDT)"),
+    limit: int = Query(default=8, ge=1, le=20),
+):
+    """Поиск инструментов для выпадающих подсказок (добавление в watchlist,
+    поле тикера графика). Совпадения по тикеру и названию, у каждой
+    подсказки — тип актива (stock/currency/index/crypto) и логотип для
+    крипты. MOEX ищется через ISS /securities.json?q=..., крипта — по
+    справочнику торгуемых пар Binance exchangeInfo (имена/логотипы — из
+    кэшей CoinGecko). Недоступность одного источника не ломает другой.
+    """
+    try:
+        return await symbol_search_service.search_symbols(q, limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

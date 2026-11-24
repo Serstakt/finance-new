@@ -259,6 +259,56 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   background: rgba(41, 98, 255, 0.1); border-color: #2962ff; color: #2962ff;
 }
 
+/* === ВЫПАДАЮЩИЙ ПОИСК СИМВОЛОВ (автодополнение, как в TradingView) ===
+   Меню живёт в <body> (symbol_search.js позиционирует его fixed под полем —
+   панель watchlist иначе обрезала бы его своим overflow). */
+.symbol-search-menu {
+  display: none;
+  position: fixed;
+  z-index: 1200;
+  background: #1e222d;
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #363a45 transparent;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.symbol-search-menu.open { display: block; }
+.symbol-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #d1d4dc;
+}
+.symbol-search-item.active { background: #2962ff22; }
+.symbol-search-note { padding: 9px 12px; color: #787b86; }
+/* Логотип 20px — тот же размер, что в строках списка (.ticker-logo-container):
+   buildLogoHtml отдаёт <img class="ticker-logo"> + заглушку <div class="ticker-logo-fallback"> */
+.symbol-search-item .ss-logo {
+  width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+  overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: #2a2e39;
+}
+.symbol-search-item .ss-logo img { width: 100%; height: 100%; object-fit: cover; }
+.symbol-search-item .ss-logo .ticker-logo-fallback {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  background: #2a2e39; color: #d1d4dc; font-weight: 600; font-size: 9px; border-radius: 50%;
+}
+.symbol-search-item .ss-ticker { font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+.symbol-search-item .ss-name {
+  flex: 1; min-width: 0; color: #787b86;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.symbol-search-item .ss-hl { color: #4d8dff; }
+.symbol-search-item .ss-type { flex-shrink: 0; font-size: 10px; font-weight: 500; }
+
+
 /* ==========================================================================
    9. 📜 СПИСОК ТИКЕРОВ И ЭЛЕМЕНТЫ
    ========================================================================== */

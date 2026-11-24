@@ -42,6 +42,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Флажки (избранное) тянем из колонки watchlist_items.flag_color — так
   // избранное восстанавливается даже в чистом браузере без localStorage.
   await loadFlagsFromDb();
+  // Сохранённый выбор списка (sessionStorage) применяем ПОСЛЕ загрузки
+  // списков и флажков: только тогда в appState.lists появляются списки из БД
+  // и собранные из флажков fav_-списки («Красный»…), и сохранённый id можно
+  // валидировать (applySavedListSelection в state.js; раньше этот выбор
+  // отбрасывался в loadState и перезагрузка всегда показывала 'default')
+  applySavedListSelection();
   // Заметки к тикерам — из колонки watchlist_items.note (GET /api/watchlist-notes),
   // чтобы иконки 📝 отрисовались сразу при первой перерисовке списка.
   await loadNotesFromDb();

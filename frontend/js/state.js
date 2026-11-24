@@ -104,16 +104,41 @@ window.noteKey = function(listId, symbol) { return `${listId}|${symbol}`; };
 // второй источник истины и рассинхроны с БД.
 window.loadState = function() {
   // Активный таб — UI-настройка конкретной вкладки браузера (sessionStorage).
-  // Название выбранного списка подтянется из БД в loadListNamesFromDb();
-  // если списка нет (например, fav_-таб ещё не собран), откатимся к 'default'.
+  // ВАЖНО: в момент вызова loadState() состав appState.lists ещё пуст —
+  // названия списков и флажки подтянутся из БД позже (loadListNamesFromDb /
+  // loadFlagsFromDb), а fav_-списки («Красный»…) вообще собираются из флажков.
+  // Поэтому сохранённый id здесь НЕ валидируем: прежняя проверка
+  // appState.lists[savedTab] на этом месте всегда падала (в lists лежит
+  // только заглушка 'default'), и выбор списка сбрасывался на RUS каждой
+  // перезагрузкой страницы. Применение — applySavedListSelection(), её
+  // вызывает main.js после загрузки списков и флажков из БД.
   try {
     const savedTab = sessionStorage.getItem(window.UI_STATE_KEY);
-    if (savedTab && appState.lists[savedTab]) appState.activeListId = savedTab;
+    if (savedTab) window.__pendingListId = savedTab;
   } catch (e) {}
 
   // Данные watchlist сюда НЕ загружаются: единственный источник истины — БД.
   // Одноразовый перенос старого снимка из localStorage делает
   // runLegacyMigration() в main.js (readLegacyState -> migrateLegacyStateToDb).
+};
+
+// Применяет сохранённый в sessionStorage выбор списка (UI_STATE_KEY) после
+// того, как из БД загружены названия списков и флажки. Вызывается из main.js
+// на старте ДО первого navigateTo. Если сохранённого списка больше нет
+// (удалён на другом устройстве или у цвета не осталось избранных тикеров) —
+// сохранение сбрасывается, остаётся 'default'.
+window.applySavedListSelection = function() {
+  const saved = window.__pendingListId || null;
+  window.__pendingListId = null;
+  if (!saved) return;
+  if (appState.lists[saved]) {
+    appState.activeListId = saved;
+    return;
+  }
+  try { sessionStorage.removeItem(window.UI_STATE_KEY); } catch (e) {}
+  if (typeof log === 'function') {
+    log(`Сохранённый список "${saved}" не найден — открыт список по умолчанию`, 'info');
+  }
 };
 
 // Читает устаревший снимок appState из localStorage без применения к памяти.
