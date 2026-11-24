@@ -42,6 +42,12 @@
 // fmtVol с триллионами (2355.79B → 2.36T).
 // Мини-DOM + fake klinecharts — в стиле остальных тестов проекта
 // (node:vm без браузера).
+// Единообразие со списком: дельта в легенде — из той же ручки /api/prices,
+// что у строк watchlist (официальная дневная дельта MOEX/крипты; расчёт
+// по свечам — фолбэк при сбое ручки), ru-формат «-1,17 (-0,40%)» как в
+// списке; оси без белой линии границ (axisLine выключен у обеих осей);
+// «Индикаторы» — дропдаун с иконкой ƒx (select и метка «Индикаторы:»
+// убраны): пункты групп, включённые подсвечены, клик переключает.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -88,12 +94,16 @@ class El {
 const els = {
   'watchlist-chart-status': new El('div'),
   'watchlist-kline': new El('div'),
-  'tc-indicator-select': new El('select'),
   // легенды индикаторов прямо на графике (шапка без чипов)
   'tc-ind-legends': new El('div'),
+  // дропдаун «Индикаторы» (иконка ƒx + подпись, меню с группами)
+  'tc-ind-dropdown': new El('div'),
+  'tc-ind-toggle': new El('button'),
+  'tc-ind-menu': new El('div'),
   // шапка символа: поле тикера слева + имя справа, легенда OHLCV
   'tc-sym-input': new El('input'),
   'tc-sym-name': new El('span'),
+  'tc-sym-price': new El('span'),
   'tc-leg-change': new El('span'),
   'tc-sym-countdown': new El('span'),
   'tc-legend': new El('div'),
@@ -313,17 +323,23 @@ let registeredIndicator = null; // спек индикатора volume-гист
 const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
 let updatePaneCalls = 0;
 let resizeCalls = 0; // chart.resize() — пересчёт холста под контейнер
+let initOptions = null; // стили init (оси: axisLine выключен и пр.)
 const klinecharts = {
-  init: () => chart,
+  init: (el, opts) => { initOptions = opts || null; return chart; },
   registerOverlay: tpl => { registeredOverlays[tpl.name] = tpl; },
   registerIndicator: ind => { registeredIndicator = ind; },
 };
 
 // ---------- Fake fetch, таймеры, prompt ----------
 let fetchQueue = []; const fetchUrls = [];
+// Котировки легенды (/api/prices/…) — отдельная очередь: дельта берётся из
+// той же ручки, что и строки watchlist. Пустая очередь = сбой ручки —
+// легенда остаётся на расчёте по свечам (фолбэк)
+let quoteQueue = [];
 const fetchWithTimeout = async url => {
   fetchUrls.push(url);
-  const item = fetchQueue.shift();
+  const q = String(url).includes('/api/prices/') ? quoteQueue : fetchQueue;
+  const item = q.shift();
   if (!item) throw new Error('no queued response');
   return { json: async () => item };
 };
@@ -368,10 +384,13 @@ const candle = (day, close, month = 11) => ({
   // 0) Загрузка тикера, выбранного в списке (ui.js createChart →
   //    wlChartLoad). На DOMContentLoaded сама по себе ничего не грузится —
   //    символ приходит из watchlist, «последний тикер» больше не хранится.
+  //    Дельта легенды — из ручки списка (/api/prices), как в строках
+  //    watchlist: официальная дневная дельта, ru-формат.
   fetchQueue = [{
     symbol: 'MOEX:SBER', interval: 24, name: 'Сбербанк',
     candles: [candle(18, 305), candle(19, 308)],
   }];
+  quoteQueue = [{ symbol: 'MOEX:SBER', price: 308, changeValue: 3.5, changeDay: 1.14 }];
   domReadyCb(); // DOMContentLoaded: слушатели навешены, загрузки без символа нет
   await flush();
   assert(applied.length === 0, 'на DOMContentLoaded без выбранного тикера график не грузится');
@@ -385,10 +404,15 @@ const candle = (day, close, month = 11) => ({
   assert(sandbox.window.wlChartIsCurrent('SBER') === true, 'wlChartIsCurrent: SBER сейчас на графике');
 
   // 0a0) Вид при init: применены сохранённые (здесь — дефолтные) тип
-  //      графика и режим шкалы цены
+  //      графика и режим шкалы цены; линии границ осей выключены
   assert(styleCalls.length >= 2 && styleCalls[0].candle && styleCalls[0].candle.type === 'candle_solid'
     && styleCalls[1].yAxis && styleCalls[1].yAxis.type === 'normal',
     'вид при init: применены дефолтные тип (свечи) и режим шкалы (обычная)');
+  assert(initOptions && initOptions.styles && initOptions.styles.xAxis
+    && initOptions.styles.xAxis.axisLine && initOptions.styles.xAxis.axisLine.show === false
+    && initOptions.styles.yAxis && initOptions.styles.yAxis.axisLine
+    && initOptions.styles.yAxis.axisLine.show === false,
+    'оси: граница axisLine выключена у обеих осей (белой линии вдоль даты/цены нет)');
 
   // 0a) Шапка символа (облик TradingView): тикер — в поле ввода слева
   //     (перед ТФ), дублирующие подписи (ТФ, имя) убраны; имя инструмента —
@@ -396,8 +420,12 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-sym-input'].value === 'SBER', 'шапка: тикер SBER подставлен в поле ввода');
   assert(els['tc-sym-name'].textContent === 'Сбербанк' && els['tc-sym-name'].style.display !== 'none',
     'легенда: имя инструмента из candles-ответа показано перед «Откр»');
-  assert(els['tc-leg-change'].textContent === '+3.00 (+0.98%)' && els['tc-leg-change']._classes.has('up'),
-    'легенда: дельта +3.00 (+0.98%) зелёным');
+  assert(fetchUrls.some(u => String(u).includes('/api/prices/SBER')),
+    'котировка: дельта легенды запрошена из ручки списка /api/prices');
+  assert(els['tc-leg-change'].textContent === '+3,50 (+1,14%)' && els['tc-leg-change']._classes.has('up'),
+    'легенда: дельта из котировки списка «+3,50 (+1,14%)» зелёным (ru-формат, как в списке)');
+  assert(els['tc-sym-price'].textContent === '308.00',
+    'поле на шкале: цена последней свечи из данных графика');
 
   // 0a2) Легенда OHLCV по последней свече, цвет по направлению
   assert(els['tc-leg-o'].textContent === '303.00' && els['tc-leg-h'].textContent === '313.00' &&
@@ -451,12 +479,14 @@ const candle = (day, close, month = 11) => ({
     'onDrawEnd сохранил разметку SBER в localStorage');
 
   // 1) Срез пуст → фолбэк на полный запрос через хранилище с note
+  //    (котировка легенды не отвечает — дельта остаётся расчётом по свечам)
   fetchQueue = [
     { symbol: 'MOEX:GAZP', interval: 24, candles: [] },                       // slice: пусто
     { symbol: 'MOEX:GAZP', interval: 24,
       note: 'Источник недоступен (boom); отдаём накопленную историю',
       candles: [candle(18, 140), candle(19, 142)] },
   ];
+  quoteQueue = []; // ручка списка не отвечает — фолбэк на дельту по свечам
   await sandbox.window.wlChartLoad('GAZP');
   await flush();
   const st1 = statusOf();
@@ -466,6 +496,8 @@ const candle = (day, close, month = 11) => ({
   assert(st1.text.includes('накопленную историю'), 'текст note попал в статус');
   assert(els['tc-sym-input'].value === 'GAZP' && els['tc-sym-name'].style.display === 'none',
     'легенда: без имени в ответе имя скрыто, тикер GAZP в поле ввода');
+  assert(els['tc-leg-change'].textContent === '+2,00 (+1,43%)' && els['tc-leg-change']._classes.has('up'),
+    'легенда: без котировки дельта по свечам «+2,00 (+1,43%)» (ru-формат, как в списке)');
 
   // 2) Поллинг: обновление последней свечи + дописывание новой
   fetchQueue = [{
@@ -478,8 +510,8 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 3 && applied[2].close === 150, 'поллинг: новая свеча дописана');
   assert(/from=\d{4}-\d{2}-\d{2}/.test(fetchUrls[fetchUrls.length - 1]), 'поллинг: from= дата последней свечи');
   assert(statusOf().text.includes('обновлено'), 'поллинг: статус обновлён');
-  assert(els['tc-leg-change'].textContent === '+2.00 (+1.35%)',
-    'легенда: дельта обновилась на тике поллинга');
+  assert(els['tc-leg-change'].textContent === '+2,00 (+1,35%)',
+    'легенда: дельта обновилась на тике поллинга (котировка перезапрошена)');
 
   // 2a) Отсчёт до закрытия бара: живая свеча (дневная, началась час
   //     назад) — компактный остаток «23ч00м» (две старшие единицы);
@@ -529,7 +561,7 @@ const candle = (day, close, month = 11) => ({
     'viewport: setBarSpace и setOffsetRightDistance после applyNewData, в нужном порядке');
   assert(barSpace === 15 && offsetRight === 120, 'viewport: зум и сдвиг восстановлены');
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
-  assert(els['tc-leg-change'].textContent === '+3.00 (+0.95%)',
+  assert(els['tc-leg-change'].textContent === '+3,00 (+0,95%)',
     'легенда: дельта пересчитана для новых данных');
   assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
     'отсчёт: остывшие данные — проекция к следующей границе суток (как в TV)');
@@ -762,6 +794,34 @@ const candle = (day, close, month = 11) => ({
     'volume: строка «Объем» скрыта после закрытия с легенды');
   sandbox.window.tcAddIndicator('VOL_MAIN'); // вернуть для последующих проверок
 
+  // 10c) Дропдаун «Индикаторы» (иконка ƒx + подпись в шапке, select убран):
+  //      меню из групп «На графике цены»/«В под-окнах», включённые
+  //      подсвечены, клик переключает — добавить и убрать; закрытие по
+  //      Escape (клик мимо гасит тот же document-обработчик)
+  const indItems = () => els['tc-ind-menu'].children.filter(c => c.dataset.ind);
+  assert(indItems().length === 18 && els['tc-ind-menu'].children.length === 20,
+    'дропдаун индикаторов: 18 пунктов в двух группах (+2 заголовка групп)');
+  assert(els['tc-ind-menu'].children[0].className === 'tc-ind-menu-title',
+    'дропдаун индикаторов: группы обозначены заголовками');
+  const activeInds = () => indItems().filter(i => i._classes.has('active')).map(i => i.dataset.ind).sort().join(',');
+  assert(activeInds() === 'MA,VOL_MAIN',
+    'дропдаун индикаторов: включённые (MA, volume) подсвечены');
+  els['tc-ind-toggle']._listeners.click({ stopPropagation: () => {} });
+  assert(els['tc-ind-menu']._classes.has('open'), 'дропдаун индикаторов: открыт по клику на триггер');
+  const macdItem = indItems().find(i => i.dataset.ind === 'MACD');
+  macdItem.closest = () => macdItem; // мини-DOM: closest нужен обработчику меню
+  els['tc-ind-menu']._listeners.click({ target: macdItem });
+  assert(createdIndicators['MACD'] && createdIndicators['MACD'].id === 'tc_ind_MACD',
+    'дропдаун индикаторов: клик по пункту включил MACD в под-окне');
+  assert(macdItem._classes.has('active'), 'дропдаун индикаторов: пункт MACD подсвечен');
+  els['tc-ind-menu']._listeners.click({ target: macdItem });
+  assert(JSON.stringify(removedIndicators[removedIndicators.length - 1])
+      === JSON.stringify(['tc_ind_MACD', 'MACD']),
+    'дропдаун индикаторов: повторный клик выключил MACD');
+  assert(!macdItem._classes.has('active'), 'дропдаун индикаторов: подсветка MACD снята');
+  docListeners.keydown({ key: 'Escape' });
+  assert(!els['tc-ind-menu']._classes.has('open'), 'дропдаун индикаторов: Escape закрыл меню');
+
   // 11) Binance: период поллинга 5 с (ближе к потоку TV), UTC-метки парсятся
   fetchQueue = [{
     symbol: 'BINANCE:BTCUSDT', interval: 7, name: 'Bitcoin',
@@ -797,7 +857,7 @@ const candle = (day, close, month = 11) => ({
     'точность: для SHIB setPrecision({price: 9}) вызван один раз');
   assert(els['tc-leg-o'].textContent === '0.000015400' && els['tc-leg-c'].textContent === '0.000015400',
     'точность: легенда O/C не схлопывается в нули');
-  assert(els['tc-leg-change'].textContent.startsWith('+0.000015246'),
+  assert(els['tc-leg-change'].textContent.startsWith('+0,000015246'),
     'точность: дельта с теми же знаками, что и цена');
 
   // 12) Ошибка загрузки неизвестного тикера — статус ошибки

@@ -308,37 +308,26 @@
                                 </button>
                             </div>
                         </div>
-                        <!-- Индикаторы: dropdown всех встроенных. Строки
-                             включённых (название с параметрами, значения,
-                             ×-закрытие) живут прямо на графике — см.
-                             #tc-ind-legends в .tc-chart-stage -->
-                        <div class="tc-indicator-toolbar">
-                            <span class="tc-group-label">Индикаторы:</span>
-                            <select id="tc-indicator-select" title="Добавить индикатор">
-                                <option value="">+ индикатор…</option>
-                                <optgroup label="На графике цены">
-                                    <option value="MA">MA</option>
-                                    <option value="EMA">EMA</option>
-                                    <option value="BOLL">BOLL</option>
-                                    <option value="SAR">SAR</option>
-                                    <option value="BBI">BBI</option>
-                                    <option value="VOL_MAIN">Объем (гистограмма)</option>
-                                </optgroup>
-                                <optgroup label="В под-окнах">
-                                    <option value="VOL">VOL</option>
-                                    <option value="MACD">MACD</option>
-                                    <option value="RSI">RSI</option>
-                                    <option value="KDJ">KDJ</option>
-                                    <option value="WR">WR</option>
-                                    <option value="CCI">CCI</option>
-                                    <option value="DMI">DMI</option>
-                                    <option value="OBV">OBV</option>
-                                    <option value="ROC">ROC</option>
-                                    <option value="DMA">DMA</option>
-                                    <option value="BIAS">BIAS</option>
-                                    <option value="TRIX">TRIX</option>
-                                </optgroup>
-                            </select>
+                        <!-- Индикаторы — дропдаун с иконкой ƒx (как кнопка
+                             «Индикаторы» в TradingView, текст-метка убрана).
+                             Меню строит js/watchlist_chart.js
+                             (buildIndicatorDropdown): группы «На графике
+                             цены» / «В под-окнах», включённые подсвечены,
+                             клик переключает. Строки включённых (название
+                             с параметрами, значения, ×-закрытие) живут
+                             прямо на графике — см. #tc-ind-legends в
+                             .tc-chart-stage -->
+                        <div class="tc-ind-dropdown" id="tc-ind-dropdown">
+                            <button type="button" id="tc-ind-toggle" aria-haspopup="menu" aria-expanded="false" title="Индикаторы">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M10.5 4.5c-2.1 0-3.2 1.2-3.2 3.2V19"/>
+                                    <path d="M5.5 9.5h6.5"/>
+                                    <path d="m14.5 9.5 5 8"/>
+                                    <path d="m19.5 9.5-5 8"/>
+                                </svg>
+                                <span>Индикаторы</span>
+                            </button>
+                            <div class="tc-ind-menu" id="tc-ind-menu" role="menu"></div>
                         </div>
                         <!-- Имя инструмента живёт в легенде OHLCV на графике
                              (перед «Откр», как в TradingView); код тикера —
