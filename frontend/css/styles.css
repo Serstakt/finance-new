@@ -120,8 +120,13 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #watchlist-page { flex-direction: row; }
 #chart-container { order: 1; }
 #resizer { order: 2; }
+/* Ширина 400px (было 360): сумма минимальных колонок сетки строк
+   (--wl-grid-cols) должна помещаться в панель ВМЕСТЕ со скроллбаром
+   списка (#ticker-list ~8px), иначе правые колонки (кнопка удаления)
+   обрезались overflow-x: hidden — «кнопка прячется за скролбаром».
+   Вместе с укрупнением строк (см. блок .ticker-item) панель стала шире */
 #watchlist {
-  width: 360px; min-width: 260px; max-width: 500px; background: #1e222d;
+  width: 400px; min-width: 300px; max-width: 560px; background: #1e222d;
   border-left: 1px solid #2a2e39; display: flex; flex-direction: column; height: 100%;
   order: 3;
 }
@@ -160,7 +165,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #list-selector-toggle {
   width: 100%; display: flex; align-items: center; gap: 6px;
   background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;
-  padding: 5px 8px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer;
+  padding: 7px 10px; border-radius: 4px; font-size: 13px; outline: none; cursor: pointer;
 }
 #list-selector-toggle:focus, #list-selector-toggle:hover { border-color: #2962ff; }
 #list-selector-toggle .list-option-name {
@@ -177,8 +182,8 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 .list-selector-menu.open { display: block; }
 .list-option {
-  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
-  font-size: 12px; color: #d1d4dc; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+  font-size: 13px; color: #d1d4dc; cursor: pointer;
 }
 .list-option:hover { background: #2a2e39; }
 .list-option.selected { background: #2962ff22; color: #fff; }
@@ -194,8 +199,14 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    ресайзится через #resizer). Меняется только в одном месте — CSS-переменной.
    Порядок колонок: drag | флажок | логотип | тикер | цена | изм. | изм.% | меню
    ========================================================================== */
+/* Колонка тикера — minmax(0, 1fr): строка никогда не вылезает за ширину
+   панели (с любым тикером и при любой ширине ресайзера), правые колонки
+   — цена/изменения/кнопка удаления — всегда видны. Прежний minmax(56px, 1fr)
+   держал минимум 56px: на узкой панели сумма колонок становилась больше
+   контейнера, и правый край (корзина) обрезался. Текст тикера при сжатии
+   режется многоточием (.ticker-symbol-link) */
 #watchlist {
-  --wl-grid-cols: 14px 18px 20px minmax(56px, 1fr) 62px 58px 62px 22px;
+  --wl-grid-cols: 16px 20px 22px minmax(0, 1fr) 68px 62px 66px 24px;
   --wl-grid-gap: 6px;
 }
 .wl-row-grid {
@@ -208,7 +219,7 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* --- Заголовки колонок --- */
 .column-headers {
   padding: 6px 8px; background: #252a36; border-bottom: 1px solid #2a2e39;
-  font-size: 10px; font-weight: 600; color: #787b86; text-transform: uppercase; letter-spacing: 0.5px;
+  font-size: 11px; font-weight: 600; color: #787b86; text-transform: uppercase; letter-spacing: 0.5px;
 }
 .column-header {
   cursor: pointer; user-select: none; transition: color 0.2s;
@@ -245,15 +256,15 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 #add-form { display: flex; padding: 6px 8px; gap: 4px; border-bottom: 1px solid #2a2e39; }
 #add-input {
   flex: 1; background: #2a2e39; border: 1px solid #363a45; color: #d1d4dc;
-  padding: 5px 8px; border-radius: 4px; font-size: 12px; outline: none;
+  padding: 7px 10px; border-radius: 4px; font-size: 13px; outline: none;
 }
 #add-input:focus { border-color: #2962ff; }
-#add-btn { background: #2962ff; color: #fff; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+#add-btn { background: #2962ff; color: #fff; border: none; padding: 7px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
 #add-btn:hover { background: #1e53e5; }
 #add-section-btn {
   background: transparent; border: 1px solid #363a45; color: #787b86;
-  padding: 5px 8px; border-radius: 4px; cursor: pointer;
-  font-size: 12px; transition: all 0.2s ease;
+  padding: 7px 10px; border-radius: 4px; cursor: pointer;
+  font-size: 13px; transition: all 0.2s ease;
 }
 #add-section-btn:hover {
   background: rgba(41, 98, 255, 0.1); border-color: #2962ff; color: #2962ff;
@@ -317,16 +328,25 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    при узкой панели grid-колонки могут не помещаться, но скролл по горизонтали
    не нужен — излишек просто обрезается (по умолчанию overflow-x вычислялся
    как auto и показывал полосу прокрутки внизу) */
-#ticker-list { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #363a45 transparent; }
+/* Скроллбар: тонкий, но видимый — пользователь должен понимать, что список
+   прокручивается (раньше был полностью скрыт). Горизонтальный скроллбар скрыт:
+   при узкой панели grid-колонки могут не помещаться, но скролл по горизонтали
+   не нужен — излишек просто обрезается (по умолчанию overflow-x вычислялся
+   как auto и показывал полосу прокрутки внизу). scrollbar-gutter: stable
+   резервирует место под вертикальный скроллбар ЗАРАНЕЕ (и когда он не нужен):
+   строки не «прыгают» при его появлении, и кнопка удаления всегда целиком
+   левее полосы — не прячется за ней */
+#ticker-list { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #363a45 transparent; scrollbar-gutter: stable; }
 #ticker-list::-webkit-scrollbar { width: 8px; }
 #ticker-list::-webkit-scrollbar-track { background: transparent; }
 #ticker-list::-webkit-scrollbar-thumb { background: #363a45; border-radius: 4px; border: 2px solid #1e222d; }
 #ticker-list::-webkit-scrollbar-thumb:hover { background: #4a4f5c; }
 
-/* --- Базовый элемент тикера (колонки — общие с заголовками, см. .wl-row-grid) --- */
+/* --- Базовый элемент тикера (колонки — общие с заголовками, см. .wl-row-grid) ---
+   Укрупнено (было 11px/30px — «плоховато видно»): шрифт 12px, высота 34px */
 .ticker-item {
-  padding: 4px 8px; cursor: pointer; font-size: 11px; transition: background 0.15s;
-  border-bottom: 1px solid #2a2e39; min-height: 30px;
+  padding: 5px 8px; cursor: pointer; font-size: 12px; transition: background 0.15s;
+  border-bottom: 1px solid #2a2e39; min-height: 34px;
 }
 .ticker-item:hover { background: #2a2e39; }
 /* Активная строка: подложка + inset-полоса слева — БЕЗ border-left/padding-костыля,
@@ -377,12 +397,12 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Закрашенный bookmark для избранной новости (красный) — как в списке тикеров */
 .news-fav-flag .favorite-flag.favorite-filled svg { fill: currentColor; stroke: currentColor; }
 
-/* === ЛОГОТИП ТИКЕРА: уменьшен до 20px — меньше визуального шума в плотной строке === */
+/* === ЛОГОТИП ТИКЕРА: 22px — чуть крупнее под укрупнённые строки (было 20px) === */
 .ticker-logo-container {
   border-radius: 50%;
   overflow: hidden;
-  width: 20px; /* Было 24px: в 30-пиксельной строке логотип перетягивал внимание */
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -408,23 +428,23 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
   border-radius: 50%;
 }
 .ticker-info { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
-.ticker-symbol-link { font-weight: 600; font-size: 11px; display: block; color: #d1d4dc; text-decoration: none; transition: color 0.2s; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticker-symbol-link { font-weight: 600; font-size: 12px; display: block; color: #d1d4dc; text-decoration: none; transition: color 0.2s; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ticker-symbol-link:hover { color: #2962ff; text-decoration: underline; }
 
 /* --- Цены и изменения ---
    tabular-nums: цифры фиксированной ширины, значения не «пляшут» при
-   обновлении цен; цена укрупнена до 12px (была 11px — мельче остального текста) */
+   обновлении цен; укрупнено под читаемость (цена 13px, изменения 12/13px) */
 .ticker-price {
-  font-size: 12px; font-weight: 600; text-align: right;
+  font-size: 13px; font-weight: 600; text-align: right;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .ticker-change, .ticker-change-percent {
-  font-size: 11px; font-weight: 600; text-align: right;
+  font-size: 12px; font-weight: 600; text-align: right;
   font-variant-numeric: tabular-nums; white-space: nowrap;
   border-radius: 3px; padding: 1px 4px; transition: background-color 0.2s;
 }
 /* Иерархия: «Изм.%» — главный акцент (насыщенный бейдж), абсолютное изменение — подсобное число */
-.ticker-change-percent { font-size: 12px; }
+.ticker-change-percent { font-size: 13px; }
 .positive-bg { background-color: rgba(38, 166, 154, 0.15); color: #26a69a; }
 .negative-bg { background-color: rgba(239, 83, 80, 0.15); color: #ef5350; }
 /* Насыщенные версии бейджей для процентной колонки и нейтральная — для абсолютной */
@@ -451,12 +471,12 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .ticker-remove {
   color: #787b86; cursor: pointer; font-size: 13px; line-height: 1; opacity: 0;
   transition: opacity 0.15s; display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; margin: -2px 0; border-radius: 4px; user-select: none;
+  width: 24px; height: 24px; margin: -2px 0; border-radius: 4px; user-select: none;
 }
 .ticker-item:hover .ticker-remove { opacity: 1; }
 .ticker-remove:hover { color: #ef5350; background: rgba(239, 83, 80, 0.12); }
 /* Иконка корзины внутри кнопки удаления */
-.ticker-remove svg { width: 14px; height: 14px; display: block; }
+.ticker-remove svg { width: 15px; height: 15px; display: block; }
 
 /* Кнопка «⋯» контекстного меню раздела (переименовать/свернуть/удалить) */
 .section-menu-btn {
@@ -835,14 +855,14 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    со строками тикеров (.wl-row-grid). Без accent-полосы слева: подсвечивается
    только выбранный тикер (.ticker-item.active) */
 .section-header {
-  padding: 5px 8px; background: #252a36; color: #a3a7b2; font-size: 11px; font-weight: 600;
+  padding: 6px 8px; background: #252a36; color: #a3a7b2; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.5px;
   border-bottom: 1px solid #2a2e39; border-top: 1px solid #2a2e39;
-  margin-top: 6px; cursor: default; min-height: 28px;
+  margin-top: 6px; cursor: default; min-height: 32px;
 }
 .section-header .section-title {
   display: flex; align-items: center; gap: 6px; cursor: pointer;
-  transition: color 0.2s; font-size: 11px; font-weight: 600;
+  transition: color 0.2s; font-size: 12px; font-weight: 600;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .section-header .section-title:hover { color: #d1d4dc; }
@@ -1931,5 +1951,174 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 
 .tc-leg-close:hover {
+  color: #ef5350;
+}
+
+/* Кнопка «Сравнить» в шапке графика (как Compare в TradingView): стиль
+   триггера «Индикаторов» — прозрачная кнопка с ховером */
+.tc-compare-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 33px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #d1d4dc;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tc-compare-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
+}
+
+.tc-compare-btn:hover {
+  background: #2a2e39;
+}
+
+/* ⚙ в легендах индикаторов и строки «Объем»: настройки индикатора
+   (диалог «Входные данные»/«Стиль» — как в TradingView при наведении
+   на легенду). Родительский слой pointer-events: none — кнопке вернут
+   события (как у .tc-ind-close) */
+.tc-ind-gear {
+  cursor: pointer;
+  color: #787b86;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 16px;
+  pointer-events: auto;
+}
+
+.tc-ind-gear svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.tc-ind-gear:hover {
+  color: #2962ff;
+}
+
+/* Строка сравнения в легендах: имя окрашено цветом линии (инлайн из js) */
+.tc-compare-legend .tc-ind-name {
+  font-weight: 700;
+}
+
+/* Диалог настроек индикатора: вкладки, поля «подпись + input» */
+.tc-ind-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 12px;
+}
+
+.tc-ind-tab {
+  flex: 1;
+  background: transparent;
+  border: 1px solid #363a45;
+  border-radius: 6px;
+  color: #787b86;
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tc-ind-tab:hover {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+.tc-ind-tab.active {
+  background: #2962ff;
+  border-color: #2962ff;
+  color: #fff;
+}
+
+.tc-ind-tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #363a45 transparent;
+}
+
+.tc-ind-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tc-ind-field-label {
+  font-size: 12px;
+  color: #787b86;
+  white-space: nowrap;
+}
+
+.tc-ind-field .tc-ind-num-input {
+  width: 92px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.tc-ind-color-input {
+  width: 44px;
+  height: 26px;
+  padding: 1px;
+  background: #2a2e39;
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tc-ind-field-note {
+  font-size: 12px;
+  color: #787b86;
+  padding: 2px 0 4px;
+}
+
+/* Список активных сравнений в окне «Сравнить» */
+.tc-compare-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.tc-compare-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #2a2e39;
+  border: 1px solid #363a45;
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #d1d4dc;
+}
+
+.tc-compare-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.tc-compare-close {
+  cursor: pointer;
+  color: #787b86;
+  padding: 0 1px;
+}
+
+.tc-compare-close:hover {
   color: #ef5350;
 }

@@ -329,6 +329,23 @@
                             </button>
                             <div class="tc-ind-menu" id="tc-ind-menu" role="menu"></div>
                         </div>
+                        <!-- «Сравнить» — как кнопка Compare в TradingView: окно с
+                             полем тикера (автодополнение), линии других инструментов
+                             нормируются к масштабу основного графика. Активные
+                             сравнения видны в легендах на холсте (× убирает);
+                             логика в js/watchlist_chart.js (bindCompareDialog,
+                             tcAddCompare/tcRemoveCompare) -->
+                        <button type="button" class="tc-compare-btn" id="tc-compare-btn" title="Сравнить: наложить линии других инструментов на график">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M3 20h18"/>
+                                <path d="M6 16v-5"/>
+                                <path d="M12 16V6"/>
+                                <path d="M18 16v-8"/>
+                                <path d="M18 5.5V2.5"/>
+                                <path d="M16.5 4h3"/>
+                            </svg>
+                            <span>Сравнить</span>
+                        </button>
                         <!-- Имя инструмента живёт в легенде OHLCV на графике
                              (перед «Откр», как в TradingView); код тикера —
                              поле tc-sym-input слева, дублирующий ТФ убран
@@ -369,9 +386,10 @@
                             </div>
                             <div class="tc-leg-row" id="tc-leg-volume-row">
                                 <span class="tc-leg-item"><span class="tc-leg-label">Объем</span><span class="tc-leg-val" id="tc-leg-v"></span></span>
-                                <!-- Закрытие гистограммы объёма — рядом с её
-                                     названием в легенде на графике (как у
-                                     остальных индикаторов), а не в шапке -->
+                                <!-- Настройки гистограммы (высота/цвета) и закрытие —
+                                     рядом с её названием в легенде на графике
+                                     (как у остальных индикаторов), а не в шапке -->
+                                <span class="tc-ind-gear" id="tc-leg-volume-gear" style="display:none" title="Настройки гистограммы объёма"></span>
                                 <span class="tc-leg-close" id="tc-leg-volume-close" style="display:none" title="Убрать гистограмму объёма">×</span>
                             </div>
                         </div>
@@ -678,6 +696,47 @@
     </div>
 </div>
 
+<!-- Диалог настроек индикатора (как в TradingView: клик по названию
+     индикатора в легенде графика или ⚙ рядом) — вкладки «Входные данные»
+     (периоды) и «Стиль» (цвета/толщина). Поля строит js/watchlist_chart.js
+     (buildIndicatorEditFields) по схеме индикатора; «Применить» вызывает
+     overrideIndicator и сохраняет настройки в localStorage (переживают
+     перезагрузку, применяются при добавлении индикатора) -->
+<div class="modal-overlay" id="tc-ind-modal">
+    <div class="modal-box">
+        <div class="modal-title" id="tc-ind-modal-title">Настройки индикатора</div>
+        <div class="tc-ind-tabs">
+            <button type="button" class="tc-ind-tab active" id="tc-ind-tab-inputs-btn">Входные данные</button>
+            <button type="button" class="tc-ind-tab" id="tc-ind-tab-style-btn">Стиль</button>
+        </div>
+        <div class="tc-ind-tab-pane" id="tc-ind-tab-inputs"></div>
+        <div class="tc-ind-tab-pane" id="tc-ind-tab-style" style="display:none"></div>
+        <div class="tc-settings-error" id="tc-ind-modal-error"></div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" id="tc-ind-modal-cancel" type="button">Отмена</button>
+            <button class="modal-btn modal-btn-save" id="tc-ind-modal-apply" type="button">Применить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Окно «Сравнить» (как Compare в TradingView): тикер вводится в поле с
+     автодополнением (js/symbol_search.js), линия сравнения нормируется к
+     масштабу основного графика; активные сравнения перечислены списком,
+     × убирает. Логика — js/watchlist_chart.js (bindCompareDialog) -->
+<div class="modal-overlay" id="tc-compare-modal">
+    <div class="modal-box">
+        <div class="modal-title">Сравнить на графике</div>
+        <div class="tc-settings-label">Тикер для сравнения (например SVCB или BINANCE:ETHUSDT) — линия нормируется к масштабу основного графика</div>
+        <input type="text" class="modal-input" id="tc-compare-input" autocomplete="off" spellcheck="false" maxlength="24" placeholder="SVCB" />
+        <div class="tc-settings-error" id="tc-compare-error"></div>
+        <div class="tc-compare-list" id="tc-compare-list" style="display:none"></div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" id="tc-compare-cancel" type="button">Закрыть</button>
+            <button class="modal-btn modal-btn-save" id="tc-compare-add" type="button">Добавить</button>
+        </div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="alert-modal">
     <div class="modal-box">
         <div class="modal-title"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Ценовое уведомление: <span id="alert-symbol-name"></span></div>
@@ -708,7 +767,7 @@
 <script defer src="js/ui.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/portfolio.js"></script>
-<script defer src="js/watchlist_chart.js?v=20261123"></script>
+<script defer src="js/watchlist_chart.js?v=20261124"></script>
 
 <!-- Индикатор состояния внешних CDN: если Sortable/KLineChart недоступны,
      показываем предупреждение вместо «вечной загрузки». Виджеты главной
