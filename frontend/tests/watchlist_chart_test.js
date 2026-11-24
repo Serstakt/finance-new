@@ -145,6 +145,28 @@ const els = {
   'tc-settings-error': new El('div'),
   'tc-settings-apply': new El('button'),
   'tc-settings-cancel': new El('button'),
+  // диалог настроек индикатора (вкладки «Входные данные»/«Стиль») —
+  // поля строит watchlist_chart.js по схеме индикатора
+  'tc-ind-modal': new El('div'),
+  'tc-ind-modal-title': new El('div'),
+  'tc-ind-tab-inputs-btn': new El('button'),
+  'tc-ind-tab-style-btn': new El('button'),
+  'tc-ind-tab-inputs': new El('div'),
+  'tc-ind-tab-style': new El('div'),
+  'tc-ind-modal-error': new El('div'),
+  'tc-ind-modal-apply': new El('button'),
+  'tc-ind-modal-cancel': new El('button'),
+  // окно «Сравнить» в шапке графика (линии других инструментов,
+  // нормированные к масштабу основного графика)
+  'tc-compare-btn': new El('button'),
+  'tc-compare-modal': new El('div'),
+  'tc-compare-input': new El('input'),
+  'tc-compare-error': new El('div'),
+  'tc-compare-list': new El('div'),
+  'tc-compare-add': new El('button'),
+  'tc-compare-cancel': new El('button'),
+  // ⚙ настроек гистограммы объёма в строке «Объем» легенды OHLCV
+  'tc-leg-volume-gear': new El('span'),
 };
 for (const tf of ['60', '24', '7', '31']) els[`tc-tf-${tf}`] = new El('button');
 
@@ -162,6 +184,7 @@ let barSpace = 8, offsetRight = 50, moreState = null;
 let loadMoreCb = null;
 const removedIndicators = []; const overrides = []; const createdIndicators = {};
 const createdStacks = {}; // isStack индикаторов: 9.6 при isStack=false затирает панель
+const createdIndicatorOpts = {}; // полные опции создания (calcParams/styles/extendData)
 const indInstances = {};
 // progress-рисование (догоняющий клик): активный progress-объект 9.6
 let fakeProgressInfo = null;
@@ -251,13 +274,21 @@ const chart = {
     };
   }),
   updatePane: () => { updatePaneCalls++; },
-  createIndicator: (name, isStack, pane) => {
+  createIndicator: (value, isStack, pane) => {
+    // 9.6 принимает и имя-строку, и объект опций ({name, calcParams,
+    // styles, extendData}) — объект приходят с сохранёнными настройками
+    // индикатора (см. wl_chart_indicators в localStorage)
+    const name = typeof value === 'string' ? value : value.name;
     createdIndicators[name] = pane;
+    createdIndicatorOpts[name] = value;
     createdStacks[name] = isStack;
     // figures/result — как у живого инстанса 9.6: легенды на графике
     // печатают значения по ключам figures из result (по бару под курсором)
     indInstances[name] = {
-      name, calcParams: [14],
+      name,
+      calcParams: (value && typeof value === 'object'
+        && Array.isArray(value.calcParams) && value.calcParams.length)
+        ? value.calcParams.slice() : [14],
       figures: [{ key: 'f1', title: 'F: ' }],
       result: applied.map((_, i) => ({ f1: 10 + i })),
     };
@@ -319,7 +350,8 @@ const styleCalls = [];
 const customApi = {}; // setCustomApi ({formatDate}) — русская ось времени
 const precisions = []; // точность инструмента: setPrecision({price, volume}) 9.6
 const actions = {};
-let registeredIndicator = null; // спек индикатора volume-гистограммы из registerIndicator
+let registeredIndicator = null; // спек volume-гистограммы (совместимость со старыми проверками)
+const registeredIndicators = {}; // ВСЕ спеки registerIndicator (VOL_MAIN, VOL_SIDE, TC_CMP_*)
 const registeredOverlays = {}; // кастомные overlay-шаблоны (стрелка/кисть/измеритель)
 let updatePaneCalls = 0;
 let resizeCalls = 0; // chart.resize() — пересчёт холста под контейнер
@@ -327,7 +359,10 @@ let initOptions = null; // стили init (оси: axisLine выключен и
 const klinecharts = {
   init: (el, opts) => { initOptions = opts || null; return chart; },
   registerOverlay: tpl => { registeredOverlays[tpl.name] = tpl; },
-  registerIndicator: ind => { registeredIndicator = ind; },
+  registerIndicator: ind => {
+    registeredIndicators[ind.name] = ind;
+    if (ind.name === 'VOL_MAIN') registeredIndicator = ind;
+  },
 };
 
 // ---------- Fake fetch, таймеры, prompt ----------
@@ -351,7 +386,12 @@ const clearTimeoutCapturing = id => { if (timeouts[id - 1]) timeouts[id - 1].don
 
 let domReadyCb = null;
 const docListeners = {}; // click/keydown и др. — закрытие контекстного меню
-const winListeners = {}; // mousemove/mouseup window — press-drag кисти/измерителя
+// mousemove/mouseup/keydown/resize окна — press-drag кисти/измерителя,
+// закрытие диалогов по Escape и пр. Слушателей одного типа может быть
+// несколько (как в настоящем window: обработчик Escape диалога настроек +
+// дисmiss новых модалок) — диспетчер вызывает всех зарегистрированных
+const winListenerList = {};
+const winListeners = {};
 const sandbox = {
   document: {
     readyState: 'loading', hidden: false,
@@ -359,7 +399,15 @@ const sandbox = {
     createElement: tag => new El(tag),
     addEventListener: (t, cb) => { if (t === 'DOMContentLoaded') domReadyCb = cb; docListeners[t] = cb; },
   },
-  window: { fetchWithTimeout, addEventListener: (t, cb) => { winListeners[t] = cb; }, prompt: () => null },
+  window: {
+    fetchWithTimeout,
+    addEventListener: (t, cb) => {
+      const list = (winListenerList[t] = winListenerList[t] || []);
+      if (!list.includes(cb)) list.push(cb);
+      winListeners[t] = (...args) => { for (const fn of winListenerList[t]) fn(...args); };
+    },
+    prompt: () => null,
+  },
   localStorage, klinecharts,
   API_BASE: '',
   console, setInterval, clearInterval,
@@ -648,8 +696,8 @@ const candle = (day, close, month = 11) => ({
   assert(legendRow('MA').children[0].textContent === 'MA(14)'
     && legendRow('RSI').children[0].textContent === 'RSI(14)',
     'легенды: название с параметрами «MA(14)»/«RSI(14)»');
-  assert(legendRow('RSI').children[2].textContent === '×',
-    'легенды: ×-закрытие стоит рядом с названием на графике');
+  assert(legendRow('RSI').children[3].textContent === '×',
+    'легенды: ×-закрытие стоит рядом с названием (после ⚙-настроек)');
   const legendVals = (ind) => legendRow(ind).children[1].textContent;
   assert(legendVals('MA') !== '' && legendVals('RSI') !== '',
     'легенды: строки значений заполнены из figures/result инстанса');
@@ -659,39 +707,74 @@ const candle = (day, close, month = 11) => ({
   assert(legendVals('MA') !== lastVals10.ma && legendVals('RSI') !== lastVals10.rsi,
     'легенды: значения следуют за кроссхейром');
 
-  // 10a) Диалог настроек индикатора вместо window.prompt: клик по названию
-  //      в легенде на графике открывает модальное окно с текущими
-  //      периодами, «Применить» вызывает overrideIndicator (легенда
-  //      перерисовывается с новыми параметрами), ошибка валидации — inline
+  // 10a) Диалог настроек индикатора (как в TradingView: клик по названию
+  //      в легенде или ⚙ открывает окно с вкладками «Входные данные»
+  //      (периоды) и «Стиль» (цвета/толщина); «Применить» вызывает
+  //      overrideIndicator, настройки переживают перезагрузку в
+  //      localStorage; ошибка валидации — inline, окно не закрывается)
   const btnTool = () => new El('button');
   const modalEl = els['tc-settings-modal'];
+  const indModalEl = els['tc-ind-modal'];
+  // Поля диалога: обертки .tc-ind-field в панели вкладки, input — 2-й ребёнок
+  const indFieldInput = (pane, idx) => pane.children[idx].children[1];
+  const indFieldLabels = (pane) => pane.children.map(w => w.children[0].textContent);
+  const indFieldCount = (pane) => pane.children.length;
   legendRow('RSI').children[0]._listeners.click();
-  assert(modalEl._classes.has('active'), 'диалог: клик по названию в легенде открыл модальное окно');
-  assert(els['tc-settings-title'].textContent.includes('RSI'), 'диалог: имя индикатора в заголовке');
-  assert(els['tc-settings-input'].value === '14' && els['tc-settings-input'].style.display !== 'none',
-    'диалог: текущие периоды подставлены в однострочное поле');
-  els['tc-settings-input'].value = '21';
-  els['tc-settings-apply']._listeners.click();
+  assert(indModalEl._classes.has('active'), 'диалог: клик по названию в легенде открыл окно настроек индикатора');
+  assert(els['tc-ind-modal-title'].textContent.includes('RSI'), 'диалог: имя индикатора в заголовке');
+  assert(indFieldCount(els['tc-ind-tab-inputs']) === 3,
+    'диалог: у RSI три поля периодов на вкладке «Входные данные»');
+  assert(indFieldInput(els['tc-ind-tab-inputs'], 0).value === '14',
+    'диалог: текущие периоды подставлены в поля');
+  assert(indFieldCount(els['tc-ind-tab-style']) === 6,
+    'диалог: вкладка «Стиль» RSI — цвет+толщина трёх линий');
+  // Вкладки переключаются
+  els['tc-ind-tab-style-btn']._listeners.click();
+  assert(els['tc-ind-tab-style'].style.display !== 'none'
+    && els['tc-ind-tab-inputs'].style.display === 'none',
+    'диалог: вкладка «Стиль» переключается');
+  els['tc-ind-tab-inputs-btn']._listeners.click();
+  // Правка первого периода (21) и цвета первой линии — «Применить»
+  indFieldInput(els['tc-ind-tab-inputs'], 0).value = '21';
+  const firstColor = indFieldInput(els['tc-ind-tab-style'], 0);
+  assert(/^#[0-9a-f]{6}$/i.test(firstColor.value),
+    'диалог: цвет линии в поле — hex (дефолт палитры библиотеки #FF9600)');
+  assert(firstColor.value === '#FF9600',
+    'диалог: цвет линии 1 по умолчанию — библиотечный #FF9600');
+  firstColor.value = '#112233';
+  els['tc-ind-modal-apply']._listeners.click();
   assert(overrides.length === 1 && overrides[0].name === 'RSI' &&
-    JSON.stringify(overrides[0].calcParams) === '[21]',
-    'диалог: «Применить» применил периоды через overrideIndicator');
-  assert(!modalEl._classes.has('active'), 'диалог: после применения окно закрыто');
-  assert(indInstances['RSI'].calcParams.length === 1 && indInstances['RSI'].calcParams[0] === 21,
+    JSON.stringify(overrides[0].calcParams) === '[21,14,14]',
+    'диалог: «Применить» применил периоды всех полей через overrideIndicator');
+  assert(overrides[0].styles && overrides[0].styles.lines
+    && overrides[0].styles.lines[0].color === '#112233'
+    && overrides[0].styles.lines[0].size === 1,
+    'диалог: «Применить» применил цвет и толщину линии 1 (частичный styles.lines[0])');
+  assert(!indModalEl._classes.has('active'), 'диалог: после применения окно закрыто');
+  assert(indInstances['RSI'].calcParams.length === 3 && indInstances['RSI'].calcParams[0] === 21,
     'индикаторы: параметры RSI реально обновлены в инстансе');
-  assert(legendRow('RSI').children[0].textContent === 'RSI(21)',
+  // Настройки переживают перезагрузку: localStorage wl_chart_indicators
+  const savedIndStore = JSON.parse(store.get('wl_chart_indicators'));
+  assert(JSON.stringify(savedIndStore.settings.RSI.calcParams) === '[21,14,14]',
+    'настройки: периоды RSI сохранены в localStorage');
+  assert(savedIndStore.settings.RSI.styles.lines[0].color === '#112233',
+    'настройки: цвет линии RSI сохранён в localStorage');
+  assert(savedIndStore.enabled.includes('RSI') && savedIndStore.enabled.includes('VOL_MAIN'),
+    'настройки: список включённых индикаторов сохранён');
+  assert(legendRow('RSI').children[0].textContent === 'RSI(21,14,14)',
     'легенды: параметры в названии обновились после overrideIndicator');
 
   // Неверные периоды: inline-ошибка, окно не закрывается, override нет
   legendRow('RSI').children[0]._listeners.click();
-  els['tc-settings-input'].value = 'abc';
-  els['tc-settings-apply']._listeners.click();
-  assert(modalEl._classes.has('active') && els['tc-settings-error'].style.display !== 'none'
-    && els['tc-settings-error'].textContent.length > 0,
+  indFieldInput(els['tc-ind-tab-inputs'], 0).value = 'abc';
+  els['tc-ind-modal-apply']._listeners.click();
+  assert(indModalEl._classes.has('active') && els['tc-ind-modal-error'].style.display !== 'none'
+    && els['tc-ind-modal-error'].textContent.length > 0,
     'диалог: неверные периоды — inline-ошибка, окно осталось открытым');
   assert(overrides.length === 1, 'диалог: при ошибке валидации override не вызван');
   // Отмена закрывает окно, ничего не меняя
-  els['tc-settings-cancel']._listeners.click();
-  assert(!modalEl._classes.has('active') && overrides.length === 1,
+  els['tc-ind-modal-cancel']._listeners.click();
+  assert(!indModalEl._classes.has('active') && overrides.length === 1,
     'диалог: «Отмена» закрыла окно, параметры не изменились');
 
   // 10b) Диалог заметки на графике (инструмент «Т»): многострочное поле,
@@ -731,7 +814,7 @@ const candle = (day, close, month = 11) => ({
   modalEl._listeners.click({ target: modalEl });
   assert(!modalEl._classes.has('active'), 'заметка: клик по фону отменил диалог');
 
-  legendRow('RSI').children[2]._listeners.click(); // × на легенде — убрать
+  legendRow('RSI').children[3]._listeners.click(); // × на легенде — убрать (после ⚙-настроек)
   assert(JSON.stringify(removedIndicators[0]) === JSON.stringify(['tc_ind_RSI', 'RSI']),
     'индикаторы: удаление передаёт (paneId, name) как требует API 9.6');
   assert(els['tc-ind-legends'].children.length === 1,
@@ -799,8 +882,10 @@ const candle = (day, close, month = 11) => ({
   //      подсвечены, клик переключает — добавить и убрать; закрытие по
   //      Escape (клик мимо гасит тот же document-обработчик)
   const indItems = () => els['tc-ind-menu'].children.filter(c => c.dataset.ind);
-  assert(indItems().length === 18 && els['tc-ind-menu'].children.length === 20,
-    'дропдаун индикаторов: 18 пунктов в двух группах (+2 заголовка групп)');
+  // 19 пунктов: 18 прежних + «Объем сбоку (профиль)» (VOL_SIDE) в группе
+  // «На графике цены»
+  assert(indItems().length === 19 && els['tc-ind-menu'].children.length === 21,
+    'дропдаун индикаторов: 19 пунктов в двух группах (+2 заголовка групп)');
   assert(els['tc-ind-menu'].children[0].className === 'tc-ind-menu-title',
     'дропдаун индикаторов: группы обозначены заголовками');
   const activeInds = () => indItems().filter(i => i._classes.has('active')).map(i => i.dataset.ind).sort().join(',');
@@ -1723,6 +1808,167 @@ const candle = (day, close, month = 11) => ({
   winListeners.resize(); // событие resize окна
   assert(runPendingResize(), 'размер холста: на resize окна запланирован отложенный resize()');
   assert(resizeCalls === r1 + 1, 'размер холста: chart.resize() вызван после resize окна');
+
+  // 16) Объем сбоку (VOL_SIDE — профиль объёма по видимой области):
+  //     регистрации нет в под-окнах (figures пусты — ось цены не растягивают),
+  //     столбики горизонтальные, от правого края панели влево, цвета
+  //     бычий/медвежий объём; переключение через дропдаун индикаторов
+  assert(registeredIndicators['VOL_SIDE'] && JSON.stringify(registeredIndicators['VOL_SIDE'].calc()) === '[]'
+    && JSON.stringify(registeredIndicators['VOL_SIDE'].figures) === '[]',
+    'VOL_SIDE: зарегистрирован без figures/result — ось цены не растягивает');
+  const sideRects = [];
+  const sideCtx = {
+    fillStyle: null,
+    fillRect: (x, y, w, h) => sideRects.push({ x, y, w, h, color: sideCtx.fillStyle }),
+  };
+  // Свечи: перекрывающиеся диапазоны с бычьим и медвежьим объёмом.
+  // Диапазон видимой области 0..100, 24 уровня по ~4.17 цены
+  const sideList = [
+    { low: 0, high: 40, volume: 100, close: 30, open: 5 },  // up: уровни 0..9
+    { low: 60, high: 100, volume: 100, close: 65, open: 95 }, // down: уровни 14..23
+    { low: 20, high: 80, volume: 200, close: 70, open: 25 },  // up: уровни 4..19
+  ];
+  registeredIndicators['VOL_SIDE'].draw({
+    ctx: sideCtx,
+    kLineDataList: sideList,
+    visibleRange: { from: 0, to: 2 },
+    bounding: { top: 0, width: 300, height: 100 },
+    yAxis: { convertToPixel: v => 100 - v },
+  });
+  assert(sideRects.length > 0, 'VOL_SIDE: столбики нарисованы');
+  // Бычий объём прижат к правому краю (up-часть каждого уровня достигает
+  // границы панели); ни один столбик не выходит за панель
+  assert(sideRects.every(r => r.x + r.w <= 300.01)
+    && sideRects.some(r => Math.abs(r.x + r.w - 300) < 0.01),
+    'VOL_SIDE: столбики растут от правого края панели влево');
+  const maxSideW = Math.max(...sideRects.map(r => r.w));
+  assert(Math.abs(maxSideW - 300 * 0.18) < 0.5,
+    `VOL_SIDE: самый длинный уровень — ${Math.round(300 * 0.18)}px (18% ширины по умолчанию)`);
+  assert(sideRects.some(r => r.color === 'rgba(38, 166, 154, 0.45)')
+    && sideRects.some(r => r.color === 'rgba(239, 83, 80, 0.45)'),
+    'VOL_SIDE: бычий и медвежий объём — разными цветами');
+  // Настройки ширины через extendData: 40% панели → самый длинный столбик шире
+  sideRects.length = 0;
+  registeredIndicators['VOL_SIDE'].draw({
+    ctx: sideCtx,
+    kLineDataList: sideList,
+    visibleRange: { from: 0, to: 2 },
+    bounding: { top: 0, width: 300, height: 100 },
+    yAxis: { convertToPixel: v => 100 - v },
+    indicator: { extendData: { maxWidth: 0.4, bins: 24 } },
+  });
+  assert(Math.abs(Math.max(...sideRects.map(r => r.w)) - 300 * 0.4) < 0.5,
+    'VOL_SIDE: ширина профиля управляется extendData.maxWidth');
+  // Включение через дропдаун: главный окна стеком (isStack), как у volume
+  const sideItem = indItems().find(i => i.dataset.ind === 'VOL_SIDE');
+  sideItem.closest = () => sideItem;
+  els['tc-ind-menu']._listeners.click({ target: sideItem });
+  assert(createdIndicators['VOL_SIDE'] && createdIndicators['VOL_SIDE'].id === 'candle_pane'
+    && createdStacks['VOL_SIDE'] === true,
+    'VOL_SIDE: включён в главное окно стеком (isStack)');
+  assert(JSON.parse(store.get('wl_chart_indicators')).enabled.includes('VOL_SIDE'),
+    'VOL_SIDE: включение сохранено в localStorage');
+  sandbox.window.tcRemoveIndicator('VOL_SIDE');
+
+  // 17) VOL_MAIN в диалоге настроек индикатора: ⚙ в строке «Объем» легенды
+  //     открывает окно (высота % панели + цвета), применяется extendData
+  //     через overrideIndicator и сохраняется в localStorage
+  els['tc-leg-volume-gear']._listeners.click();
+  assert(indModalEl._classes.has('active')
+    && els['tc-ind-modal-title'].textContent.includes('VOL_MAIN'),
+    'volume: ⚙ в строке «Объем» открыл диалог настроек гистограммы');
+  assert(indFieldCount(els['tc-ind-tab-inputs']) === 1
+    && indFieldInput(els['tc-ind-tab-inputs'], 0).value === '20',
+    'volume: поле «Высота % панели» с текущим значением 20');
+  assert(indFieldCount(els['tc-ind-tab-style']) === 2,
+    'volume: на вкладке «Стиль» — цвета роста и падения');
+  indFieldInput(els['tc-ind-tab-inputs'], 0).value = '30';
+  els['tc-ind-modal-apply']._listeners.click();
+  const volOverride = overrides[overrides.length - 1];
+  assert(volOverride && volOverride.name === 'VOL_MAIN'
+    && Math.abs(volOverride.extendData.maxHeight - 0.3) < 1e-9,
+    'volume: высота применена через extendData (30% → 0.3)');
+  assert(JSON.parse(store.get('wl_chart_indicators')).settings.VOL_MAIN.extendData.maxHeight === 0.3,
+    'volume: высота сохранена в localStorage (переживёт перезагрузку)');
+
+  // 18) Сравнение инструментов (как «Сравнить» в TradingView): линия SVCB
+  //     нормируется к масштабу основного графика (SBER), легенда со
+  //     значениями/%, ×-удаление, сохранение по тикеру и восстановление
+  //     при возврате к нему
+  const errNoFetch = await sandbox.window.tcAddCompare('SVCB');
+  assert(typeof errNoFetch === 'string' && errNoFetch.length > 0,
+    'сравнение: сбой сети — текст ошибки, линия не добавлена');
+  assert(await sandbox.window.tcAddCompare('SBER') === 'Основной график уже показывает этот тикер',
+    'сравнение: с самим основным тикером сравнивать нечего');
+  // SVCB c общей датой: close 91 против SBER close 315 → фактор = 315/91,
+  // линия сравнения в масштабе SBER
+  fetchQueue = [
+    { symbol: 'MOEX:SVCB', interval: 31, name: 'Совкомфлот',
+      candles: [{ begin: localBeginAt(monthStart), open: 88, high: 92, low: 87, close: 91, volume: 5 }] },
+  ];
+  assert(await sandbox.window.tcAddCompare('SVCB') === null,
+    'сравнение: SVCB добавлен (свечи загружены и нормированы)');
+  const cmpName = [...createdIndicators && Object.keys(createdIndicators)]
+    .filter(n => n.startsWith('TC_CMP_')).pop();
+  assert(!!cmpName && createdIndicators[cmpName].id === 'candle_pane'
+    && createdStacks[cmpName] === true,
+    'сравнение: линия SVCB в главном окне стеком');
+  assert(registeredIndicators[cmpName] && registeredIndicators[cmpName].shortName === 'SVCB'
+    && JSON.stringify(registeredIndicators[cmpName].figures) === '[{"key":"value","title":"","type":"line"}]',
+    'сравнение: индикатор с именем SVCB и figure «value»');
+  const cmpRow = els['tc-ind-legends'].children.find(c => c.dataset.compare === '1');
+  assert(cmpRow && cmpRow.children[0].textContent === 'SVCB',
+    'сравнение: строка «SVCB значения ×» в легендах на графике');
+  const cmpVal = cmpRow.children[1].textContent;
+  assert(cmpVal.includes('315,00') || cmpVal.includes('315.00'), `сравнение: значение линии — в масштабе SBER (${cmpVal})`);
+  const cmpCalc = registeredIndicators[cmpName].calc(applied);
+  assert(cmpCalc.length === applied.length
+    && Math.abs(cmpCalc[0].value - 315) < 1e-9,
+    'сравнение: calc нормирует close SVCB к цене SBER (91 → 315)');
+  assert((await sandbox.window.tcAddCompare('SVCB', { silent: true })) === 'SVCB уже на графике',
+    'сравнение: повторное добавление отбивается');
+  assert(JSON.parse(store.get('wl_chart_compares') || '{}').SBER
+    && JSON.parse(store.get('wl_chart_compares')).SBER[0].ticker === 'SVCB',
+    'сравнение: спецификация сохранена по тикеру основного графика');
+  // Восстановление при повторной загрузке тикера (как разметка): линии
+  // снимаются с прежнего графика и возвращаются поверх свежих данных
+  fetchQueue = [
+    { symbol: 'MOEX:SBER', interval: 31, name: 'Сбербанк',
+      candles: [{ begin: localBeginAt(monthStart), open: 314, high: 316, low: 313, close: 315, volume: 10 }] },
+    { symbol: 'MOEX:SVCB', interval: 31, name: 'Совкомфлот',
+      candles: [{ begin: localBeginAt(monthStart), open: 88, high: 92, low: 87, close: 91, volume: 5 }] },
+  ];
+  await sandbox.window.wlChartLoad('SBER');
+  await flush();
+  const cmpRow2 = els['tc-ind-legends'].children.find(c => c.dataset.compare === '1');
+  assert(cmpRow2 && cmpRow2.children[0].textContent === 'SVCB',
+    'сравнение: при перезагрузке тикера линия SVCB восстановлена из localStorage');
+  assert(fetchUrls.some(u => String(u).includes('/api/candles/SVCB')),
+    'сравнение: свечи SVCB дозапрошены при восстановлении');
+  // × в легенде убирает сравнение и чистит хранилище
+  cmpRow2.children[2]._listeners.click();
+  assert(!els['tc-ind-legends'].children.find(c => c.dataset.compare === '1'),
+    'сравнение: × на легенде убрал строку сравнения');
+  assert(JSON.stringify(removedIndicators[removedIndicators.length - 1]) ===
+    JSON.stringify(['candle_pane', cmpRow2.dataset.ind]),
+    'сравнение: удаление передаёт (candle_pane, TC_CMP_N)');
+  assert(!((JSON.parse(store.get('wl_chart_compares') || '{}').SBER || []).length),
+    'сравнение: хранилище очищено после удаления');
+
+  // Диалог «Сравнить»: кнопка в шапке открывает окно, «Добавить» читает
+  // поле (ошибка тикера — inline), список активных сравнений с ×
+  els['tc-compare-btn']._listeners.click();
+  assert(els['tc-compare-modal']._classes.has('active'),
+    'сравнение: кнопка «Сравнить» в шапке открыла окно');
+  els['tc-compare-input'].value = '';
+  els['tc-compare-add']._listeners.click();
+  await flush();
+  assert(els['tc-compare-error'].style.display !== 'none'
+    && els['tc-compare-error'].textContent.length > 0,
+    'сравнение: пустой тикер — inline-ошибка в окне');
+  els['tc-compare-cancel']._listeners.click();
+  assert(!els['tc-compare-modal']._classes.has('active'),
+    'сравнение: «Закрыть» спрятало окно');
 
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');

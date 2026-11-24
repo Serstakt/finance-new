@@ -100,7 +100,24 @@
 //     гасит браузерные жесты на холсте);
 //   - поллинг Binance 5 с (ближе к потоку TV), MOEX 15 с через apim
 //     (токен Algopack, без задержки) или 60 с через анонимный ISS —
-//     период подбирается по source в ответе бэкенда.
+//     период подбирается по source в ответе бэкенда;
+//   - объем сбоку (VOL_SIDE — «профиль объёма» по видимой области):
+//     горизонтальные столбики вдоль шкалы цены (объём свечей делится
+//     между пересекаемыми ценовыми уровнями пропорционально перекрытию,
+//     бычий/медвежий объём разными цветами), включается в dropdown
+//     «Индикаторы», настройки (уровни/ширина/цвета) в диалоге индикатора;
+//   - сравнение инструментов (кнопка «Сравнить» в шапке, как Compare в
+//     TradingView): линия другого тикера нормируется к масштабу основного
+//     графика (в точке привязки цены совпадают), значения в легенде —
+//     в масштабе основного инструмента и % от точки привязки; до 5 линий,
+//     набор хранится по тикеру и восстанавливается при возврате к нему
+//     (wl_chart_compares);
+//   - редактирование индикаторов как в TradingView: клик по названию
+//     в легенде или ⚙ открывает диалог «Входные данные» (периоды) /
+//     «Стиль» (цвета линий/гистограмм, толщина); изменения применяются
+//     через overrideIndicator и переживают перезагрузку (wl_chart_indicators:
+//     настройки применяются при каждом добавлении, набор включённых
+//     индикаторов тоже восстанавливается — как шаблоны индикаторов в TV).
 
 (() => {
   let chartInstance = null;
@@ -130,7 +147,7 @@
   // Начальное окно истории в днях (~600 баров; дозагрузка старых — loadMore)
   const TF_LOOKBACK_DAYS = { 60: 40, 24: 600, 7: 4200, 31: 18000 };
   // Индикаторы, живущие в главном окне со свечами; остальные — в своих под-окнах
-  const MAIN_PANE_INDICATORS = new Set(['MA', 'EMA', 'BOLL', 'SAR', 'BBI', 'AVP', 'VOL_MAIN']);
+  const MAIN_PANE_INDICATORS = new Set(['MA', 'EMA', 'BOLL', 'SAR', 'BBI', 'AVP', 'VOL_MAIN', 'VOL_SIDE']);
 
   // ---- Тип графика и режим шкалы цены (как в TradingView) ----
   // Типы: candles|bars|line|area → candle.type 9.6 (candle_solid|ohlc|area).
@@ -338,10 +355,10 @@
   // выбор, клик мимо и Escape — общие document-обработчики из
   // bindResetViewUi (hideIndicatorMenu), как у дропдаунов типа и шкалы.
 
-  // Группы меню: имя индикатора → подпись (VOL_MAIN переименован, как был
-  // в option списка; остальные — имена библиотечных индикаторов)
+  // Группы меню: имя индикатора → подпись (VOL_MAIN/VOL_SIDE переименованы,
+  // как были в option списка; остальные — имена библиотечных индикаторов)
   const INDICATOR_MENU_GROUPS = [
-    { title: 'На графике цены', items: { MA: 'MA', EMA: 'EMA', BOLL: 'BOLL', SAR: 'SAR', BBI: 'BBI', VOL_MAIN: 'Объем (гистограмма)' } },
+    { title: 'На графике цены', items: { MA: 'MA', EMA: 'EMA', BOLL: 'BOLL', SAR: 'SAR', BBI: 'BBI', VOL_MAIN: 'Объем (гистограмма)', VOL_SIDE: 'Объем сбоку (профиль)' } },
     { title: 'В под-окнах', items: { VOL: 'VOL', MACD: 'MACD', RSI: 'RSI', KDJ: 'KDJ', WR: 'WR', CCI: 'CCI', DMI: 'DMI', OBV: 'OBV', ROC: 'ROC', DMA: 'DMA', BIAS: 'BIAS', TRIX: 'TRIX' } },
   ];
 
@@ -584,11 +601,14 @@
   // OHLCV — метки на оси цены у объёма нет (дублировала легенду).
 
   const VOL_MAIN = 'VOL_MAIN';
-  // Самый высокий столбик — 20% высоты ценовой панели (пропорции TV)
-  const VOL_MAX_HEIGHT_RATIO = 0.2;
-  const VOL_BAR_COLORS = {
-    up: 'rgba(38, 166, 154, 0.5)',
-    down: 'rgba(239, 83, 80, 0.5)',
+  // Дефолтные настройки гистограммы (редактируются в диалоге индикатора,
+  // как в TradingView: клик по названию в легенде). Живут в extendData
+  // индикатора — custom-draw читает их оттуда; сохранение/применение —
+  // в блоке настроек индикаторов (IND_EDIT)
+  const VOL_MAIN_DEFAULT_EXTEND = {
+    maxHeight: 0.2, // самый высокий столбик — 20% высоты ценовой панели
+    upColor: 'rgba(38, 166, 154, 0.5)',
+    downColor: 'rgba(239, 83, 80, 0.5)',
   };
 
   const registerVolumeIndicator = () => {
@@ -601,7 +621,7 @@
       shortName: '',
       figures: [],
       calc: () => [],
-      draw: ({ ctx, kLineDataList, visibleRange, bounding, barSpace, xAxis }) => {
+      draw: ({ ctx, kLineDataList, visibleRange, bounding, barSpace, xAxis, indicator }) => {
         if (!kLineDataList || !kLineDataList.length || !barSpace || !bounding) return false;
         const from = Math.max(0, visibleRange.from);
         const to = Math.min(kLineDataList.length - 1, visibleRange.to);
@@ -612,9 +632,10 @@
           if (Number.isFinite(v) && v > volMax) volMax = v;
         }
         if (!(volMax > 0)) return false;
+        const ext = { ...VOL_MAIN_DEFAULT_EXTEND, ...(indicator && indicator.extendData) };
         // Координаты draw — локальные относительно canvas панели:
         // низ панели = bounding.height
-        const unitPx = (bounding.height * VOL_MAX_HEIGHT_RATIO) / volMax;
+        const unitPx = (bounding.height * ext.maxHeight) / volMax;
         for (let i = from; i <= to; i++) {
           const k = kLineDataList[i];
           const v = k.volume;
@@ -622,8 +643,113 @@
           const h = Math.max(1, v * unitPx);
           const x = xAxis.convertToPixel(i);
           // Ширина — gapBar, как у встроенных bar-фигур индикаторов
-          ctx.fillStyle = k.close >= k.open ? VOL_BAR_COLORS.up : VOL_BAR_COLORS.down;
+          ctx.fillStyle = k.close >= k.open ? ext.upColor : ext.downColor;
           ctx.fillRect(x - barSpace.gapBar / 2, bounding.height - h, barSpace.gapBar, h);
+        }
+        return false; // figures нет — встроенному рисованию перекрыть нечего
+      },
+    });
+  };
+
+  // ---- Объем сбоку (профиль объёма по видимой области, как в TV) ----
+  // Кастомный индикатор VOL_SIDE: горизонтальные столбики объёма вдоль
+  // шкалы цены — объём распределяется по ценовым уровням видимых свечей
+  // (свеча с диапазоном low..high вносит долю своего объёма в каждый
+  // пересекаемый уровень пропорционально перекрытию), столбики растут
+  // от правого края панели влево. Цвета — бычий/медвежий объём (направление
+  // свечи-источника), друг за другом в одном столбике. figures пусты:
+  // значения в ось цены не попадают (нормировка «по максимуму уровня»,
+  // миллионы объёма не растягивают шкалу), всё рисование — в draw.
+  // Пересчитывается на каждом кадре — скролл/зум меняют и уровни, и ширину.
+
+  const VOL_SIDE = 'VOL_SIDE';
+  const VOL_SIDE_DEFAULT_EXTEND = {
+    bins: 24,      // число ценовых уровней видимой области
+    maxWidth: 0.18, // самый длинный столбик — 18% ширины панели
+    upColor: 'rgba(38, 166, 154, 0.45)',
+    downColor: 'rgba(239, 83, 80, 0.45)',
+  };
+
+  const registerSideVolumeIndicator = () => {
+    if (typeof klinecharts === 'undefined') return;
+    klinecharts.registerIndicator({
+      name: VOL_SIDE,
+      shortName: '',
+      figures: [],
+      calc: () => [],
+      draw: ({ ctx, kLineDataList, visibleRange, bounding, yAxis, indicator }) => {
+        if (!kLineDataList || !kLineDataList.length || !bounding) return false;
+        if (!yAxis || typeof yAxis.convertToPixel !== 'function') return false;
+        const from = Math.max(0, visibleRange.from);
+        const to = Math.min(kLineDataList.length - 1, visibleRange.to);
+        if (from > to) return false;
+        const ext = { ...VOL_SIDE_DEFAULT_EXTEND, ...(indicator && indicator.extendData) };
+        const bins = Math.max(4, Math.min(60, Math.round(ext.bins) || 24));
+        const maxWidthRatio = Math.max(0.05, Math.min(0.5, Number(ext.maxWidth) || 0.18));
+        // Диапазон цен видимых свечей
+        let pMin = Infinity;
+        let pMax = -Infinity;
+        for (let i = from; i <= to; i++) {
+          const k = kLineDataList[i];
+          if (Number.isFinite(k.low) && k.low < pMin) pMin = k.low;
+          if (Number.isFinite(k.high) && k.high > pMax) pMax = k.high;
+        }
+        if (!Number.isFinite(pMin) || !Number.isFinite(pMax) || !(pMax > pMin)) return false;
+        const binH = (pMax - pMin) / bins;
+        const upVol = new Array(bins).fill(0);
+        const downVol = new Array(bins).fill(0);
+        const clampedBin = (v) => Math.max(0, Math.min(bins - 1, Math.floor((v - pMin) / binH)));
+        for (let i = from; i <= to; i++) {
+          const k = kLineDataList[i];
+          const v = k.volume;
+          if (!Number.isFinite(v) || v <= 0) continue;
+          const lo = Number.isFinite(k.low) ? k.low : pMin;
+          const hi = Number.isFinite(k.high) ? k.high : pMax;
+          const up = k.close >= k.open;
+          const first = clampedBin(lo);
+          const last = clampedBin(hi);
+          const span = hi - lo;
+          if (!(span > 0)) {
+            // doji-свеча без диапазона — весь объём в один уровень
+            if (up) upVol[first] += v; else downVol[first] += v;
+            continue;
+          }
+          for (let b = first; b <= last; b++) {
+            // доля объёма — по перекрытию [lo, hi] с уровнем b
+            const bLo = pMin + b * binH;
+            const bHi = bLo + binH;
+            const overlap = Math.min(hi, bHi) - Math.max(lo, bLo);
+            if (overlap <= 0) continue;
+            const share = v * (overlap / span);
+            if (up) upVol[b] += share; else downVol[b] += share;
+          }
+        }
+        let volMax = 0;
+        for (let b = 0; b < bins; b++) {
+          const t = upVol[b] + downVol[b];
+          if (t > volMax) volMax = t;
+        }
+        if (!(volMax > 0)) return false;
+        const maxW = bounding.width * maxWidthRatio;
+        for (let b = 0; b < bins; b++) {
+          const total = upVol[b] + downVol[b];
+          if (!(total > 0)) continue;
+          const w = Math.max(1, (total / volMax) * maxW);
+          const yHi = yAxis.convertToPixel(pMin + (b + 1) * binH);
+          const yLo = yAxis.convertToPixel(pMin + b * binH);
+          const y = Math.min(yHi, yLo);
+          const h = Math.max(1, Math.abs(yLo - yHi) - 1); // зазор 1px между уровнями
+          // бычий объём — у правого края, медвежий — продолжение влево
+          const wUp = total > 0 ? w * (upVol[b] / total) : 0;
+          if (wUp >= 0.5) {
+            ctx.fillStyle = ext.upColor;
+            ctx.fillRect(bounding.width - wUp, y, wUp, h);
+          }
+          const wDown = w - wUp;
+          if (wDown >= 0.5) {
+            ctx.fillStyle = ext.downColor;
+            ctx.fillRect(bounding.width - w, y, wDown, h);
+          }
         }
         return false; // figures нет — встроенному рисованию перекрыть нечего
       },
@@ -1074,6 +1200,7 @@
     }
     registerCustomOverlays();
     registerVolumeIndicator();
+    registerSideVolumeIndicator();
     const el = document.getElementById('watchlist-kline');
     if (!el) return null;
     if (!chartInstance) {
@@ -1148,10 +1275,19 @@
       // индикатор главного окна стирал бы предыдущих (гистограмма объёма
       // исчезала при добавлении MA/EMA/BOLL…, чип при этом оставался)
       if (!indicators.has(VOL_MAIN)) {
-        const id = chartInstance.createIndicator(VOL_MAIN, true, { id: 'candle_pane' });
+        const id = chartInstance.createIndicator(indicatorCreateOptions(VOL_MAIN), true, { id: 'candle_pane' });
         if (id) {
           indicators.set(VOL_MAIN, 'candle_pane');
           renderIndicatorLegends();
+        }
+      }
+      // Включённые индикаторы прошлой сессии (как в TradingView: набор
+      // индикаторов переживает перезагрузку) — VOL_MAIN уже добавлена выше.
+      // Настройки (периоды/стили) применяются внутри tcAddIndicator
+      const savedEnabled = loadIndicatorStore().enabled;
+      if (Array.isArray(savedEnabled)) {
+        for (const name of savedEnabled) {
+          if (!indicators.has(name)) window.tcAddIndicator(name);
         }
       }
       // Легенда OHLCV и легенды индикаторов следуют за кроссхейром (как в
@@ -2285,14 +2421,16 @@
   };
 
   // Строка «Объем N» в легенде живёт вместе с гистограммой: чип убран —
-  // строка и её × (закрытие на графике, рядом с названием — как у прочих
-  // индикаторов) прячутся, гистограмма возвращена — показываются снова
+  // строка и её ⚙/× (закрытие и настройки на графике, рядом с названием —
+  // как у прочих индикаторов) прячутся, гистограмма возвращена — показываются
   const syncVolumeLegend = () => {
     const on = indicators.has(VOL_MAIN);
     const row = document.getElementById('tc-leg-volume-row');
     if (row) row.style.display = on ? '' : 'none';
     const close = document.getElementById('tc-leg-volume-close');
     if (close) close.style.display = on ? '' : 'none';
+    const gear = document.getElementById('tc-leg-volume-gear');
+    if (gear) gear.style.display = on ? '' : 'none';
   };
 
   // Метки объёма на оси цены больше нет: значение под курсором показывает
@@ -2494,6 +2632,18 @@
 
     setStatus(`Загрузка свечей ${ticker}…`);
 
+    // Сравнения прежнего графика: спецификации сохраняются по тикеру
+    // (вернутся при возврате к нему), линии снимаются — их данные
+    // привязаны к интервалу и набору свечей прежнего графика
+    const comparePrevTicker = lastTicker;
+    if (comparePrevTicker) {
+      saveCompareSpecs(comparePrevTicker, serializeCompareSpecs());
+      for (const name of [...compareSeries.keys()]) {
+        try { instance.removeIndicator('candle_pane', name); } catch (e) { /* уже удалён */ }
+      }
+      compareSeries.clear();
+    }
+
     // Дельта для легенды — из ручки списка (см. блок над updateSymbolQuote):
     // прежняя котировка сбрасывается сразу, свежая придёт параллельно свечам
     dailyQuote = null;
@@ -2588,6 +2738,9 @@
 
       const restored = symbolChanged ? restoreOverlays(ticker) : 0;
       startPolling(ticker, interval);
+      // Сохранённые линии сравнения этого тикера — поверх свежих данных
+      // (не ждём: tcAddCompare сам проверит, что график не сменился)
+      restoreCompares(ticker);
 
       const liveNote = isBinanceTicker(ticker)
         ? `автообновление каждые ${POLL_MS.binance / 1000} с`
@@ -3147,7 +3300,12 @@
   // span значений каждой легенды — обновление за кроссхейром без DOM-поиска
   const legendValueEls = new Map();
 
+  // Человеческие подписи легенд для custom-индикаторов (shortName у них
+  // пуст — встроенный тултип выключен, а строка легенды рисуется нами)
+  const INDICATOR_LEGEND_LABELS = { [VOL_SIDE]: 'Объем сбоку' };
+
   const indicatorLegendLabel = (name, paneId) => {
+    if (INDICATOR_LEGEND_LABELS[name]) return INDICATOR_LEGEND_LABELS[name];
     let label = name;
     let params = [];
     try {
@@ -3194,6 +3352,20 @@
     setTimeout(updateIndicatorLegendPositions, 150);
   };
 
+  // Иконка настроек в легендах (как «⚙» при наведении на легенду в TV)
+  const GEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>';
+
+  // Кнопка «⚙» (настройки индикатора, как в TradingView при наведении на
+  // легенду): клик открывает тот же диалог, что клик по названию
+  const makeGearEl = (title, onClick) => {
+    const gear = document.createElement('span');
+    gear.className = 'tc-ind-gear';
+    gear.innerHTML = GEAR_SVG;
+    gear.title = title;
+    gear.addEventListener('click', onClick);
+    return gear;
+  };
+
   const renderIndicatorLegends = () => {
     const host = document.getElementById('tc-ind-legends');
     if (!host) return;
@@ -3208,7 +3380,7 @@
       const nm = document.createElement('span');
       nm.className = 'tc-ind-name';
       nm.textContent = indicatorLegendLabel(name, paneId);
-      nm.title = `${name} — настройки периодов`;
+      nm.title = `${name} — настройки (периоды и стиль)`;
       nm.addEventListener('click', () => window.tcConfigureIndicator(name));
       const vals = document.createElement('span');
       vals.className = 'tc-ind-vals';
@@ -3217,6 +3389,33 @@
       x.textContent = '×';
       x.title = `Убрать ${name}`;
       x.addEventListener('click', () => window.tcRemoveIndicator(name));
+      row.appendChild(nm);
+      row.appendChild(vals);
+      row.appendChild(makeGearEl(`Настройки ${name}`, () => window.tcConfigureIndicator(name)));
+      row.appendChild(x);
+      host.appendChild(row);
+      legendValueEls.set(name, vals);
+    }
+    // Линии сравнения (клик по названию/⚙ — без диалога: сравнение
+    // настраивается в окне «Сравнить», здесь только значения и ×)
+    for (const [name, series] of compareSeries) {
+      const row = document.createElement('span');
+      row.className = 'tc-ind-legend tc-compare-legend';
+      row.dataset.ind = name;
+      row.dataset.paneId = 'candle_pane';
+      row.dataset.compare = '1';
+      const nm = document.createElement('span');
+      nm.className = 'tc-ind-name';
+      nm.textContent = series.display;
+      nm.style.color = series.color;
+      nm.title = `Сравнение с ${series.ticker}`;
+      const vals = document.createElement('span');
+      vals.className = 'tc-ind-vals';
+      const x = document.createElement('span');
+      x.className = 'tc-ind-close';
+      x.textContent = '×';
+      x.title = `Убрать сравнение с ${series.display}`;
+      x.addEventListener('click', () => window.tcRemoveCompare(name));
       row.appendChild(nm);
       row.appendChild(vals);
       row.appendChild(x);
@@ -3245,10 +3444,25 @@
     const list = chartInstance.getDataList();
     const idx = k ? list.indexOf(k) : (list.length ? list.length - 1 : -1);
     for (const [name, valsEl] of legendValueEls) {
-      const paneId = indicators.get(name);
       let text = '';
       if (idx >= 0) {
+        // Линия сравнения: цена, пересчитанная к масштабу основного графика,
+        // и % от точки привязки — как в легенде «Сравнить» в TradingView
+        const series = compareSeries.get(name);
+        if (series) {
+          const c = compareCloseAt(series, list[idx].timestamp);
+          if (c != null) {
+            const pct = series.firstClose ? (c / series.firstClose - 1) * 100 : 0;
+            const sign = pct >= 0 ? '+' : '';
+            text = `${fmtNum(c * series.factor)} (${sign}${pct.toFixed(2)}%)`;
+          } else {
+            text = '—';
+          }
+          if (valsEl.textContent !== text) valsEl.textContent = text;
+          continue;
+        }
         try {
+          const paneId = indicators.get(name);
           const inst = chartInstance.getIndicatorByPaneId(paneId, name);
           const figures = inst && Array.isArray(inst.figures) ? inst.figures : [];
           const row = Array.isArray(inst && inst.result) ? inst.result[idx] : null;
@@ -3266,7 +3480,9 @@
   };
 
   // Добавление индикатора: MA/EMA/BOLL/SAR — на свечи, остальные —
-  // в собственные под-окна (isStack=false, уникальный paneId на имя)
+  // в собственные под-окна (isStack=false, уникальный paneId на имя).
+  // Сохранённые настройки индикатора (периоды/стили из диалога настроек,
+  // см. IND_EDIT ниже) применяются при создании — как «шаблоны» TradingView
   window.tcAddIndicator = function (name) {
     const instance = getChartInstance();
     if (!instance || !name) return;
@@ -3276,9 +3492,10 @@
     // IndicatorStore.addInstance при isStack=false затирает индикаторов
     // панели, поэтому MA/EMA/BOLL… добавляются поверх гистограммы, а не
     // вместо неё. Под-окна каждый раз создаются новые — там не важно.
-    const id = instance.createIndicator(name, pane.id === 'candle_pane', pane);
+    const id = instance.createIndicator(indicatorCreateOptions(name), pane.id === 'candle_pane', pane);
     if (!id) { setStatus(`Индикатор ${name} не поддерживается библиотекой`, true); return; }
     indicators.set(name, pane.id);
+    persistEnabledIndicators();
     renderIndicatorLegends();
     // Точность оси под-окна и значения легенд — после первого расчёта
     // (createIndicator в 9.6 считает асинхронно: до него в легенде прочерки),
@@ -3299,6 +3516,7 @@
     if (!instance || !paneId) return;
     instance.removeIndicator(paneId, name);
     indicators.delete(name);
+    persistEnabledIndicators();
     renderIndicatorLegends();
     // Оставшиеся панели переложились — позиции легенд догоняем
     refreshLegendPositionsSoon();
@@ -3307,44 +3525,651 @@
       : `Индикатор ${name} выключен`);
   };
 
-  // Настройка периодов (как клик по названию индикатора в TradingView):
-  // открывается кликом по названию в легенде на графике. Текущие значения
-  // берём из живого инстанса, правим через overrideIndicator.
-  // Ввод в модальном диалоге (window.prompt выглядит чужеродно и блокирует
-  // вкладку); ошибка валидации показывается inline, окно не закрывается
+  // ---- Настройки индикаторов (как в TradingView) ----
+  // Клик по названию индикатора в легенде (или ⚙ рядом) открывает диалог
+  // с двумя вкладками — «Входные данные» (периоды) и «Стиль» (цвета линий/
+  // гистограмм, толщина). Изменения применяются через overrideIndicator
+  // (9.6 мерджит styles по индексам массивов — правим только выбранные
+  // слоты) и ПЕРЕЖИВАЮТ перезагрузку: хранилище wl_chart_indicators =
+  //   { enabled: ['VOL_MAIN', ...], settings: { NAME: { calcParams, styles, extendData } } }
+  // Включённые индикаторы тоже восстанавливаются при загрузке (набор
+  // графика, как в TradingView, живёт между сессиями).
+
+  const IND_LS_KEY = 'wl_chart_indicators';
+
+  const loadIndicatorStore = () => {
+    try {
+      const v = JSON.parse(localStorage.getItem(IND_LS_KEY) || '{}');
+      return {
+        enabled: Array.isArray(v.enabled) ? v.enabled : null,
+        settings: v.settings && typeof v.settings === 'object' ? v.settings : {},
+      };
+    } catch (e) { return { enabled: null, settings: {} }; }
+  };
+
+  const saveIndicatorStore = (enabled, settings) => {
+    try {
+      localStorage.setItem(IND_LS_KEY, JSON.stringify({ enabled, settings }));
+    } catch (e) { /* localStorage недоступен — настройки не сохранятся */ }
+  };
+
+  const persistEnabledIndicators = () => {
+    const store = loadIndicatorStore();
+    saveIndicatorStore([...indicators.keys()], store.settings);
+  };
+
+  const indicatorSetting = (name) => {
+    const store = loadIndicatorStore();
+    const s = store.settings[name];
+    return s && typeof s === 'object' ? s : null;
+  };
+
+  // Опции создания индикатора с сохранёнными настройками: createIndicator
+  // 9.6 принимает и объект ({name, calcParams, styles, extendData})
+  const indicatorCreateOptions = (name) => {
+    const saved = indicatorSetting(name);
+    const opts = { name };
+    if (saved) {
+      if (Array.isArray(saved.calcParams) && saved.calcParams.length) opts.calcParams = saved.calcParams.slice();
+      if (saved.styles && typeof saved.styles === 'object') opts.styles = saved.styles;
+      if (saved.extendData !== undefined) opts.extendData = saved.extendData;
+    }
+    // Гистограммы объёма — custom-draw, их настройки живут в extendData
+    if (name === VOL_MAIN) {
+      opts.extendData = { ...VOL_MAIN_DEFAULT_EXTEND, ...(opts.extendData || {}) };
+    } else if (name === VOL_SIDE) {
+      opts.extendData = { ...VOL_SIDE_DEFAULT_EXTEND, ...(opts.extendData || {}) };
+    }
+    return opts;
+  };
+
+  // ---- Схемы редактирования: подписи полей и состав слотов стиля ----
+  // params: массив подписей периодов (или строка-«регенерация»: у MA/EMA/
+  // WR/BIAS число периодов меняется пользователем — подписи «Период N»).
+  // lines: число линий (массив подписей или 'regen'), bars/circles — слоты
+  // цветов гистограмм/точек. Дефолты цветов/толщины — библиотечные
+  // (Styles/default.ts 9.6: палитра линий #FF9600/#935EBD/#1677FF/…,
+  // гистограммы rgba(45,192,142,.7)/rgba(249,40,85,.7)).
+  const LIB_LINE_COLORS = ['#FF9600', '#935EBD', '#1677FF', '#E11D74', '#01C5C4'];
+  const LIB_LINE_SIZE = 1;
+  const LIB_BAR_COLORS = {
+    upColor: 'rgba(45, 192, 142, 0.7)',
+    downColor: 'rgba(249, 40, 85, 0.7)',
+    noChangeColor: '#888888',
+  };
+
+  const IND_EDIT_SCHEMAS = {
+    MA: { params: 'MA', lines: 'regen' },
+    EMA: { params: 'EMA', lines: 'regen' },
+    WR: { params: 'WR', lines: 'regen' },
+    BIAS: { params: 'BIAS', lines: 'regen' },
+    BOLL: { params: ['Период', 'Множитель отклонения'], lines: ['UP', 'MID', 'DN'] },
+    SAR: { params: ['Шаг, %', 'Максимум, %', 'Период'], circles: true },
+    BBI: { params: ['Период 1', 'Период 2', 'Период 3', 'Период 4'], lines: 1 },
+    AVP: { lines: 1 },
+    MACD: { params: ['Быстрый период', 'Медленный период', 'Сигнальный период'], lines: ['DIF', 'DEA'], bars: true, barsNoChange: true },
+    RSI: { params: ['Период 1', 'Период 2', 'Период 3'], lines: ['RSI1', 'RSI2', 'RSI3'] },
+    KDJ: { params: ['Период RSV', 'Период K', 'Период D'], lines: ['K', 'D', 'J'] },
+    CCI: { params: ['Период'], lines: 1 },
+    DMI: { params: ['Период', 'Период ADX'], lines: ['PDI', 'MDI', 'ADX', 'ADXR'] },
+    OBV: { params: ['Период MA'], lines: ['OBV', 'MAOBV'] },
+    ROC: { params: ['Период', 'Период MA'], lines: ['ROC', 'MAROC'] },
+    DMA: { params: ['Быстрый период', 'Медленный период', 'Период AMA'], lines: ['DMA', 'AMA'] },
+    TRIX: { params: ['Период', 'Период MA'], lines: ['TRIX', 'MATRIX'] },
+    VOL: { params: ['MA 1', 'MA 2', 'MA 3'], lines: ['MA1', 'MA2', 'MA3'], bars: true, barsNoChange: true },
+    VOL_MAIN: { custom: 'volMain' },
+    VOL_SIDE: { custom: 'volSide' },
+  };
+
+  // rgba()/rgb() → '#rrggbb' (input[type=color] понимает только hex);
+  // непарсимое — нейтральный синий
+  const toHexColor = (css) => {
+    const s = String(css || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(s)) return s.toUpperCase();
+    const m = s.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+    if (m) {
+      const hex = (n) => Number(n).toString(16).padStart(2, '0').toUpperCase();
+      return `#${hex(m[1])}${hex(m[2])}${hex(m[3])}`;
+    }
+    return '#2962ff';
+  };
+
+  // Диалог: состояние текущей правки. fields — реестр полей, собранный при
+  // построении (обход DOM на apply не нужен — мини-DOM тестов совместим)
+  let indEditCtx = null; // { name, fields: [{ key, kind, el, scale }] }
+
+  const hideIndicatorEditDialog = () => {
+    const modal = document.getElementById('tc-ind-modal');
+    if (modal) modal.classList.remove('active');
+    indEditCtx = null;
+  };
+
+  const bindModalDismiss = (modalId, cancelFn) => {
+    const modal = document.getElementById(modalId);
+    if (!modal || modal.dataset.modalBound) return;
+    modal.dataset.modalBound = '1';
+    window.addEventListener('keydown', (e) => {
+      if (!e || e.key !== 'Escape' || !modal.classList.contains('active')) return;
+      // Escape не должен «провалиться» в другие окно-обработчики (диалог
+      // заметки и пр.) — погасим всплытие, где у события оно вообще есть
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      cancelFn();
+    });
+    modal.addEventListener('click', (e) => { if (e && e.target === modal) cancelFn(); });
+  };
+
+  const makeNumInput = (value, step) => {
+    const inp = document.createElement('input');
+    inp.className = 'modal-input tc-ind-num-input';
+    inp.type = 'number';
+    inp.value = String(value);
+    if (step != null) inp.step = String(step);
+    return inp;
+  };
+
+  const makeColorInput = (value) => {
+    const inp = document.createElement('input');
+    inp.className = 'tc-ind-color-input';
+    inp.type = 'color';
+    inp.value = toHexColor(value);
+    return inp;
+  };
+
+  const addEditField = (pane, label, input, field) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'tc-ind-field';
+    const lbl = document.createElement('div');
+    lbl.className = 'tc-ind-field-label';
+    lbl.textContent = label;
+    wrap.appendChild(lbl);
+    wrap.appendChild(input);
+    pane.appendChild(wrap);
+    indEditCtx.fields.push({ ...field, el: input });
+    return input;
+  };
+
+  // Построение полей диалога по схеме индикатора
+  const buildIndicatorEditFields = (name, paneId) => {
+    const instance = getChartInstance();
+    const inputsPane = document.getElementById('tc-ind-tab-inputs');
+    const stylePane = document.getElementById('tc-ind-tab-style');
+    if (!inputsPane || !stylePane) return;
+    inputsPane.innerHTML = '';
+    stylePane.innerHTML = '';
+    const schema = IND_EDIT_SCHEMAS[name] || {};
+
+    // Текущие значения: периоды — из живого инстанса, стили — сохранённые
+    // настройки (у библиотеки эффективные дефолты — см. LIB_*), extendData
+    // — дефолты custom-гистограмм поверх сохранённых
+    let calcParams = [];
+    try {
+      const inst = instance && instance.getIndicatorByPaneId(paneId, name);
+      if (inst && Array.isArray(inst.calcParams)) calcParams = inst.calcParams.slice();
+    } catch (e) { /* инстанс недоступен — поля по дефолтам */ }
+    const saved = indicatorSetting(name) || {};
+    const savedStyles = saved.styles && typeof saved.styles === 'object' ? saved.styles : {};
+    const lineStyles = Array.isArray(savedStyles.lines) ? savedStyles.lines : [];
+    const barStyles = Array.isArray(savedStyles.bars) && savedStyles.bars.length ? savedStyles.bars[0] : {};
+    const circleStyles = Array.isArray(savedStyles.circles) && savedStyles.circles.length ? savedStyles.circles[0] : {};
+
+    if (schema.custom === 'volMain' || schema.custom === 'volSide') {
+      const defaults = schema.custom === 'volMain' ? VOL_MAIN_DEFAULT_EXTEND : VOL_SIDE_DEFAULT_EXTEND;
+      const ext = { ...defaults, ...(saved.extendData && typeof saved.extendData === 'object' ? saved.extendData : {}) };
+      if (schema.custom === 'volMain') {
+        addEditField(inputsPane, 'Высота гистограммы, % панели',
+          makeNumInput(Math.round(ext.maxHeight * 100), 1),
+          { key: 'maxHeight', kind: 'extPercent' });
+        addEditField(stylePane, 'Рост', makeColorInput(ext.upColor), { key: 'upColor', kind: 'extColor' });
+        addEditField(stylePane, 'Падение', makeColorInput(ext.downColor), { key: 'downColor', kind: 'extColor' });
+      } else {
+        addEditField(inputsPane, 'Число ценовых уровней', makeNumInput(ext.bins, 1), { key: 'bins', kind: 'extInt' });
+        addEditField(inputsPane, 'Ширина профиля, % панели',
+          makeNumInput(Math.round(ext.maxWidth * 100), 1),
+          { key: 'maxWidth', kind: 'extPercent' });
+        addEditField(stylePane, 'Рост', makeColorInput(ext.upColor), { key: 'upColor', kind: 'extColor' });
+        addEditField(stylePane, 'Падение', makeColorInput(ext.downColor), { key: 'downColor', kind: 'extColor' });
+      }
+      return;
+    }
+
+    // Входные данные: периоды
+    if (schema.params) {
+      const labels = Array.isArray(schema.params)
+        ? schema.params
+        : calcParams.map((_, i) => `${schema.params}: период ${i + 1}`);
+      labels.forEach((label, i) => {
+        const value = calcParams[i] != null ? calcParams[i] : 14;
+        addEditField(inputsPane, label, makeNumInput(value, 1), { key: String(i), kind: 'param' });
+      });
+    } else {
+      const note = document.createElement('div');
+      note.className = 'tc-ind-field-note';
+      note.textContent = 'У этого индикатора нет входных параметров';
+      inputsPane.appendChild(note);
+    }
+
+    // Стиль: линии, гистограммы, точки
+    if (schema.lines) {
+      const count = schema.lines === 'regen' ? calcParams.length : schema.lines.length;
+      for (let i = 0; i < count; i++) {
+        const label = schema.lines === 'regen' ? `Линия ${i + 1}` : schema.lines[i];
+        const cur = lineStyles[i] || {};
+        addEditField(stylePane, `${label} — цвет`, makeColorInput(cur.color ?? LIB_LINE_COLORS[i % LIB_LINE_COLORS.length]),
+          { key: `lines.${i}.color`, kind: 'styleColor' });
+        addEditField(stylePane, `${label} — толщина`, makeNumInput(cur.size ?? LIB_LINE_SIZE, 0.5),
+          { key: `lines.${i}.size`, kind: 'styleNum' });
+      }
+    }
+    if (schema.bars) {
+      addEditField(stylePane, 'Гистограмма — рост', makeColorInput(barStyles.upColor ?? LIB_BAR_COLORS.upColor),
+        { key: 'bars.0.upColor', kind: 'styleColor' });
+      addEditField(stylePane, 'Гистограмма — падение', makeColorInput(barStyles.downColor ?? LIB_BAR_COLORS.downColor),
+        { key: 'bars.0.downColor', kind: 'styleColor' });
+      if (schema.barsNoChange) {
+        addEditField(stylePane, 'Гистограмма — без изменений', makeColorInput(barStyles.noChangeColor ?? LIB_BAR_COLORS.noChangeColor),
+          { key: 'bars.0.noChangeColor', kind: 'styleColor' });
+      }
+    }
+    if (schema.circles) {
+      addEditField(stylePane, 'Точки — рост', makeColorInput(circleStyles.upColor ?? LIB_BAR_COLORS.upColor),
+        { key: 'circles.0.upColor', kind: 'styleColor' });
+      addEditField(stylePane, 'Точки — падение', makeColorInput(circleStyles.downColor ?? LIB_BAR_COLORS.downColor),
+        { key: 'circles.0.downColor', kind: 'styleColor' });
+    }
+  };
+
+  const switchIndicatorEditTab = (tab) => {
+    const inputsPane = document.getElementById('tc-ind-tab-inputs');
+    const stylePane = document.getElementById('tc-ind-tab-style');
+    const inputsBtn = document.getElementById('tc-ind-tab-inputs-btn');
+    const styleBtn = document.getElementById('tc-ind-tab-style-btn');
+    if (!inputsPane || !stylePane) return;
+    const showInputs = tab !== 'style';
+    inputsPane.style.display = showInputs ? '' : 'none';
+    stylePane.style.display = showInputs ? 'none' : '';
+    if (inputsBtn) inputsBtn.classList.toggle('active', showInputs);
+    if (styleBtn) styleBtn.classList.toggle('active', !showInputs);
+  };
+
+  // Диалог настроек индикатора (как в TradingView: вкладки «Входные
+  // данные» / «Стиль»). Открывается кликом по названию в легенде графика
   window.tcConfigureIndicator = function (name) {
     const instance = getChartInstance();
     const paneId = indicators.get(name);
-    if (!instance || !paneId) return;
-    if (name === VOL_MAIN) {
-      setStatus('У гистограммы объёма нет настроек периодов');
+    const modal = document.getElementById('tc-ind-modal');
+    if (!instance || !paneId || !modal) return;
+    indEditCtx = { name, fields: [] };
+    const title = document.getElementById('tc-ind-modal-title');
+    if (title) title.textContent = `Настройки: ${name}`;
+    const errEl = document.getElementById('tc-ind-modal-error');
+    if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+    buildIndicatorEditFields(name, paneId);
+    switchIndicatorEditTab('inputs');
+    modal.classList.add('active');
+  };
+
+  const applyIndicatorEditDialog = () => {
+    if (!indEditCtx) { hideIndicatorEditDialog(); return; }
+    const { name, fields } = indEditCtx;
+    const instance = getChartInstance();
+    const paneId = indicators.get(name);
+    if (!instance || !paneId) { hideIndicatorEditDialog(); return; }
+    const schema = IND_EDIT_SCHEMAS[name] || {};
+    const errEl = document.getElementById('tc-ind-modal-error');
+    const showError = (text) => {
+      if (errEl) { errEl.textContent = text; errEl.style.display = ''; }
+    };
+
+    const update = {};
+    const saved = {};
+    if (schema.custom) {
+      // custom-гистограммы: настройки в extendData
+      const defaults = schema.custom === 'volMain' ? VOL_MAIN_DEFAULT_EXTEND : VOL_SIDE_DEFAULT_EXTEND;
+      const ext = { ...defaults, ...(indicatorSetting(name)?.extendData || {}) };
+      for (const f of fields) {
+        const raw = String(f.el.value ?? '').trim();
+        if (f.kind === 'extColor') { ext[f.key] = raw; continue; }
+        const num = Number(raw.replace(',', '.'));
+        if (!Number.isFinite(num) || num <= 0) {
+          showError('Значения должны быть положительными числами');
+          return;
+        }
+        if (f.kind === 'extPercent') ext[f.key] = Math.min(50, Math.max(2, num)) / 100;
+        else if (f.kind === 'extInt') ext[f.key] = Math.round(num);
+      }
+      update.extendData = ext;
+      saved.extendData = ext;
+    } else {
+      // Периоды
+      const paramFields = fields.filter(f => f.kind === 'param');
+      if (paramFields.length) {
+        const params = [];
+        for (const f of paramFields) {
+          const num = Number(String(f.el.value ?? '').trim().replace(',', '.'));
+          if (!Number.isFinite(num) || num <= 0) {
+            showError('Периоды — положительные числа, например 14 или 7, 25');
+            return;
+          }
+          params.push(num);
+        }
+        update.calcParams = params;
+        saved.calcParams = params;
+      }
+      // Стили
+      const styleFields = fields.filter(f => f.kind === 'styleColor' || f.kind === 'styleNum');
+      if (styleFields.length) {
+        const styles = {};
+        for (const f of styleFields) {
+          const [group, indexStr, prop] = f.key.split('.');
+          const index = Number(indexStr);
+          const arr = styles[group] = styles[group] || [];
+          const slot = arr[index] = arr[index] || {};
+          if (f.kind === 'styleColor') slot[prop] = String(f.el.value ?? '');
+          else {
+            const size = Number(String(f.el.value ?? '').trim().replace(',', '.'));
+            if (!Number.isFinite(size) || size <= 0 || size > 8) {
+              showError('Толщина линии — число от 0.5 до 8');
+              return;
+            }
+            slot[prop] = size;
+          }
+        }
+        update.styles = styles;
+        saved.styles = styles;
+      }
+    }
+
+    // Применение + сохранение. overrideIndicator 9.6 ищет инстанс по name
+    // (IndicatorStore.override деструктурирует { name }). Легенда печатает
+    // параметры рядом с названием — обновляем по завершении override
+    // (9.6 асинхронный — колбэком)
+    update.name = name;
+    instance.overrideIndicator(update, null, () => renderIndicatorLegends());
+    const store = loadIndicatorStore();
+    store.settings[name] = saved;
+    saveIndicatorStore([...indicators.keys()], store.settings);
+    hideIndicatorEditDialog();
+    setStatus(`${name}: настройки применены и сохранены`);
+  };
+
+  const bindIndicatorEditDialog = () => {
+    const modal = document.getElementById('tc-ind-modal');
+    if (!modal || modal.dataset.indEditBound) return;
+    modal.dataset.indEditBound = '1';
+    const applyBtn = document.getElementById('tc-ind-modal-apply');
+    if (applyBtn) applyBtn.addEventListener('click', () => applyIndicatorEditDialog());
+    const cancelBtn = document.getElementById('tc-ind-modal-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => hideIndicatorEditDialog());
+    const inputsBtn = document.getElementById('tc-ind-tab-inputs-btn');
+    if (inputsBtn) inputsBtn.addEventListener('click', () => switchIndicatorEditTab('inputs'));
+    const styleBtn = document.getElementById('tc-ind-tab-style-btn');
+    if (styleBtn) styleBtn.addEventListener('click', () => switchIndicatorEditTab('style'));
+    bindModalDismiss('tc-ind-modal', () => hideIndicatorEditDialog());
+  };
+
+  // ---- Сравнение инструментов на графике (как «Сравнить» в TradingView) ----
+  // Линия другого инструмента нормируется к масштабу основного графика:
+  // в точке привязки (первый общий бар) цены совпадают, дальше —
+  // close_сравнения × (close_основного(t0) / close_сравнения(t0)). Так оба
+  // графика читаются на одной шкале цены (в TV «Сравнить» работает так же,
+  // а в режиме «Проценты» шкала сама покажет относительный рост обоих).
+  // Каждая линия — отдельный кастомный индикатор TC_CMP_N (в 9.6 на панель
+  // один инстанс на имя — имена уникальны), данные живут в замыкании:
+  // список {ts, close} с переносом вперёд последней известной цены
+  // (торговые календари инструментов не совпадают).
+
+  const COMPARE_PREFIX = 'TC_CMP_';
+  const COMPARE_MAX = 5;
+  const COMPARE_COLORS = ['#e8a33d', '#c86fd1', '#4ecb78', '#38b6ff', '#f5c451'];
+  const COMPARE_LS_KEY = 'wl_chart_compares';
+  const compareSeries = new Map(); // имя индикатора → { ticker, display, color, data, factor, firstClose }
+  let compareSeq = 0;
+
+  const loadCompareSpecs = (ticker) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(COMPARE_LS_KEY) || '{}');
+      return Array.isArray(all[ticker]) ? all[ticker] : [];
+    } catch (e) { return []; }
+  };
+
+  const saveCompareSpecs = (ticker, specs) => {
+    if (!ticker) return;
+    try {
+      const all = JSON.parse(localStorage.getItem(COMPARE_LS_KEY) || '{}');
+      if (specs && specs.length) all[ticker] = specs; else delete all[ticker];
+      localStorage.setItem(COMPARE_LS_KEY, JSON.stringify(all));
+    } catch (e) { /* localStorage недоступен — сравнения не сохранятся */ }
+  };
+
+  const serializeCompareSpecs = () => [...compareSeries.values()]
+    .map(s => ({ ticker: s.ticker, color: s.color }));
+
+  // Цена сравнения на бар ts: последняя известная close с ts' <= ts
+  // (календари не совпадают — переносим вперёд, как делает TV)
+  const compareCloseAt = (series, ts) => {
+    let last = null;
+    for (const p of series.data) {
+      if (p.ts <= ts) last = p.close;
+      else break;
+    }
+    return last;
+  };
+
+  // Регистрация линии сравнения: figure типа «line» со значением в масштабе
+  // основного графика (диапазон оси свечной панели учитывает figures главных
+  // индикаторов — линия «дышит» вместе с ценой, как в TV). Без type линия
+  // библиотекой не рисуется (eachFigures красит только line/bar/circle)
+  const registerCompareIndicator = (name, series) => {
+    klinecharts.registerIndicator({
+      name,
+      shortName: series.display,
+      figures: [{ key: 'value', title: '', type: 'line' }],
+      calc: (dataList) => {
+        let j = -1;
+        let last = null;
+        return (dataList || []).map((k) => {
+          while (j + 1 < series.data.length && series.data[j + 1].ts <= k.timestamp) {
+            j++;
+            last = series.data[j].close;
+          }
+          return last == null ? {} : { value: last * series.factor };
+        });
+      },
+      styles: { lines: [{ color: series.color, size: 2 }] },
+    });
+  };
+
+  const removeCompareInternal = (name) => {
+    const instance = getChartInstance();
+    if (instance) {
+      try { instance.removeIndicator('candle_pane', name); } catch (e) { /* уже удалён */ }
+    }
+    compareSeries.delete(name);
+  };
+
+  // Добавление линии сравнения. Возвращает null (успех) или текст ошибки —
+  // диалог показывает её inline, как в остальных окнах настроек.
+  window.tcAddCompare = async function (raw, opts = {}) {
+    const instance = getChartInstance();
+    const ticker = normalizeTicker(raw);
+    if (!instance) return 'График ещё не готов';
+    if (!ticker) return 'Введите тикер — например SVCB или BINANCE:ETHUSDT';
+    if (!lastTicker || !instance.getDataList().length) return 'Сначала загрузите основной график';
+    if (ticker === lastTicker) return 'Основной график уже показывает этот тикер';
+    if (compareSeries.size >= COMPARE_MAX) return `Больше ${COMPARE_MAX} линий сравнения не добавить`;
+    if ([...compareSeries.values()].some(s => s.ticker === ticker)) return `${ticker} уже на графике`;
+
+    // За время запроса график мог смениться (тикер/ТФ) — данные сравнения
+    // привязаны к интервалу, такой ответ отбрасывается
+    const expectTicker = lastTicker;
+    const expectInterval = currentInterval;
+
+    let points = null;
+    try {
+      const lookback = TF_LOOKBACK_DAYS[expectInterval] || 600;
+      const from = fmtDay(new Date(Date.now() - lookback * 86400000));
+      const url = `${API_BASE}/api/candles/${encodeURIComponent(ticker)}`
+        + `?interval=${expectInterval}&from=${from}&slice=1`;
+      const response = await window.fetchWithTimeout(url, {}, 60000);
+      const data = await response.json();
+      if (data.error || !data.candles || !data.candles.length) {
+        return `Свечи ${ticker} не найдены${data.error ? `: ${data.error}` : ''}`;
+      }
+      points = data.candles.map(toKline)
+        .filter(k => !Number.isNaN(k.timestamp) && Number.isFinite(k.close))
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .map(k => ({ ts: k.timestamp, close: k.close }));
+    } catch (e) {
+      return `Не удалось загрузить свечи ${ticker}: ${e.message || e}`;
+    }
+    if (lastTicker !== expectTicker || currentInterval !== expectInterval) return null; // график сменился — тихо пропускаем
+    if (!points.length) return `Свечи ${ticker} не найдены`;
+
+    // Точка привязки: первый бар основного графика, для которого у сравнения
+    // есть цена (с переносом вперёд)
+    const mainList = instance.getDataList();
+    let factor = null;
+    let firstClose = null;
+    for (const k of mainList) {
+      const c = compareCloseAt({ data: points }, k.timestamp);
+      if (c != null && Number.isFinite(k.close) && k.close > 0) {
+        firstClose = c;
+        factor = k.close / c;
+        break;
+      }
+    }
+    if (factor == null) return `У ${ticker} и ${expectTicker} нет общих дат на интервале`;
+
+    const series = {
+      ticker,
+      display: displayTicker(ticker),
+      color: opts.color || COMPARE_COLORS[compareSeq % COMPARE_COLORS.length],
+      data: points,
+      factor,
+      firstClose,
+    };
+    const name = `${COMPARE_PREFIX}${++compareSeq}`;
+    registerCompareIndicator(name, series);
+    const id = instance.createIndicator({ name }, true, { id: 'candle_pane' });
+    if (!id) return `Линию сравнения ${ticker} создать не удалось`;
+    compareSeries.set(name, series);
+    saveCompareSpecs(lastTicker, serializeCompareSpecs());
+    renderIndicatorLegends();
+    refreshLegendPositionsSoon();
+    if (!opts.silent) setStatus(`Сравнение: ${series.display} добавлен на график`);
+    return null;
+  };
+
+  window.tcRemoveCompare = function (name) {
+    const series = compareSeries.get(name);
+    if (!series) return;
+    removeCompareInternal(name);
+    saveCompareSpecs(lastTicker, serializeCompareSpecs());
+    renderIndicatorLegends();
+    setStatus(`Сравнение ${series.display} убрано`);
+  };
+
+  // Восстановление сохранённых линий сравнения после загрузки графика
+  // (спецификации хранятся по тикеру ОСНОВНОГО графика)
+  const restoreCompares = async (ticker) => {
+    for (const spec of loadCompareSpecs(ticker)) {
+      if (!spec || !spec.ticker) continue;
+      await window.tcAddCompare(spec.ticker, { color: spec.color, silent: true });
+    }
+  };
+
+  // Список активных сравнений в диалоге («SVCB ×»)
+  const renderCompareList = () => {
+    const host = document.getElementById('tc-compare-list');
+    if (!host) return;
+    host.innerHTML = '';
+    for (const [name, series] of compareSeries) {
+      const row = document.createElement('span');
+      row.className = 'tc-compare-row';
+      const dot = document.createElement('span');
+      dot.className = 'tc-compare-dot';
+      dot.style.background = series.color;
+      const nm = document.createElement('span');
+      nm.className = 'tc-compare-name';
+      nm.textContent = series.display;
+      const x = document.createElement('span');
+      x.className = 'tc-compare-close';
+      x.textContent = '×';
+      x.title = `Убрать ${series.display}`;
+      x.addEventListener('click', () => {
+        window.tcRemoveCompare(name);
+        renderCompareList();
+      });
+      row.appendChild(dot);
+      row.appendChild(nm);
+      row.appendChild(x);
+      host.appendChild(row);
+    }
+    host.style.display = compareSeries.size ? '' : 'none';
+  };
+
+  const hideCompareDialog = () => {
+    const modal = document.getElementById('tc-compare-modal');
+    if (modal) modal.classList.remove('active');
+  };
+
+  const showCompareError = (text) => {
+    const errEl = document.getElementById('tc-compare-error');
+    if (errEl) { errEl.textContent = text || ''; errEl.style.display = text ? '' : 'none'; }
+  };
+
+  window.tcOpenCompareDialog = function () {
+    const instance = getChartInstance();
+    const modal = document.getElementById('tc-compare-modal');
+    if (!modal) return;
+    if (!lastTicker || !instance || !instance.getDataList().length) {
+      setStatus('Сначала загрузите график — с чем сравнивать?', true);
       return;
     }
-    let current = '';
-    try {
-      const inst = instance.getIndicatorByPaneId(paneId, name);
-      if (inst && Array.isArray(inst.calcParams) && inst.calcParams.length) {
-        current = inst.calcParams.join(', ');
+    showCompareError('');
+    renderCompareList();
+    modal.classList.add('active');
+    const input = document.getElementById('tc-compare-input');
+    if (input && typeof input.focus === 'function') input.focus();
+  };
+
+  const applyCompareDialog = async () => {
+    const input = document.getElementById('tc-compare-input');
+    if (!input) return;
+    const err = await window.tcAddCompare(input.value);
+    if (err) { showCompareError(err); return; }
+    showCompareError('');
+    input.value = '';
+    renderCompareList();
+  };
+
+  const bindCompareDialog = () => {
+    const modal = document.getElementById('tc-compare-modal');
+    if (!modal || modal.dataset.compareBound) return;
+    modal.dataset.compareBound = '1';
+    const btn = document.getElementById('tc-compare-btn');
+    if (btn) btn.addEventListener('click', () => window.tcOpenCompareDialog());
+    const addBtn = document.getElementById('tc-compare-add');
+    if (addBtn) addBtn.addEventListener('click', () => applyCompareDialog());
+    const cancelBtn = document.getElementById('tc-compare-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => hideCompareDialog());
+    const input = document.getElementById('tc-compare-input');
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (!e) return;
+        if (e.key === 'Enter') { e.preventDefault(); applyCompareDialog(); }
+        else if (e.key === 'Escape') hideCompareDialog();
+      });
+      // Автодополнение тикеров — тот же источник подсказок, что у полей
+      // списка и шапки графика (js/symbol_search.js)
+      if (window.symbolSearch && typeof window.symbolSearch.attach === 'function') {
+        window.symbolSearch.attach(input, (item) => {
+          input.value = item.symbol;
+          applyCompareDialog();
+        });
       }
-    } catch (e) { /* инстанс не найден — диалог откроется с дефолтом */ }
-    openSettingsDialog({
-      title: `Настройки ${name}`,
-      label: `Периоды через запятую${current ? ` · сейчас: ${current}` : ''}`,
-      value: current || '14',
-      apply: (raw) => {
-        const params = String(raw).split(',').map(s => parseFloat(s.trim()))
-          .filter(n => Number.isFinite(n) && n > 0);
-        if (!params.length) {
-          return 'Нужны положительные числа через запятую — например 14 или 7, 25';
-        }
-        // Легенда на графике печатает параметры рядом с названием —
-        // обновляем по завершении override (9.6 асинхронный — колбэком)
-        instance.overrideIndicator({ name, calcParams: params }, null,
-          () => renderIndicatorLegends());
-        setStatus(`${name}: периоды ${params.join(', ')} применены`);
-        return true;
-      },
-    });
+    }
+    bindModalDismiss('tc-compare-modal', () => hideCompareDialog());
   };
 
   // ---- Стартовые слушатели ----
@@ -3448,6 +4273,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     registerCustomOverlays();
     registerVolumeIndicator();
+    registerSideVolumeIndicator();
     // Сохранённый вид (тип графика, режим шкалы, ТФ) читаем до первой
     // загрузки: init графика применит его стилями (apply…Type/ScaleMode)
     loadSavedView();
@@ -3472,9 +4298,19 @@
     bindStageTools();
     bindSettingsDialog();
     bindTickerInput();
+    // Диалог настроек индикатора («Входные данные»/«Стиль») и окно
+    // «Сравнить» в шапке графика
+    bindIndicatorEditDialog();
+    bindCompareDialog();
     // Закрытие гистограммы объёма — × в строке «Объем» легенды OHLCV
     const volClose = document.getElementById('tc-leg-volume-close');
     if (volClose) volClose.addEventListener('click', () => window.tcRemoveIndicator(VOL_MAIN));
+    // Настройки гистограммы (высота/цвета) — ⚙ рядом с × в той же строке
+    const volGear = document.getElementById('tc-leg-volume-gear');
+    if (volGear) {
+      volGear.innerHTML = GEAR_SVG;
+      volGear.addEventListener('click', () => window.tcConfigureIndicator(VOL_MAIN));
+    }
     // Страховочные сохранения разметки: перед выгрузкой вкладки и при
     // сворачивании/переключении вкладки (перетаскивание точек без
     // onPressedMoveEnd всё равно попадёт в один из этих моментов).

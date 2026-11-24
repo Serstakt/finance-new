@@ -596,7 +596,7 @@ document.addEventListener('mousemove', (e) => {
     document.body.style.userSelect = '';
     watchlist.style.width = ''; // сброс к ширине по умолчанию из CSS
     hideWatchlist();
-  } else if (w <= 500) {
+  } else if (w <= 560) { // потолок = max-width панели из CSS (#watchlist)
     watchlist.style.width = `${w}px`;
     // KLineChart не следит за контейнером сам — холст догоняет тягу
     // ресайзера (debounce внутри wlChartResize)
