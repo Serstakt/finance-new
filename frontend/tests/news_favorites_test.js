@@ -74,7 +74,7 @@ class Node {
 }
 
 const byId = {};
-for (const id of ['news-panel', 'news-list', 'notes-list']) byId[id] = new Node('div');
+for (const id of ['news-panel', 'news-list', 'news-fav-list', 'notes-list']) byId[id] = new Node('div');
 
 // Синхронный парсер отрисованного HTML: вытаскиваем блоки news-item с их
 // data-link и флагом — этого достаточно тесту. Вызывается из сеттера
@@ -123,6 +123,15 @@ const fakeFetch = async (url, opts = {}) => {
   if (String(url).includes('/api/news/telegram/')) {
     if (newsTelegramDelayMs > 0) await new Promise(r => setTimeout(r, newsTelegramDelayMs));
     return { ok: true, status: 200, json: async () => ({ symbol: 'MOEX:SBER', news: posts }) };
+  }
+  // Список для вкладки «Избранные» (GET /api/news/favorites/list?ticker=...):
+  // ветка ДО общей проверки /api/news/favorites — иначе «/list» совпадает с ней.
+  if (String(url).includes('/api/news/favorites/list')) {
+    const ticker = decodeURIComponent((String(url).match(/ticker=([^&]+)/) || [])[1] || '');
+    const items = Object.entries(favoritesStore)
+      .filter(([, m]) => (m.ticker || '') === ticker)
+      .map(([link, m]) => ({ link, ticker: m.ticker, title: m.title, full_text: m.title, time: '01.10.2026 10:00' }));
+    return { ok: true, status: 200, json: async () => ({ news: items }) };
   }
   if (String(url).includes('/api/news/favorites')) {
     return { ok: true, status: 200, json: async () => ({ favorites: { ...favoritesStore } }) };
@@ -244,6 +253,25 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
   assert(byId['news-list'].innerHTML.includes(firstLink),
     'Лента всё же дорисовалась после медленного Telegram-ответа');
   newsTelegramDelayMs = 0;
+
+  // --- ВКЛАДКА «ИЗБРАННЫЕ НОВОСТИ»: полный путь renderNewsFavoritesTab →
+  // fetch /api/news/favorites/list → drawNewsFavorites. Регрессия: хелперы
+  // trimNewsTeaser/splitNewsTeaser/newsFlagBtnHtml были объявлены ВНУТРИ
+  // loadTickerNews — drawNewsFavorites (функция уровня модуля) падала с
+  // ReferenceError: splitNewsTeaser is not defined, ошибка гасилась try/catch,
+  // и вкладка навсегда оставалась на «Загрузка избранного...» (данные с
+  // сервера приходили, но не отрисовывались).
+  favoritesStore[firstLink] = { ticker: 'SBER', title: 'Сбер: МСФО за квартал' };
+  sandbox.window.newsFavoritesList = [];
+  sandbox.window.newsFavoritesListTicker = null;
+  await sandbox.window.renderNewsFavoritesTab(true);
+  const favHtml = byId['news-fav-list'].innerHTML;
+  assert(favHtml.includes(firstLink),
+    'Вкладка «Избранные» отрисовала избранную новость из БД (drawNewsFavorites не падает)');
+  assert(favHtml.includes('Избранные новости') && favHtml.includes('SBER'),
+    'Шапка вкладки «Избранные» с тикером и счётчиком отрисована');
+  assert(favHtml.includes('news-fav-count'),
+    'Счётчик «Избранные новости (TICKER): N» имеет id news-fav-count (обновляется при снятии флажка)');
 
   console.log(failures ? `\n${failures} TEST(S) FAILED` : '\nALL TESTS PASSED');
   process.exit(failures ? 1 : 0);
