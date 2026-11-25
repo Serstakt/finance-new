@@ -7,6 +7,25 @@
   box-sizing: border-box;
 }
 
+/* Дизайн-токены (первый шаг к CSS-переменным в проекте). Пока используются
+   только компонентами алертов и тостов; остальные секции постепенно
+   перевести на них при следующих правках. Палитра — тёмная TradingView. */
+:root {
+  --al-accent: #2962ff;
+  --al-accent-hover: #1e53e5;
+  --al-success: #26a69a;
+  --al-danger: #ef5350;
+  --al-warn: #ffca28;
+  --al-surface: #1e222d;
+  --al-surface-2: #2a2e39;
+  --al-surface-3: #363a45;
+  --al-text: #d1d4dc;
+  --al-text-muted: #787b86;
+  --al-radius: 8px;
+  --al-radius-sm: 6px;
+  --al-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 body {
   font-family: -apple-system, sans-serif;
   background: #131722;
@@ -862,49 +881,226 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 /* Контейнеры вкладок: показываем только активную (display задаёт JS) */
 .tab-pane { flex: 1; overflow-y: auto; min-height: 0; }
 
-/* Колонка «Алерты» (правая половина нижней панели, 40% ширины):
-   заголовок и таблица уплотнены под узкую колонку */
-.alerts-tab-header {
-  padding: 10px 4px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #d1d4dc;
-}
-#alerts-list .alerts-tab-content { padding-bottom: 8px; }
+/* === Колонка «Алерты» (правая половина нижней панели, 40% ширины) ===
+   Редизайн в стиле панели алертов TradingView: шапка с тикером,
+   группы «Активные»/«История» и карточки с прогрессом до цели
+   (вместо прежней HTML-таблицы с эмодзи-статусами). */
 
-/* Таблица алертов (Тикер, Цена, Статус, Время и дата,
-   справа кнопка «Отменить» у активных алертов) */
-.alerts-table {
-  width: 100%;
-  border-collapse: collapse;
+/* Шапка колонки: колокол, тикер, счётчик алертов */
+.alerts-col-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 2px;
   font-size: 13px;
-}
-.alerts-table th {
-  text-align: left;
-  padding: 8px 10px;
-  color: #9aa0ab;
   font-weight: 700;
+  color: var(--al-text);
+}
+.alerts-col-header .alert-icon { color: var(--al-accent); }
+.alerts-col-badge {
+  margin-left: auto;
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  color: var(--al-text-muted);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 9px;
+}
+#alerts-list .alerts-tab-content { padding: 4px 10px 10px; }
+
+/* Базовая иконка lucide внутри карточек/пустых состояний */
+.alert-icon { display: inline-flex; align-items: center; }
+.alert-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; }
+
+/* Заголовок группы («Активные · N из 10», «История») с линией-заполнителем */
+.alert-group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--al-text-muted);
+}
+.alert-group-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--al-surface-3);
+}
+
+/* Карточка алерта */
+.alert-card {
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  border-left-width: 3px;
+  border-radius: var(--al-radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s var(--al-ease);
+}
+.alert-card:hover { border-color: #4a5060; }
+.alert-card.status-active { border-left-color: var(--al-success); }
+.alert-card.status-triggered { border-left-color: var(--al-warn); }
+.alert-card.status-cancelled { border-left-color: var(--al-danger); opacity: 0.55; }
+
+/* Анимации: slide-in только для впервые показанных карточек
+   (класс вешает JS через реестр _seenAlertIds), pulse — при
+   фактическом срабатывании (alert-card--just-triggered). */
+.alert-card--enter { animation: alertCardIn 0.25s var(--al-ease) both; }
+.alert-card--just-triggered { animation: alertPulse 1.4s var(--al-ease) 3; }
+@keyframes alertCardIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes alertPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 202, 40, 0.35); }
+  70% { box-shadow: 0 0 0 9px rgba(255, 202, 40, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 202, 40, 0); }
+}
+
+/* Верхняя строка карточки: иконка направления + цель + статус-пилюля */
+.alert-card-top { display: flex; align-items: center; gap: 8px; }
+.alert-dir {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.alert-dir svg { width: 14px; height: 14px; }
+.alert-dir.above { background: rgba(38, 166, 154, 0.15); color: var(--al-success); }
+.alert-dir.below { background: rgba(239, 83, 80, 0.15); color: var(--al-danger); }
+.alert-target { font-size: 14px; font-weight: 700; color: var(--al-text); white-space: nowrap; }
+.alert-cond { color: var(--al-text-muted); font-weight: 600; margin-right: 1px; }
+
+/* Статус-пилюля с точкой (замена эмодзи 🟢/✅/⛔) */
+.alert-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.alert-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.alert-pill--active { color: var(--al-success); background: rgba(38, 166, 154, 0.12); }
+.alert-pill--triggered { color: var(--al-warn); background: rgba(255, 202, 40, 0.12); }
+.alert-pill--cancelled { color: var(--al-danger); background: rgba(239, 83, 80, 0.12); }
+
+/* Мета-строка: «от 300,00 · создан 17.10 10:00» / «сработал по 290,20 · в 12:05» */
+.alert-meta { margin-top: 6px; font-size: 11.5px; color: var(--al-text-muted); }
+
+/* Прогресс до цели: полоса — оставшееся расстояние в % от текущей цены */
+.alert-progress { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.alert-progress-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.alert-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--al-accent);
+  transition: width 0.4s var(--al-ease);
+}
+.alert-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--al-accent);
+  white-space: nowrap;
+}
+/* Условие уже выполнено (цена пересекла цель, сервер ещё не пометил алерт
+   исполненным): полоса и подпись — в предупреждающем цвете */
+.alert-progress--reached .alert-progress-fill { background: var(--al-warn); }
+.alert-progress--reached .alert-progress-label { color: var(--al-warn); }
+
+/* Действия карточки: иконки изменить/отменить/удалить */
+.alert-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.alert-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--al-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--al-surface-3);
+  color: var(--al-text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s var(--al-ease);
+}
+.alert-icon-btn svg { width: 14px; height: 14px; }
+.alert-icon-btn:hover { background: var(--al-surface-3); color: var(--al-text); }
+.alert-icon-btn--danger:hover {
+  background: rgba(239, 83, 80, 0.15);
+  border-color: rgba(239, 83, 80, 0.4);
+  color: var(--al-danger);
+}
+.alert-icon-btn:focus-visible { outline: 2px solid var(--al-accent); outline-offset: 1px; }
+
+/* Пустое состояние: иконка bell-off + подсказка + CTA «Создать алерт» */
+.alert-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 12px;
+  text-align: center;
+  color: var(--al-text-muted);
+}
+.alert-empty-icon svg { width: 30px; height: 30px; opacity: 0.45; }
+.alert-empty-title { font-size: 13px; font-weight: 600; color: var(--al-text); }
+.alert-empty-hint { font-size: 12px; line-height: 1.45; max-width: 300px; }
+.alert-empty-cta {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--al-accent);
+  color: #fff;
+  border: none;
+  padding: 7px 14px;
+  border-radius: var(--al-radius-sm);
   font-size: 12px;
-  border-bottom: 1px solid #363a45;
-  position: sticky;
-  top: 0;
-  background: #1e222d;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
 }
-.alerts-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #2a2f3d;
-  color: #d1d4dc;
-  vertical-align: middle;
-  font-size: 13px;
+.alert-empty-cta:hover { background: var(--al-accent-hover); }
+.alert-empty-cta:focus-visible { outline: 2px solid var(--al-accent-hover); outline-offset: 1px; }
+
+/* Уважаем настройку «меньше анимаций» */
+@media (prefers-reduced-motion: reduce) {
+  .alert-card--enter,
+  .alert-card--just-triggered,
+  .toast { animation: none !important; }
+  .alert-card,
+  .alert-icon-btn,
+  .alert-progress-fill { transition: none !important; }
 }
-.alert-row.status-active td { background: rgba(38, 166, 154, 0.05); }
-.alert-row.status-triggered td { opacity: 0.8; }
-.alert-row.status-cancelled td { opacity: 0.55; }
-.alert-cell-symbol { font-weight: 600; white-space: nowrap; }
-.alert-cell-price { font-weight: 600; white-space: nowrap; }
-.alert-cell-time { color: #787b86; white-space: nowrap; }
-.alert-cell-action { text-align: right; white-space: nowrap; }
-.alerts-tab-hint { color: #787b86; font-size: 10px; font-weight: 400; }
 
 #news-list {
   flex: 1;
@@ -1103,27 +1299,175 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .modal-btn-delete { background: rgba(239, 83, 80, 0.2); color: #ef5350; margin-top: 8px; width: 100%; }
 .modal-btn-delete:hover { background: rgba(239, 83, 80, 0.3); }
 
-.alerts-list-container { width: 450px; max-height: 400px; overflow-y: auto; }
-.alert-list-item {
-  display: flex; justify-content: space-between; align-items: center;
-  background: #252a36; padding: 10px 12px; border-radius: 6px;
-  margin-bottom: 8px; border-left: 3px solid #363a45;
+/* === Модалка-конструктор алерта (редизайн вместо select + input) === */
+
+.modal-box--alert { width: 360px; padding: 20px; }
+.modal-title--alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--al-text);
+  margin-bottom: 12px;
 }
-.alert-list-item.status-active { border-left-color: #26a69a; }
-.alert-list-item.status-triggered { border-left-color: #ffca28; opacity: 0.7; }
-.alert-list-item.status-cancelled { border-left-color: #ef5350; opacity: 0.5; }
-.alert-item-info { display: flex; flex-direction: column; gap: 4px; }
-.alert-item-condition { font-size: 14px; font-weight: 600; color: #d1d4dc; }
-.alert-status { font-size: 14px; font-weight: 600; }
-.status-active { color: #26a69a; }
-.status-triggered { color: #ffca28; }
-.status-cancelled { color: #ef5350; }
-.mini-btn {
-  background: rgba(239, 83, 80, 0.2); color: #ef5350;
-  border: 1px solid rgba(239, 83, 80, 0.3); padding: 7px 16px;
-  border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+.modal-title--alert .btn-icon { color: var(--al-warn); }
+.alert-symbol-badge {
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  color: var(--al-accent);
+  padding: 2px 10px;
+  border-radius: var(--al-radius-sm);
+  font-size: 13px;
+  font-weight: 700;
 }
-.mini-btn:hover { background: rgba(239, 83, 80, 0.4); color: #fff; }
+.modal-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: var(--al-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: var(--al-radius-sm);
+  cursor: pointer;
+  transition: all 0.15s var(--al-ease);
+}
+.modal-close:hover { background: var(--al-surface-2); color: var(--al-text); }
+
+.alert-current-line { font-size: 12.5px; color: var(--al-text-muted); margin-bottom: 12px; }
+.alert-current-line b { color: var(--al-text); font-weight: 600; }
+
+/* Segmented-переключатель условия: активный сегмент подсвечивается
+   цветом направления (зелёный выше / красный ниже) */
+.alert-seg {
+  display: flex;
+  gap: 4px;
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  border-radius: var(--al-radius-sm);
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.alert-seg-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--al-text-muted);
+  padding: 7px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s var(--al-ease);
+}
+.alert-seg-btn svg { width: 13px; height: 13px; }
+.alert-seg-btn:hover { color: var(--al-text); }
+.alert-seg-btn.active[data-condition='above'] { background: rgba(38, 166, 154, 0.18); color: var(--al-success); }
+.alert-seg-btn.active[data-condition='below'] { background: rgba(239, 83, 80, 0.18); color: var(--al-danger); }
+.alert-seg-btn:focus-visible { outline: 2px solid var(--al-accent); outline-offset: 1px; }
+
+.alert-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--al-text-muted);
+  margin-bottom: 6px;
+}
+.modal-box--alert .modal-input {
+  margin-bottom: 8px;
+  font-size: 14px;
+  padding: 9px 10px;
+}
+
+/* Чипы быстрых значений цели: ±1% / ±5% / «Текущая» */
+.alert-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.alert-chip {
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  color: var(--al-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s var(--al-ease);
+}
+.alert-chip:hover {
+  color: var(--al-accent);
+  border-color: var(--al-accent);
+  background: rgba(41, 98, 255, 0.1);
+}
+.alert-chip:focus-visible { outline: 2px solid var(--al-accent); outline-offset: 1px; }
+
+/* Живая подсказка и inline-ошибка валидации */
+.alert-hint { font-size: 12px; color: var(--al-text-muted); min-height: 16px; margin-bottom: 6px; }
+/* Цель уже достигнута при текущей цене (нельзя сохранить) — предупреждение
+   тем же цветом, что и статус «Исполнено», чтобы связь читалась сразу */
+.alert-hint--warn { color: var(--al-warn); }
+.alert-error {
+  font-size: 12px;
+  color: var(--al-danger);
+  background: rgba(239, 83, 80, 0.1);
+  border: 1px solid rgba(239, 83, 80, 0.3);
+  border-radius: var(--al-radius-sm);
+  padding: 7px 10px;
+  margin-bottom: 8px;
+}
+.modal-box--alert .modal-btn-delete { width: auto; margin-top: 0; }
+
+/* === Тосты (неблокирующие уведомления вместо window.alert) ===
+   Стек создаётся лениво из ui.js (showToast) в правом верхнем углу;
+   z-index выше модалок (2000), чтобы тосты ошибок были видны поверх. */
+#toast-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--al-surface-2);
+  border: 1px solid var(--al-surface-3);
+  border-left: 3px solid var(--al-accent);
+  color: var(--al-text);
+  border-radius: var(--al-radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: toastIn 0.25s var(--al-ease) both;
+}
+.toast--success { border-left-color: var(--al-success); }
+.toast--error { border-left-color: var(--al-danger); }
+.toast--warn { border-left-color: var(--al-warn); }
+.toast__msg { flex: 1; line-height: 1.4; }
+.toast__close {
+  background: transparent;
+  border: none;
+  color: var(--al-text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.toast__close:hover { color: var(--al-text); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* ==========================================================================
    14. 📂 ЗАГОЛОВКИ РАЗДЕЛОВ (СЕКЦИЙ)

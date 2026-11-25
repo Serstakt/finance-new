@@ -166,6 +166,19 @@ class AlertCreate(BaseModel):
     price_at_creation: Optional[float] = None
 
 
+class AlertUpdate(BaseModel):
+    """Изменение существующего активного алерта (PUT /api/alerts/{id}).
+
+    Поля необязательны: что не передано — остаётся прежним. Символ не
+    меняется (алерт принадлежит тикеру, с карточки которого открыт).
+    """
+    condition: Optional[str] = None   # above | below
+    target: Optional[float] = None
+    # Текущая цена с клиента — только для проверки, что новая цель ещё не
+    # достигнута (в БД это поле не перезаписывается).
+    price_at_creation: Optional[float] = None
+
+
 class AlertMigrate(BaseModel):
     """Перенос старых алертов из localStorage ('price_alerts') в БД.
 
