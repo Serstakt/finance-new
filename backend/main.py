@@ -591,6 +591,25 @@ async def move_watchlist_ticker(payload: schemas.WatchlistMove):
     return result
 
 
+@app.post("/api/watchlist/move-block")
+async def move_watchlist_block(payload: schemas.WatchlistMoveBlock):
+    """Перемещает раздел вместе с его тикерами (drag&drop заголовка раздела).
+
+    В плоском списке раздел — это заголовок и все строки до следующего
+    заголовка. Блок переставляется одним куском, иначе тикеры остались бы на
+    старом месте и привязались к предыдущему разделу.
+    """
+    try:
+        result = watchlist_service.move_block(
+            payload.list_id, payload.symbols, payload.target_index
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Элементы блока не найдены в списке")
+    return result
+
+
 @app.post("/api/watchlist/order")
 async def set_watchlist_order(payload: schemas.WatchlistOrder):
     """Сохраняет новый порядок/состав списка (разделы, импорт, миграция).

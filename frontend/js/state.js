@@ -581,6 +581,43 @@ window.moveOrderToDb = async function(listId, symbol, targetIndex) {
   }
 };
 
+// Точечное сохранение drag&drop раздела: раздел — это заголовок вместе с его
+// тикерами (строки до следующего заголовка), поэтому блок уезжает и в БД
+// тоже блоком. Как и moveOrderToDb, отправляем только сам блок и его новую
+// позицию (target_index — позиция в списке БЕЗ блока): сервер вырезает строки
+// из актуального порядка и вставляет их обратно одним куском, поэтому
+// параллельные правки других устройств не затираются.
+window.moveBlockOrderToDb = async function(listId, symbols, targetIndex) {
+  if (!listId || listId.startsWith('fav_')) return false;
+  if (!Array.isArray(symbols) || symbols.length === 0) return false;
+  await window.waitForListNameSaved(listId);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/watchlist/move-block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ list_id: listId, symbols: symbols, target_index: targetIndex })
+    }, 15000);
+    if (res.status === 404) {
+      // блока нет в списке на сервере — перечитаем состав из БД, чтобы UI
+      // не показывал порядок, которого там уже нет
+      if (typeof syncListWithDb === 'function') await syncListWithDb(listId);
+      return false;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const list = appState.lists[listId];
+    if (list && Array.isArray(data.symbols)) {
+      list.tickers = data.symbols; // сервер — источник истины по порядку
+    }
+    return true;
+  } catch (e) {
+    if (typeof log === 'function') log('Ошибка сохранения порядка в БД: ' + e.message, 'error');
+    if (typeof syncListWithDb === 'function') await syncListWithDb(listId);
+    if (typeof render === 'function') render();
+    return false;
+  }
+};
+
 // Ставит/снимает цветной флажок элемента в БД (watchlist_items.flag_color).
 // Теперь избранное живёт на сервере и не теряется при смене браузера.
 window.setFlagInDb = async function(listId, symbol, color) {
