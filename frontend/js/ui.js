@@ -998,6 +998,96 @@ if (window.canRenderWithoutPrices(currentList)) {
 
 window.dbAlerts = []; // актуальный снимок алертов из БД (для колокольчиков и модалок)
 
+// id алерта, который редактируется в модалке (null — режим создания).
+// Заполняется в openAlertModal(symbol, alertId) по id с карточки; по нему
+// saveAlert выбирает PUT вместо POST, а deleteAlert удаляет именно эту запись.
+window.editingAlertId = null;
+
+// Емкость на тикер — дублирует backend/services/alert_service.py
+// (MAX_ALERTS_PER_SYMBOL); используется только в подписи группы «Активные».
+const ALERTS_MAX_PER_SYMBOL = 10;
+
+// === ИКОНКИ АЛЕРТОВ (inline SVG, пути lucide — https://lucide.dev) ===
+// Строки SVG вставляются через innerHTML отдельного <span>: иконки
+// статичны и не содержат пользовательских данных. Весь текст карточек
+// по-прежнему через textContent (безопасность + совместимость с
+// мини-DOM интеграционного теста alerts_tab_test.js).
+const ALERT_ICON_SVG = {
+  up: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>', // arrow-up-right
+  down: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10"/><path d="M17 7v10H7"/></svg>', // arrow-down-right
+  bell: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+  bellOff: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>', // bell-off
+  pencil: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+  trash: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>', // trash-2
+  x: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  plus: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+};
+
+// <span> с inline-иконкой lucide (aria-hidden: для скринридеров есть текст).
+window.makeAlertIcon = function(name, cls) {
+  const span = document.createElement('span');
+  span.className = cls || 'alert-icon';
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = ALERT_ICON_SVG[name] || '';
+  return span;
+};
+
+// Кнопка-иконка карточки алерта (изменить / отменить / удалить).
+const makeAlertIconBtn = function(icon, title, onClick, extraClass) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'alert-icon-btn' + (extraClass ? ' ' + extraClass : '');
+  btn.title = title;
+  btn.setAttribute('aria-label', title);
+  btn.appendChild(makeAlertIcon(icon));
+  btn.addEventListener('click', onClick);
+  return btn;
+};
+
+// === ТОСТЫ (неблокирующая замена window.alert) ===
+// Стек в правом верхнем углу; типы: success / error / warn / info.
+// В мини-DOM теста document.body без appendChild — фолбэк в debug-лог.
+window.showToast = function(message, type = 'info', timeoutMs = 4000) {
+  let stack = document.getElementById('toast-stack');
+  if (!stack) {
+    if (!document.body || typeof document.body.appendChild !== 'function') {
+      log(`[toast:${type}] ${message}`, type === 'error' ? 'error' : (type === 'success' ? 'success' : 'info'));
+      return;
+    }
+    stack = document.createElement('div');
+    stack.id = 'toast-stack';
+    stack.setAttribute('role', 'status');
+    document.body.appendChild(stack);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast--${type}`;
+  const msg = document.createElement('span');
+  msg.className = 'toast__msg';
+  msg.textContent = message;
+  toast.appendChild(msg);
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'toast__close';
+  closeBtn.setAttribute('aria-label', 'Закрыть уведомление');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => toast.remove());
+  toast.appendChild(closeBtn);
+  stack.appendChild(toast);
+  setTimeout(() => { try { toast.remove(); } catch (e) { /* уже снят */ } }, timeoutMs);
+};
+
+// Текущая цена тикера из отрисованной строки watchlist (число или NaN).
+// Единая точка парсинга: используется модалкой (price_at_creation, чипы,
+// подсказка расстояния) и прогресс-баром карточек.
+window.getCurrentPriceForSymbol = function(symbol) {
+  if (!symbol) return NaN;
+  const safeId = String(symbol).replace(/[^a-zA-Z0-9]/g, '_');
+  const priceEl = document.getElementById(`price-${safeId}`);
+  if (!priceEl) return NaN;
+  // formatPriceAuto пишет «1 234,56» (неразрывные пробелы + запятая)
+  return parseFloat(String(priceEl.textContent).replace(/\s|'/g, '').replace(',', '.'));
+};
+
 // Загружает все алерты из БД в window.dbAlerts и перерисовывает колокольчики.
 window.loadAlertsFromDb = async function() {
   try {
@@ -1073,26 +1163,189 @@ window.updateBellIconStatus = function(symbol, status) {
   refreshAllBells();
 };
 
-window.openAlertModal = async function(symbol) {
-  currentAlertSymbol = symbol;
-  document.getElementById('alert-symbol-name').textContent = symbol;
-  document.getElementById('alert-modal').classList.add('active');
+// === МОДАЛКА-КОНСТРУКТОР АЛЕРТА ===
+// Управление сегментированным переключателем (Выше/Ниже), чипами быстрых
+// значений цели и живой подсказкой расстояния. Один раз навешиваем
+// обработчики при первом открытии (wireAlertModalControls), горячие
+// клавиши Enter/Esc — один документный слушатель (initAlertModalShortcuts).
 
-  // Подтягиваем свежие данные из БД, затем показываем активный алерт (если есть)
+window.wireAlertModalControls = function() {
+  if (window._alertModalControlsWired) return;
+  window._alertModalControlsWired = true;
+  const seg = document.getElementById('alert-condition-seg');
+  if (seg) {
+    seg.querySelectorAll('.alert-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => setAlertCondition(btn.getAttribute('data-condition')));
+    });
+  }
+  const chips = document.getElementById('alert-target-chips');
+  if (chips) {
+    chips.querySelectorAll('.alert-chip').forEach(chip => {
+      chip.addEventListener('click', () => setAlertTargetFromChip(parseFloat(chip.getAttribute('data-pct'))));
+    });
+  }
+  const input = document.getElementById('alert-target-price');
+  if (input) input.addEventListener('input', updateAlertDistanceHint);
+};
+
+// Горячие клавиши модалки: Enter в поле цены — сохранить, Esc — закрыть.
+window.initAlertModalShortcuts = function() {
+  if (window._alertModalShortcutsWired) return;
+  window._alertModalShortcutsWired = true;
+  document.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('alert-modal');
+    if (!modal || !modal.classList.contains('active')) return;
+    if (e.key === 'Escape') {
+      closeAlertModal();
+    } else if (e.key === 'Enter') {
+      const input = document.getElementById('alert-target-price');
+      if (document.activeElement && input && document.activeElement === input) {
+        saveAlert();
+      }
+    }
+  });
+};
+
+window.setAlertCondition = function(cond) {
+  const input = document.getElementById('alert-condition');
+  if (input) input.value = cond === 'below' ? 'below' : 'above';
+  const seg = document.getElementById('alert-condition-seg');
+  if (seg) {
+    seg.querySelectorAll('.alert-seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-condition') === input.value);
+    });
+  }
+  updateAlertDistanceHint();
+};
+
+// Чип быстрого значения цели: ±N% от текущей цены, «Текущая» — без сдвига.
+window.setAlertTargetFromChip = function(pct) {
+  const cur = getCurrentPriceForSymbol(currentAlertSymbol);
+  if (!Number.isFinite(cur) || cur <= 0) {
+    showAlertError('Текущая цена ещё не загрузилась — введите целевую цену вручную.');
+    return;
+  }
+  const input = document.getElementById('alert-target-price');
+  if (!input) return;
+  const value = pct === 0 ? cur : cur * (1 + pct / 100);
+  input.value = Number(value.toPrecision(8)); // 8 значащих: хватает и для SHIB, и для индексов
+  clearAlertError();
+  updateAlertDistanceHint();
+};
+
+// Проверка направления цели относительно текущей цены. Алерт «Выше» с целью
+// ниже текущей (и «Ниже» с целью выше) сработал бы сразу после создания —
+// такой смысл у него отсутствует, поэтому сохранение блокируется. Условия
+// строгие: равенство тоже недопустимо, т.к. сервер сравнивает current >= target.
+// Если текущая цена неизвестна (null/0), проверять нечего — пропускаем.
+window.validateAlertDirection = function(condition, target, refPrice) {
+  if (!Number.isFinite(refPrice) || refPrice <= 0) return { ok: true, message: '' };
+  if (condition === 'above' && target <= refPrice) {
+    return {
+      ok: false,
+      message: `Цель ${formatPriceAuto(target)} не выше текущей цены ${formatPriceAuto(refPrice)} — для «Выше или равно» укажите цену больше ${formatPriceAuto(refPrice)}.`
+    };
+  }
+  if (condition === 'below' && target >= refPrice) {
+    return {
+      ok: false,
+      message: `Цель ${formatPriceAuto(target)} не ниже текущей цены ${formatPriceAuto(refPrice)} — для «Ниже или равно» укажите цену меньше ${formatPriceAuto(refPrice)}.`
+    };
+  }
+  return { ok: true, message: '' };
+};
+
+// Живая подсказка «до цели +8,3% · сработает при ≥ 325,50». Если цель уже
+// достигнута при текущей цене — вместо неё предупреждение тем же текстом,
+// который покажет saveAlert при попытке сохранить.
+window.updateAlertDistanceHint = function() {
+  const hint = document.getElementById('alert-distance-hint');
+  if (!hint) return;
+  const condInput = document.getElementById('alert-condition');
+  const cond = condInput && condInput.value === 'below' ? 'below' : 'above';
+  const target = parseFloat((document.getElementById('alert-target-price') || {}).value);
+  if (!Number.isFinite(target) || target <= 0) {
+    hint.textContent = '';
+    if (hint.classList) hint.classList.remove('alert-hint--warn');
+    return;
+  }
+  const cur = getCurrentPriceForSymbol(currentAlertSymbol);
+  const direction = validateAlertDirection(cond, target, cur);
+  if (!direction.ok) {
+    hint.textContent = direction.message;
+    if (hint.classList) hint.classList.add('alert-hint--warn');
+    return;
+  }
+  if (hint.classList) hint.classList.remove('alert-hint--warn');
+  const targetText = `сработает при ${cond === 'above' ? '≥' : '≤'} ${formatPriceAuto(target)}`;
+  if (!Number.isFinite(cur) || cur <= 0) { hint.textContent = targetText; return; }
+  const distPct = cond === 'above' ? (target - cur) / cur * 100 : (cur - target) / cur * 100;
+  const sign = distPct >= 0 ? '+' : '';
+  hint.textContent = `До цели ${sign}${formatNumber(distPct, 2)}% · ${targetText}`;
+};
+
+window.updateAlertCurrentPrice = function() {
+  const el = document.getElementById('alert-current-price');
+  if (!el) return;
+  const cur = getCurrentPriceForSymbol(currentAlertSymbol);
+  el.textContent = Number.isFinite(cur) && cur > 0 ? formatPriceAuto(cur) : '—';
+};
+
+// Inline-ошибка модалки (вместо блокирующего window.alert).
+window.showAlertError = function(message) {
+  const el = document.getElementById('alert-error');
+  if (!el) { showToast(message, 'error'); return; }
+  el.textContent = message;
+  el.style.display = 'block';
+};
+window.clearAlertError = function() {
+  const el = document.getElementById('alert-error');
+  if (el) { el.textContent = ''; el.style.display = 'none'; }
+};
+
+// Открывает модалку ценового уведомления.
+//   openAlertModal(symbol, alertId)  — редактирование существующего алерта:
+//       поля заполняются его значениями, «Сохранить» шлёт PUT /api/alerts/{id}
+//       и ОБНОВЛЯЕТ запись (раньше здесь всегда создавался новый алерт).
+//   openAlertModal(symbol)           — создание нового алерта (кнопка
+//       «+ Добавить», CTA пустого состояния).
+window.openAlertModal = async function(symbol, alertId) {
+  wireAlertModalControls();
+  initAlertModalShortcuts();
+  currentAlertSymbol = symbol;
+  const nameEl = document.getElementById('alert-symbol-name');
+  if (nameEl) nameEl.textContent = symbol;
+  clearAlertError();
+  const modal = document.getElementById('alert-modal');
+  if (modal) modal.classList.add('active');
+  updateAlertCurrentPrice();
+
+  // Подтягиваем свежие данные из БД, затем ищем редактируемый алерт: по
+  // точному id с карточки (у тикера может быть до 10 активных) либо
+  // показываем пустую форму для нового.
   await loadAlertsFromDb();
   if (currentAlertSymbol !== symbol) return; // модалку успели закрыть/переключить
-  const existingAlert = (window.dbAlerts || []).find(a => a.symbol === symbol && a.status === 'active');
+  const allForSymbol = (window.dbAlerts || []).filter(a => a.symbol === symbol);
+  const existingAlert = alertId != null
+    ? allForSymbol.find(a => a.id === alertId && a.status === 'active')
+    : null;
+
+  window.editingAlertId = existingAlert ? existingAlert.id : null;
+  setAlertModalMode(!!existingAlert);
 
   const deleteBtn = document.getElementById('alert-delete-btn');
+  const input = document.getElementById('alert-target-price');
   if (existingAlert) {
-    document.getElementById('alert-condition').value = existingAlert.condition;
-    document.getElementById('alert-target-price').value = existingAlert.target;
-    deleteBtn.style.display = 'block';
+    setAlertCondition(existingAlert.condition);
+    if (input) input.value = existingAlert.target;
+    if (deleteBtn) deleteBtn.style.display = '';
   } else {
-    document.getElementById('alert-condition').value = 'above';
-    document.getElementById('alert-target-price').value = '';
-    deleteBtn.style.display = 'none';
+    setAlertCondition('above');
+    if (input) input.value = '';
+    if (deleteBtn) deleteBtn.style.display = 'none';
   }
+  updateAlertDistanceHint();
+  if (input && typeof input.focus === 'function') input.focus();
 
   // Синхронизируем колонку «Алерты» с модалкой: список должен отражать
   // алерты именно того тикера, для которого она открыта (раньше при
@@ -1106,44 +1359,71 @@ window.openAlertModal = async function(symbol) {
   }
 };
 
-window.closeAlertModal = function() {
-  document.getElementById('alert-modal').classList.remove('active');
-  currentAlertSymbol = null;
+// Переключает подпись заголовка модалки: «Ценовое уведомление» (создание)
+// или «Изменить уведомление» (редактирование существующего алерта).
+window.setAlertModalMode = function(isEditing) {
+  const title = document.getElementById('alert-modal-title-text');
+  if (title) title.textContent = isEditing ? 'Изменить уведомление' : 'Ценовое уведомление';
+  const saveBtn = document.getElementById('alert-save-btn');
+  if (saveBtn) saveBtn.textContent = isEditing ? 'Сохранить' : 'Создать';
 };
 
-// Сохраняет алерт в БД через POST /api/alerts (бэкенд сам проверяет условия).
+window.closeAlertModal = function() {
+  const modal = document.getElementById('alert-modal');
+  if (modal) modal.classList.remove('active');
+  clearAlertError();
+  currentAlertSymbol = null;
+  window.editingAlertId = null;
+};
+
+// Сохраняет алерт в БД. Режим зависит от того, как открыта модалка:
+//   редактирование (editingAlertId задан) → PUT /api/alerts/{id} обновляет
+//       существующую запись: id, created_at и price_at_creation сохраняются,
+//       меняются только условие и цель;
+//   создание → POST /api/alerts.
 window.saveAlert = async function() {
   if (!currentAlertSymbol) return;
-  const condition = document.getElementById('alert-condition').value;
+  const condInput = document.getElementById('alert-condition');
+  const condition = condInput && condInput.value === 'below' ? 'below' : 'above';
   const target = parseFloat(document.getElementById('alert-target-price').value);
 
   if (isNaN(target) || target <= 0) {
-    window.alert('Пожалуйста, введите корректную целевую цену.');
+    showAlertError('Введите корректную целевую цену — положительное число.');
     return;
   }
+  // Цель должна лежать в сторону условия относительно текущей цены: иначе
+  // алерт сработал бы мгновенно и показывал «в работе · цель достигнута».
+  const refPrice = getCurrentPriceForSymbol(currentAlertSymbol);
+  const direction = validateAlertDirection(condition, target, refPrice);
+  if (!direction.ok) {
+    showAlertError(direction.message);
+    return;
+  }
+  clearAlertError();
 
+  const editId = window.editingAlertId;
+  const savedSymbol = currentAlertSymbol;
   try {
-    // Текущая цена из отрисованной строки тикера — сохраняем на сервере как
-    // «от какой цены ждали срабатывания» (поле price_at_creation)
-    const safeId = currentAlertSymbol.replace(/[^a-zA-Z0-9]/g, '_');
-    const priceEl = document.getElementById(`price-${safeId}`);
-    const currentPrice = priceEl ? parseFloat(String(priceEl.textContent).replace(/\s|'/g, '').replace(',', '.')) : NaN;
-    const res = await fetchWithTimeout(`${API_BASE}/api/alerts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: currentAlertSymbol,
-        condition: condition,
-        target: target,
-        price_at_creation: isNaN(currentPrice) ? null : currentPrice
-      })
-    }, 15000);
-    if (!res.ok) {
+    const res = await sendAlertRequest(editId, savedSymbol, condition, target);
+    // 404/409 при редактировании: алерт успел сработать или был отменён
+    // (например, фоновой проверкой), пока модалка была открыта. Сохранённый
+    // замысел пользователя не теряем — создаём новый алерт с теми же полями.
+    if (!res.ok && editId && (res.status === 404 || res.status === 409)) {
+      const retry = await sendAlertRequest(null, savedSymbol, condition, target);
+      if (!retry.ok) {
+        const err = await retry.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${retry.status}`);
+      }
+      log(`Алерт #${editId} уже завершён — создан новый для ${savedSymbol}`, 'info');
+      showToast(`Прежний алерт уже завершён — создан новый: ${condition === 'above' ? '≥' : '≤'} ${formatPriceAuto(target)}`, 'warn');
+    } else if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res.status}`);
+    } else {
+      const verb = editId ? 'обновлён' : 'создан';
+      log(`Алерт ${verb} в БД для ${savedSymbol}: ${condition} ${target}`, 'success');
+      showToast(`Алерт ${verb}: ${condition === 'above' ? '≥' : '≤'} ${formatPriceAuto(target)}`, 'success');
     }
-    const savedSymbol = currentAlertSymbol;
-    log(`Алерт сохранён в БД для ${savedSymbol}: ${condition} ${target}`, 'success');
     closeAlertModal();
     await loadAlertsFromDb(); // мгновенно обновляем колокольчик по данным из БД
     // Перерисовываем колонку «Алерты» под ЭТОТ тикер. Важно:
@@ -1155,29 +1435,52 @@ window.saveAlert = async function() {
     }
   } catch (e) {
     log(`Ошибка сохранения алерта: ${e.message}`, 'error');
-    window.alert('Не удалось сохранить алерт: ' + e.message);
+    showToast('Не удалось сохранить алерт: ' + e.message, 'error');
   }
 };
 
-// Удаляет активный алерт символа из БД (DELETE /api/alerts/{id}).
+// Один сетевой вызов сохранения: PUT при редактировании (editId — id записи)
+// или POST при создании. Вынесено из saveAlert, чтобы повторное создание
+// после 404/409 не дублировало сборку тела запроса.
+const sendAlertRequest = async function(editId, symbol, condition, target) {
+  const headers = { 'Content-Type': 'application/json' };
+  // Текущая цена строки тикера: при создании сохраняется как «от какой цены
+  // ждали» (price_at_creation); при изменении сервер по ней же проверяет,
+  // что новая цель не оказалась уже достигнутой.
+  const currentPrice = getCurrentPriceForSymbol(symbol);
+  const refPrice = Number.isFinite(currentPrice) ? currentPrice : null;
+  if (editId) {
+    return fetchWithTimeout(`${API_BASE}/api/alerts/${editId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ condition, target, price_at_creation: refPrice })
+    }, 15000);
+  }
+  return fetchWithTimeout(`${API_BASE}/api/alerts`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      symbol,
+      condition,
+      target,
+      price_at_creation: refPrice
+    })
+  }, 15000);
+};
+
+// Удаляет активный алерт символа из БД (кнопка «Удалить» модалки).
+// При редактировании удаляем именно открытую запись (editingAlertId), а не
+// «первый активный» — у тикера их может быть несколько.
 window.deleteAlert = async function() {
   if (!currentAlertSymbol) return;
-  const active = (window.dbAlerts || []).find(a => a.symbol === currentAlertSymbol && a.status === 'active');
-  if (active) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/alerts/${active.id}`, { method: 'DELETE' }, 15000);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      log(`Алерт для ${currentAlertSymbol} удален из БД`, 'info');
-    } catch (e) {
-      log(`Ошибка удаления алерта: ${e.message}`, 'error');
-      window.alert('Не удалось удалить алерт: ' + e.message);
-      return;
-    }
-  }
+  const active = window.editingAlertId
+    ? { id: window.editingAlertId }
+    : (window.dbAlerts || []).find(a => a.symbol === currentAlertSymbol && a.status === 'active');
   const deletedSymbol = currentAlertSymbol;
   closeAlertModal();
-  await loadAlertsFromDb();
-  renderAlertsList(deletedSymbol);
+  if (active) {
+    await deleteAlertById(active.id, deletedSymbol);
+  }
 };
 
 window.openAlertsListModal = async function() {
@@ -1186,7 +1489,7 @@ window.openAlertsListModal = async function() {
   // просто перерисовываем список под текущий тикер.
   const symbol = getCurrentList().activeSymbol;
   if (!symbol || symbol.startsWith('SECTION:')) {
-    window.alert('Сначала выберите тикер в списке!');
+    showToast('Сначала выберите тикер в списке', 'info');
     return;
   }
   renderAlertsTab(symbol);
@@ -1198,15 +1501,15 @@ window.openAlertsListModal = async function() {
 window.openAddAlertForActiveSymbol = async function() {
   const symbol = getCurrentList().activeSymbol;
   if (!symbol || symbol.startsWith('SECTION:')) {
-    window.alert('Сначала выберите тикер в списке!');
+    showToast('Сначала выберите тикер в списке', 'info');
     return;
   }
   await openAlertModal(symbol);
 };
 
-// Рендер правой колонки «Алерты» (видима всегда): ТАБЛИЦА алертов выбранного
-// тикера (строки: Тикер, Цена, Статус, Время; у активных справа кнопка
-// «Отменить»). Без выбранного тикера показываем пустое состояние. При пустом
+// Рендер правой колонки «Алерты» (видима всегда): КАРТОЧКИ алертов
+// выбранного тикера с прогрессом до цели и группами «Активные»/«История».
+// Без выбранного тикера показываем пустое состояние. При пустом
 // кеше алертов тянем свежие данные из БД (для пустого тикера запрос не нужен).
 window.renderAlertsTab = async function(symbol) {
   const container = document.getElementById('alerts-list');
@@ -1227,33 +1530,70 @@ window.renderAlertsTab = async function(symbol) {
   renderAlertsList(symbol);
 };
 
+// Отслеживание анимаций карточек: слайд-ин только для впервые показанных
+// алертов, pulse — только при переходе в «Исполнено» (иначе каждая
+// перерисовка цен проигрывала бы анимации заново).
+const _seenAlertIds = new Set();
+const _prevAlertStatus = new Map();
+
 window.renderAlertsList = function(symbol) {
   const alerts = window.dbAlerts || [];
-  // Только алерты выбранного тикера — таблица строками (столбцы: Тикер,
-  // Цена, Статус, Время и дата, справа кнопка «Отменить» у активных).
+  // Только алерты выбранного тикера — карточки: иконка направления,
+  // цель, статус-пилюля, мета-строка и прогресс до цели.
   const sym = (!symbol || String(symbol).startsWith('SECTION:')) ? '' : symbol;
   const allAlerts = alerts.filter(a => a.symbol === sym);
   const container = document.getElementById('alerts-list');
   if (!container) return;
   container.innerHTML = '';
 
-  // Заголовок с тикером рисуем только когда тикер выбран
-  if (sym) {
-    const header = document.createElement('div');
-    header.className = 'alerts-tab-header';
-    header.innerHTML = `📋 Алерты <span style="color: #2962ff;">${escapeHtml(symbol)}</span>`;
-    container.appendChild(header);
+  if (allAlerts.length === 0) {
+    const listWrap = document.createElement('div');
+    listWrap.className = 'alerts-tab-content';
+    container.appendChild(listWrap);
+    // Пустые состояния: без выбранного тикера — подсказка; с тикером —
+    // иконка + CTA «Создать алерт».
+    const empty = document.createElement('div');
+    empty.className = 'alert-empty';
+    empty.appendChild(makeAlertIcon('bellOff', 'alert-icon alert-empty-icon'));
+    const title = document.createElement('div');
+    title.className = 'alert-empty-title';
+    title.textContent = sym ? 'Нет алертов' : 'Выберите тикер для просмотра алертов';
+    empty.appendChild(title);
+    if (sym) {
+      const hint = document.createElement('div');
+      hint.className = 'alert-empty-hint';
+      hint.textContent = 'Установите ценовую цель — сервер проверяет её каждые 60 секунд, даже при закрытой вкладке';
+      empty.appendChild(hint);
+      const cta = document.createElement('button');
+      cta.type = 'button';
+      cta.className = 'alert-empty-cta';
+      cta.appendChild(makeAlertIcon('plus'));
+      const ctaText = document.createElement('span');
+      ctaText.textContent = 'Создать алерт';
+      cta.appendChild(ctaText);
+      cta.addEventListener('click', () => openAlertModal(sym));
+      empty.appendChild(cta);
+    }
+    listWrap.appendChild(empty);
+    return;
   }
+
+  // Шапка колонки (над карточками): колокол, тикер, счётчик алертов
+  const header = document.createElement('div');
+  header.className = 'alerts-col-header';
+  header.appendChild(makeAlertIcon('bell'));
+  const symSpan = document.createElement('span');
+  symSpan.textContent = symbol;
+  header.appendChild(symSpan);
+  const badge = document.createElement('span');
+  badge.className = 'alerts-col-badge';
+  badge.textContent = String(allAlerts.length);
+  header.appendChild(badge);
+  container.appendChild(header);
 
   const listWrap = document.createElement('div');
   listWrap.className = 'alerts-tab-content';
   container.appendChild(listWrap);
-
-  if (allAlerts.length === 0) {
-    const emptyText = sym ? 'Нет алертов' : 'Выберите тикер для просмотра алертов';
-    listWrap.innerHTML = `<div style="text-align:center; color:#787b86; padding:20px;">${emptyText}</div>`;
-    return;
-  }
 
   const statusOrder = { 'active': 1, 'triggered': 2, 'cancelled': 3 };
   allAlerts.sort((a, b) => {
@@ -1263,74 +1603,138 @@ window.renderAlertsList = function(symbol) {
     return (b.id || 0) - (a.id || 0);
   });
 
-  // Компактный формат времени (дд.мм чч:мм, без года) — колонка узкая
+  // Компактный формат времени (дд.мм чч:мм, без года)
   const fmtTime = (iso) => {
     if (!iso) return '';
     try { return new Date(iso + 'Z').toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   };
 
-  // Таблица: Тикер | Цена | Статус | Время и дата | (кнопка «Отменить»).
-  // Разметку строим через createElement/appendChild, а текст ячеек — через
-  // textContent: так она одинаково работает и в реальном DOM браузера, и в
-  // тестовом мини-DOM (без парсинга innerHTML). Обработчик кнопки вешается
-  // через addEventListener вместо inline onclick.
-  const table = document.createElement('table');
-  table.className = 'alerts-table';
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['Тикер', 'Цена', 'Статус', 'Время и дата', ''].forEach((title) => {
-    const th = document.createElement('th');
-    th.textContent = title;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  table.appendChild(tbody);
-  listWrap.appendChild(table);
-
-  const makeCell = (cls, text) => {
-    const td = document.createElement('td');
-    if (cls) td.className = cls;
-    td.textContent = text == null ? '' : String(text);
-    return td;
+  // Группировка: активные отдельно, история (исполнено/отменено) ниже.
+  const activeAlerts = allAlerts.filter(a => a.status === 'active');
+  const historyAlerts = allAlerts.filter(a => a.status !== 'active');
+  const makeGroupLabel = (text) => {
+    const label = document.createElement('div');
+    label.className = 'alert-group-label';
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    return label;
   };
+  if (activeAlerts.length > 0) {
+    listWrap.appendChild(makeGroupLabel(`Активные · ${activeAlerts.length} из ${ALERTS_MAX_PER_SYMBOL}`));
+  }
+  if (historyAlerts.length > 0) {
+    listWrap.appendChild(makeGroupLabel('История'));
+  }
 
+  // Разметка строится через createElement/appendChild, текст — через
+  // textContent (иконки — статичные SVG без пользовательских данных):
+  // одинаково работает в реальном DOM и в тестовом мини-DOM, безопасно
+  // по XSS. Обработчики — addEventListener вместо inline onclick.
   allAlerts.forEach((alertData) => {
     const status = alertData.status;
-    let statusText = '', statusClass = '';
-
+    let statusText = '', pillClass = '';
     if (status === 'active') {
-      statusText = '🟢 В работе'; statusClass = 'status-active';
+      statusText = 'В работе'; pillClass = 'active';
     } else if (status === 'triggered') {
-      statusText = '✅ Исполнено'; statusClass = 'status-triggered';
+      statusText = 'Исполнено'; pillClass = 'triggered';
     } else {
-      statusText = '⛔ Отменено'; statusClass = 'status-cancelled';
+      statusText = 'Отменено'; pillClass = 'cancelled';
     }
+    const cond = alertData.condition === 'below' ? 'below' : 'above';
 
-    const conditionText = alertData.condition === 'above' ? '≥' : '≤';
-    const created = fmtTime(alertData.created_at);
-    const triggeredInfo = status === 'triggered' && alertData.triggered_price != null
-      ? ` · по цене ${alertData.triggered_price}` : '';
-    const tr = document.createElement('tr');
-    tr.className = `alert-row ${statusClass}`;
-    tr.appendChild(makeCell('alert-cell-symbol', alertData.symbol));
-    tr.appendChild(makeCell('alert-cell-price', `${conditionText} ${alertData.target}`));
-    tr.appendChild(makeCell(`alert-status ${statusClass}`, statusText + triggeredInfo));
-    tr.appendChild(makeCell('alert-cell-time', created));
+    const card = document.createElement('div');
+    card.className = `alert-card status-${pillClass}`;
 
-    const actionTd = document.createElement('td');
-    actionTd.className = 'alert-cell-action';
+    // Верхняя строка: направление, цель, статус-пилюля
+    const top = document.createElement('div');
+    top.className = 'alert-card-top';
+    top.appendChild(makeAlertIcon(cond === 'above' ? 'up' : 'down', `alert-dir ${cond}`));
+    const target = document.createElement('span');
+    target.className = 'alert-target';
+    const condSpan = document.createElement('span');
+    condSpan.className = 'alert-cond';
+    condSpan.textContent = cond === 'above' ? '≥' : '≤';
+    target.appendChild(condSpan);
+    target.appendChild(document.createTextNode(' ' + formatPriceAuto(alertData.target)));
+    top.appendChild(target);
+    const pill = document.createElement('span');
+    pill.className = `alert-pill alert-pill--${pillClass}`;
+    pill.textContent = statusText;
+    top.appendChild(pill);
+    card.appendChild(top);
+
+    // Мета-строка: от какой цены / по какой сработал + время
+    const meta = document.createElement('div');
+    meta.className = 'alert-meta';
+    const metaParts = [];
+    if (status === 'triggered' && alertData.triggered_price != null) {
+      metaParts.push(`сработал по ${formatPriceAuto(alertData.triggered_price)}`);
+      const t = fmtTime(alertData.triggered_at || alertData.created_at);
+      if (t) metaParts.push(`в ${t}`);
+    } else {
+      if (alertData.price_at_creation != null) metaParts.push(`от ${formatPriceAuto(alertData.price_at_creation)}`);
+      const t = fmtTime(alertData.created_at);
+      if (t) metaParts.push(`создан ${t}`);
+    }
+    if (metaParts.length > 0) meta.textContent = metaParts.join(' · ');
+    card.appendChild(meta);
+
+    // Прогресс до цели (активные): сколько осталось до срабатывания.
+    // Полоса — оставшееся расстояние в % от текущей цены: тает по мере
+    // приближения к цели. Без доступной цены строка скрывается.
     if (status === 'active') {
-      const btn = document.createElement('button');
-      btn.className = 'mini-btn';
-      btn.textContent = 'Отменить';
-      btn.addEventListener('click', () => cancelAlert(alertData.id, alertData.symbol));
-      actionTd.appendChild(btn);
+      const cur = getCurrentPriceForSymbol(alertData.symbol);
+      if (Number.isFinite(cur) && cur > 0) {
+        const distPct = cond === 'above'
+          ? (alertData.target - cur) / cur * 100
+          : (cur - alertData.target) / cur * 100;
+        const reached = distPct <= 0;
+        const row = document.createElement('div');
+        // Условие уже выполнено (цена дошла до цели после создания, а сервер
+        // ещё не успел пометить алерт исполненным) — показываем предупреждение
+        // вместо синего прогресса, чтобы «в работе · цель достигнута» не путало.
+        row.className = reached ? 'alert-progress alert-progress--reached' : 'alert-progress';
+        const track = document.createElement('div');
+        track.className = 'alert-progress-track';
+        const fill = document.createElement('div');
+        fill.className = 'alert-progress-fill';
+        fill.style.width = (reached ? 100 : Math.min(Math.max(distPct, 2), 100)) + '%';
+        track.appendChild(fill);
+        const label = document.createElement('span');
+        label.className = 'alert-progress-label';
+        label.textContent = reached
+          ? 'цель достигнута · сработает при проверке'
+          : `до цели ${distPct >= 0 ? '+' : ''}${formatNumber(distPct, 2)}%`;
+        row.appendChild(track);
+        row.appendChild(label);
+        card.appendChild(row);
+      }
     }
-    tr.appendChild(actionTd);
-    tbody.appendChild(tr);
+
+    // Действия: активным — изменить/отменить; истории — удалить из списка
+    const actions = document.createElement('div');
+    actions.className = 'alert-actions';
+    if (status === 'active') {
+      actions.appendChild(makeAlertIconBtn('pencil', 'Изменить', () => openAlertModal(alertData.symbol, alertData.id)));
+      actions.appendChild(makeAlertIconBtn('x', 'Отменить алерт', () => cancelAlert(alertData.id, alertData.symbol), 'alert-icon-btn--danger'));
+    } else {
+      actions.appendChild(makeAlertIconBtn('trash', 'Удалить из истории', () => deleteAlertById(alertData.id, alertData.symbol), 'alert-icon-btn--danger'));
+    }
+    card.appendChild(actions);
+
+    // Анимации: slide-in — только впервые показанная карточка,
+    // pulse — только при фактическом срабатывании (смена статуса).
+    if (!_seenAlertIds.has(alertData.id)) card.classList.add('alert-card--enter');
+    const prevStatus = _prevAlertStatus.get(alertData.id);
+    if (status === 'triggered' && prevStatus && prevStatus !== 'triggered') {
+      card.classList.add('alert-card--just-triggered');
+    }
+    _seenAlertIds.add(alertData.id);
+    _prevAlertStatus.set(alertData.id, status);
+
+    listWrap.appendChild(card);
   });
 };
 
@@ -1340,13 +1744,34 @@ window.cancelAlert = async function(alertId, symbol) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/api/alerts/${alertId}/cancel`, { method: 'POST' }, 15000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    log(`Алерт #${alertId} для ${symbol} отменен (БД)`, 'info');
+    showToast(`Алерт для ${symbol} отменён`, 'info');
   } catch (e) {
-    log(`Ошибка отмены алерта: ${e.message}`, 'error');
+    showToast(`Не удалось отменить алерт: ${e.message}`, 'error');
     return;
   }
   await loadAlertsFromDb();
   renderAlertsList(symbol);
+};
+
+// Удаляет алерт по id (DELETE /api/alerts/{id}): используется и кнопкой
+// «Удалить» в модалке (активный алерт), и корзиной на карточках истории —
+// запись убирается из БД окончательно (в отличие от «Отменить», которое
+// оставляет её в истории).
+window.deleteAlertById = async function(alertId, symbol) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/api/alerts/${alertId}`, { method: 'DELETE' }, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast(`Алерт для ${symbol} удалён`, 'info');
+  } catch (e) {
+    showToast(`Не удалось удалить алерт: ${e.message}`, 'error');
+    return;
+  }
+  _seenAlertIds.delete(alertId); // повторное создание — анимация как у нового
+  _prevAlertStatus.delete(alertId);
+  await loadAlertsFromDb();
+  // renderAlertsTab, а не renderAlertsList: защита от гонки — если во время
+  // запроса пользователь выбрал другой тикер, устаревший список не рисуем
+  renderAlertsTab(symbol || (getCurrentList() || {}).activeSymbol || '');
 };
 
 // Синхронизация статуса алертов с БД после загрузки цен. Проверка условий
@@ -1364,7 +1789,8 @@ window.syncAlertsWithDb = async function() {
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("Финансовый терминал: Алерт!", { body: msg });
       } else {
-        window.alert(msg);
+        // Нет разрешения на Web Notifications — неблокирующий тост вместо window.alert
+        showToast(msg, 'warn', 8000);
       }
       log(`Алерт сработал (проверка бэкенда): ${msg}`, 'success');
     }

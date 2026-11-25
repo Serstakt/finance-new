@@ -129,6 +129,11 @@ makeEl('alert-symbol-name', 'span');
 makeEl('alert-condition', 'select');
 makeEl('alert-target-price', 'input');
 makeEl('alert-delete-btn', 'button');
+makeEl('alert-error', 'div');
+makeEl('alert-distance-hint', 'div');
+makeEl('alert-current-price', 'b');
+makeEl('alert-modal-title-text', 'span');
+makeEl('alert-save-btn', 'button');
 makeEl('debug-panel', 'div');
 makeEl('list-selector', 'select');
 makeEl('countdown', 'span');
@@ -177,6 +182,23 @@ async function mockFetch(url, opts = {}) {
     if (!row) return { ok: false, status: 404, json: async () => ({}) };
     row.status = 'cancelled';
     return json(row);
+  }
+  if (/^\/api\/alerts\/\d+$/.test(u) && method === 'PUT') {
+    const id = Number(/\/api\/alerts\/(\d+)$/.exec(u)[1]);
+    const p = JSON.parse(opts.body);
+    const row = dbRows.find(r => r.id === id);
+    if (!row) return { ok: false, status: 404, json: async () => ({ detail: 'Алерт не найден' }) };
+    if (row.status !== 'active') return { ok: false, status: 409, json: async () => ({ detail: 'Алерт уже исполнен или отменён' }) };
+    if (p.condition) row.condition = p.condition;
+    if (p.target != null) row.target = p.target;
+    return json(row);
+  }
+  if (/^\/api\/alerts\/\d+$/.test(u) && method === 'DELETE') {
+    const id = Number(/\/api\/alerts\/(\d+)$/.exec(u)[1]);
+    const i = dbRows.findIndex(r => r.id === id);
+    if (i < 0) return { ok: false, status: 404, json: async () => ({}) };
+    dbRows.splice(i, 1);
+    return json({ deleted: id });
   }
   if (u === '/api/alerts' && method === 'GET') return json({ alerts: dbRows.slice() });
   if (u === '/api/alerts/check' && method === 'POST') return json({ triggered: [] });
@@ -242,6 +264,19 @@ const contentText = () => {
   assert(contentText().includes('310') && contentText().includes('В работе'),
     'Список содержит новый активный алерт ≥ 310');
 
+  // --- Сценарий 1б: цель «не в ту сторону» — создание блокируется.
+  // Текущая цена в тесте 300: для «Выше» цель 250 уже достигнута.
+  await sandbox.openAlertModal('SBER');
+  nodesById['alert-condition'].value = 'above';
+  nodesById['alert-target-price'].value = '250';
+  const rowsBeforeInvalid = dbRows.length;
+  await sandbox.saveAlert();
+  assert(dbRows.length === rowsBeforeInvalid, 'Алерт «Выше» с целью ниже текущей цены не создаётся');
+  assert(String(nodesById['alert-error'].textContent).includes('не выше'),
+    'Показана inline-ошибка о неверном направлении цели');
+  assert(nodesById['alert-modal'].classList.contains('active'),
+    'Модалка остаётся открытой после ошибки валидации');
+
   // --- Сценарий 2: гонка — пользователь успел выбрать другой тикер во время записи
   // Поля заполняются ПОСЛЕ openAlertModal: открытие модалки префиллит их
   // значениями активного алерта (из сценария 1 — 310/above), как в реальном UI.
@@ -282,6 +317,48 @@ const contentText = () => {
   const activeRow = dbRows.filter(r => r.status === "active").pop();
   await sandbox.cancelAlert(activeRow.id, 'SBER');
   assert(contentText().includes('Отменено'), 'После отмены статус в списке обновлён');
+
+  // --- Сценарий 4б: удаление из истории (deleteAlertById) убирает запись.
+  // Сценарий 4 отменил алерт 310 (pop() берёт последнюю активную запись
+  // в порядке списка dbRows) — удаляем именно его; активный 290 остаётся.
+  const cancelledRow = dbRows.find(r => r.status === 'cancelled');
+  assert(cancelledRow.target === 310, 'Отменённый алерт в «БД» — это 310');
+  await sandbox.deleteAlertById(cancelledRow.id, 'SBER');
+  assert(!dbRows.some(r => r.id === cancelledRow.id), 'Удалённый алерт исчез из «БД»');
+  assert(!contentText().includes('310'), 'Удалённая карточка (отменённый 310) исчезла со вкладки');
+  assert(contentText().includes('290') && contentText().includes('В работе'),
+    'Оставшийся активный алерт 290 на месте');
+
+  // --- Сценарий 4в: «Изменить» обновляет существующую запись (PUT), а не
+  // создаёт новую. Открытие с id обязательно: у тикера может быть несколько
+  // активных алертов, и правиться должен именно выбранный.
+  const remaining = dbRows.find(r => r.symbol === 'SBER' && r.status === 'active');
+  const countBeforeEdit = dbRows.length;
+  cur.activeSymbol = 'SBER';
+  sandbox.dbAlerts = [];
+  await sandbox.renderAlertsTab('SBER');
+  await sandbox.openAlertModal('SBER', remaining.id);
+  assert(String(nodesById['alert-target-price'].value) === String(remaining.target),
+    'Модалка редактирования предзаполнена целью выбранного алерта');
+  nodesById['alert-condition'].value = 'below';
+  nodesById['alert-target-price'].value = '295';
+  await sandbox.saveAlert();
+  assert(dbRows.length === countBeforeEdit, 'Редактирование НЕ создало новую запись');
+  const updatedRow = dbRows.find(r => r.id === remaining.id);
+  assert(updatedRow && updatedRow.target === 295 && updatedRow.condition === 'below'
+      && updatedRow.status === 'active', 'PUT обновил цель и условие той же записи');
+  assert(contentText().includes('295'), 'Колонка показывает обновлённую цель');
+
+  // --- Сценарий 4г: активный алерт, чья цель уже достигнута (цена пересекла
+  // её после создания, сервер ещё не пометил triggered) — карточка показывает
+  // предупреждение «сработает при проверке», а не синий прогресс.
+  sandbox.dbAlerts = [{
+    id: 900, symbol: 'SBER', condition: 'above', target: 250, status: 'active',
+    price_at_creation: 200, triggered_price: null, created_at: '2026-10-17T10:00:00'
+  }];
+  sandbox.renderAlertsList('SBER');
+  assert(contentText().includes('сработает при проверке'),
+    'Достигнутая цель активного алерта помечена «сработает при проверке»');
 
   // --- Сценарий 5: смена выбранного тикера обновляет вкладку
   cur.activeSymbol = 'GAZP';

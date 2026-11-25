@@ -7,7 +7,7 @@
 перезагрузку страницы и смену устройства.
 
 API сервиса:
-- list_alerts / create_alert / cancel_alert / delete_alert — CRUD;
+- list_alerts / create_alert / update_alert / cancel_alert / delete_alert — CRUD;
 - check_all_active() — одна итерация проверки всех активных алертов
   (параллельно тянет цены через moex_service/crypto_service);
 - migrate_from_client(payload) — одноразовый перенос алертов из
@@ -64,6 +64,39 @@ def list_alerts(symbol: str | None = None, status: str | None = None) -> list[di
         return [_to_dict(r) for r in rows]
 
 
+def _validate_direction(condition: str, target: float,
+                        ref_price: float | None) -> None:
+    """Проверяет, что цель ещё не достигнута при опорной (текущей) цене.
+
+    Алерт «above 40» при цене 44.3 формально уже выполнен: сервер пометил бы
+    его triggered на ближайшей проверке, а в UI до этого висело бы
+    «в работе · цель достигнута». Такой алерт бессмысленен, поэтому
+    создание/изменение отклоняется (400).
+
+    ref_price — цена от клиента (price_at_creation). Её может не быть
+    (price_at_creation=null, вызовы из API/скриптов) — тогда проверять
+    нечего и мы пропускаем: сервер всё равно проверит условие по живой цене.
+    """
+    if ref_price is None:
+        return
+    try:
+        ref = float(ref_price)
+    except (TypeError, ValueError):
+        return
+    if ref <= 0:
+        return
+    if condition == "above" and target <= ref:
+        raise ValueError(
+            f"Цель {target:g} не выше текущей цены {ref:g} — алерт сработал бы сразу. "
+            f"Укажите цель выше {ref:g} или условие 'below'"
+        )
+    if condition == "below" and target >= ref:
+        raise ValueError(
+            f"Цель {target:g} не ниже текущей цены {ref:g} — алерт сработал бы сразу. "
+            f"Укажите цель ниже {ref:g} или условие 'above'"
+        )
+
+
 def create_alert(symbol: str, condition: str, target: float,
                  price_at_creation: float | None = None) -> dict:
     """Создаёт активный алерт. Лимит MAX_ALERTS_PER_SYMBOL активных на символ."""
@@ -79,6 +112,7 @@ def create_alert(symbol: str, condition: str, target: float,
         raise ValueError("Некорректная целевая цена")
     if target <= 0:
         raise ValueError("Целевая цена должна быть больше нуля")
+    _validate_direction(condition, target, price_at_creation)
 
     with get_session() as db:
         active_count = (
@@ -97,6 +131,62 @@ def create_alert(symbol: str, condition: str, target: float,
             price_at_creation=float(price_at_creation) if price_at_creation else None,
         )
         db.add(alert)
+        db.commit()
+        db.refresh(alert)
+        return _to_dict(alert)
+
+
+def update_alert(alert_id: int, condition: str | None = None,
+                 target: float | None = None,
+                 price_at_creation: float | None = None) -> dict:
+    """Изменяет условие/цель существующего активного алерта.
+
+    Используется модалкой «Изменить» на карточке: правка не создаёт новую
+    запись, а обновляет ту же (id/created_at/price_at_creation сохраняются).
+    Изменять можно только активные алерты: у исполненных/отменённых история
+    неизменна (иначе поехали бы статусы и отчёты по срабатываниям).
+
+    price_at_creation здесь — НЕ сохраняемое значение, а текущая цена с
+    клиента: по ней проверяется, что новая цель ещё не достигнута.
+    """
+    with get_session() as db:
+        alert = db.get(PriceAlert, alert_id)
+        if not alert:
+            raise LookupError("Алерт не найден")
+        if alert.status != "active":
+            # Отдельное исключение, чтобы endpoint вернул 409, а не 400:
+            # фронтенд по нему понимает, что править уже нечего.
+            raise RuntimeError("Алерт уже исполнен или отменён")
+
+        new_condition = (condition or alert.condition or "").strip().lower()
+        if new_condition not in VALID_CONDITIONS:
+            raise ValueError("Условие должно быть 'above' или 'below'")
+        try:
+            new_target = float(alert.target if target is None else target)
+        except (TypeError, ValueError):
+            raise ValueError("Некорректная целевая цена")
+        if new_target <= 0:
+            raise ValueError("Целевая цена должна быть больше нуля")
+        _validate_direction(new_condition, new_target, price_at_creation)
+
+        # Дубликат среди ДРУГИХ активных алертов символа (как в create_alert,
+        # где одинаковые условия не плодятся)
+        duplicate = (
+            db.query(PriceAlert)
+            .filter(
+                PriceAlert.symbol == alert.symbol,
+                PriceAlert.status == "active",
+                PriceAlert.id != alert.id,
+                PriceAlert.condition == new_condition,
+                PriceAlert.target == new_target,
+            )
+            .first()
+        )
+        if duplicate:
+            raise ValueError("Такой активный алерт уже существует")
+
+        alert.condition = new_condition
+        alert.target = new_target
         db.commit()
         db.refresh(alert)
         return _to_dict(alert)

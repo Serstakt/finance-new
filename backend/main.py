@@ -701,6 +701,26 @@ async def cancel_alert_endpoint(alert_id: int):
         raise HTTPException(status_code=404, detail="Алерт не найден")
 
 
+@app.put("/api/alerts/{alert_id}")
+async def update_alert_endpoint(alert_id: int, payload: schemas.AlertUpdate):
+    """Изменяет условие/цель активного алерта (без создания новой записи).
+
+    Коды ответа: 404 — алерта нет; 409 — он уже исполнен/отменён (история
+    неизменна); 400 — некорректные значения или дубликат активного алерта.
+    """
+    try:
+        return alert_service.update_alert(
+            alert_id, condition=payload.condition, target=payload.target,
+            price_at_creation=payload.price_at_creation
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Алерт не найден")
+    except RuntimeError as re_:
+        raise HTTPException(status_code=409, detail=str(re_))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
 @app.delete("/api/alerts/{alert_id}")
 async def delete_alert_endpoint(alert_id: int):
     """Полностью удаляет запись алерта из БД."""

@@ -653,8 +653,12 @@
                         </div>
                     </div>
                     <div id="alerts-list" class="tab-pane">
-                        <div style="padding: 20px; text-align: center; color: #787b86;">
-                            Выберите тикер для просмотра алертов
+                        <!-- Статичная заглушка до первого рендера (renderAlertsList
+                             перерисовывает контент целиком) — тот же формат пустого
+                             состояния, что рисует JS: иконка + подсказка. -->
+                        <div class="alert-empty">
+                            <span class="alert-icon alert-empty-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
+                            <div class="alert-empty-title">Выберите тикер для просмотра алертов</div>
                         </div>
                     </div>
                 </div>
@@ -846,19 +850,48 @@
     </div>
 </div>
 
+<!-- Модалка ценового уведомления (редизайн в стиле TradingView):
+     segmented-переключатель условия вместо <select>, чипы быстрых
+     значений цели (±1%/±5%/текущая), живая подсказка расстояния до
+     цели, inline-ошибка валидации вместо window.alert, Enter/Esc.
+     id сохранены (alert-condition — скрытый input: значение условия
+     читается/пишется через .value как раньше; кнопки сегмента
+     синхронизируют его — см. wireAlertModalControls в ui.js). -->
 <div class="modal-overlay" id="alert-modal">
-    <div class="modal-box">
-        <div class="modal-title"><span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Ценовое уведомление: <span id="alert-symbol-name"></span></div>
-        <select class="modal-select" id="alert-condition">
-            <option value="above">Цена станет ВЫШЕ или равна</option>
-            <option value="below">Цена станет НИЖЕ или равна</option>
-        </select>
-        <input type="number" step="0.01" class="modal-input" id="alert-target-price" placeholder="Целевая цена" />
-        <div class="modal-buttons">
-            <button class="modal-btn modal-btn-cancel" onclick="closeAlertModal()">Отмена</button>
-            <button class="modal-btn modal-btn-save" onclick="saveAlert()">Сохранить</button>
+    <div class="modal-box modal-box--alert">
+        <div class="modal-title modal-title--alert">
+            <span class="btn-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H4s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span>
+            <span id="alert-modal-title-text">Ценовое уведомление</span>
+            <span class="alert-symbol-badge" id="alert-symbol-name"></span>
+            <button type="button" class="modal-close" onclick="closeAlertModal()" title="Закрыть (Esc)" aria-label="Закрыть">&#10005;</button>
         </div>
-        <button class="modal-btn modal-btn-delete" id="alert-delete-btn" onclick="deleteAlert()" style="display: none;">Удалить</button>
+        <div class="alert-current-line">Текущая цена: <b id="alert-current-price">—</b></div>
+        <div class="alert-seg" id="alert-condition-seg">
+            <button type="button" class="alert-seg-btn active" data-condition="above">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+                Выше или равно
+            </button>
+            <button type="button" class="alert-seg-btn" data-condition="below">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10"/><path d="M17 7v10H7"/></svg>
+                Ниже или равно
+            </button>
+        </div>
+        <input type="hidden" id="alert-condition" value="above" />
+        <label class="alert-field-label" for="alert-target-price">Целевая цена</label>
+        <input type="number" step="any" class="modal-input" id="alert-target-price" placeholder="Например, 325,50" />
+        <div class="alert-chips" id="alert-target-chips">
+            <button type="button" class="alert-chip" data-pct="-5">&minus;5%</button>
+            <button type="button" class="alert-chip" data-pct="-1">&minus;1%</button>
+            <button type="button" class="alert-chip" data-pct="1">+1%</button>
+            <button type="button" class="alert-chip" data-pct="5">+5%</button>
+        </div>
+        <div class="alert-hint" id="alert-distance-hint"></div>
+        <div class="alert-error" id="alert-error" style="display: none;"></div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-delete" id="alert-delete-btn" onclick="deleteAlert()" style="display: none;">Удалить</button>
+            <button class="modal-btn modal-btn-cancel" onclick="closeAlertModal()">Отмена</button>
+            <button class="modal-btn modal-btn-save" id="alert-save-btn" onclick="saveAlert()">Сохранить</button>
+        </div>
     </div>
 </div>
 
