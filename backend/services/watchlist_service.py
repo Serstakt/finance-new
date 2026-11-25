@@ -651,6 +651,58 @@ def move_symbol(list_id: str, symbol: str, target_index: int) -> dict:
             }
 
 
+def move_block(list_id: str, symbols: list[str], target_index: int) -> dict:
+    """Перемещает блок связанных элементов (раздел вместе с его тикерами).
+
+    В плоском порядке раздел — это строка SECTION:<название>, а его тикеры —
+    все строки до следующего раздела. Если перетащить один заголовок, тикеры
+    останутся на старом месте и привяжутся к предыдущему разделу, поэтому
+    клиент присылает весь блок, а сервер вырезает эти строки из актуального
+    порядка БД и вставляет обратно одним куском на target_index.
+    target_index — позиция в списке БЕЗ элементов блока. Порядок внутри блока
+    задаёт клиент (заголовок первым). Позиции после перестановки
+    перенумеровываются плотно 0..n-1.
+    """
+    block_symbols = []
+    for s in symbols or []:
+        n = _normalize_symbol(s or "")
+        if n and n not in block_symbols:
+            block_symbols.append(n)
+    if not block_symbols:
+        raise ValueError("Пустой блок")
+    with get_session() as db:
+            rows = (
+                db.query(WatchlistItem)
+                .filter(WatchlistItem.list_id == list_id)
+                .order_by(WatchlistItem.position.asc(), WatchlistItem.id.asc())
+                .all()
+            )
+            by_symbol = {r.symbol: r for r in rows}
+            block = [by_symbol[s] for s in block_symbols if s in by_symbol]
+            if not block:
+                return {"status": "not_found", "list_id": list_id, "symbols": block_symbols}
+
+            block_ids = {r.id for r in block}
+            rest = [r for r in rows if r.id not in block_ids]
+            try:
+                pos = int(target_index)
+            except (TypeError, ValueError):
+                pos = len(rest)
+            pos = max(0, min(pos, len(rest)))
+            ordered = rest[:pos] + block + rest[pos:]
+
+            for i, r in enumerate(ordered):
+                if r.position != i:
+                    r.position = i
+            db.commit()
+            return {
+                "status": "ok",
+                "list_id": list_id,
+                "symbols": [r.symbol for r in ordered],
+                "position": pos,
+            }
+
+
 def set_order(
     list_id: str,
     symbols: list[str],

@@ -841,6 +841,88 @@ window.applySectionCollapse = function(list) {
   });
 };
 
+// === БЛОК РАЗДЕЛА ПРИ DRAG&DROP ===
+// Список плоский: раздел — это заголовок и все строки до следующего заголовка.
+// Sortable перетаскивает только сам узел заголовка, поэтому спутников раздела
+// приходится переносить вручную (onStart/onEnd в main.js) — иначе тикеры
+// остались бы на старом месте и привязались к предыдущему разделу.
+window.sectionFollowerNodes = function(headerNode) {
+  const nodes = [];
+  if (!headerNode || !headerNode.classList || !headerNode.classList.contains('section-header')) return nodes;
+  for (let n = headerNode.nextElementSibling; n; n = n.nextElementSibling) {
+    if (n.classList && n.classList.contains('section-header')) break;
+    nodes.push(n);
+  }
+  return nodes;
+};
+
+// Ставит спутников раздела сразу после заголовка, сохраняя их порядок.
+// remove() + insertBefore, а не голый insertBefore: при переносе узла внутри
+// одного родителя так не остаётся дублей в разметке.
+window.moveSectionBlockAfterHeader = function(headerNode, followers) {
+  if (!headerNode || !followers || followers.length === 0) return;
+  const parent = headerNode.parentNode;
+  if (!parent) return;
+  let anchor = headerNode;
+  for (const node of followers) {
+    if (node === anchor) continue;
+    if (node.parentNode) node.remove();
+    parent.insertBefore(node, anchor.nextSibling);
+    anchor = node;
+  }
+};
+
+// Ближайшая граница раздела для позиции drop. nodes — список БЕЗ
+// перетаскиваемого блока, pos — позиция в нём. Заголовок раздела не должен
+// попадать внутрь чужого блока: тикеры, оставшиеся после заголовка, привязались
+// бы к перетаскиваемому разделу. Границы — заголовок раздела и место сразу
+// после последнего тикера блока (следующий заголовок либо конец списка).
+// Тикеры до первого заголовка разделу не принадлежат, поэтому drop среди них
+// не снапим: забирать у раздела нечего, а «новый раздел начинается здесь» —
+// осмысленное поведение.
+window.snapSectionDropIndex = function(nodes, pos) {
+  const isHeader = (n) => !!(n && n.classList && n.classList.contains('section-header'));
+  const list = nodes || [];
+  const at = Math.max(0, Math.min(pos, list.length));
+  let header = -1; // заголовок раздела, внутрь блока которого попал drop
+  for (let i = 0; i < at; i++) if (isHeader(list[i])) header = i;
+  if (header < 0) return at;
+  let blockEnd = list.length;
+  for (let i = at; i < list.length; i++) if (isHeader(list[i])) { blockEnd = i; break; }
+  const distStart = at - header;
+  const distEnd = blockEnd - at;
+  if (distStart === 0 || distEnd === 0) return at; // drop уже на границе
+  return distStart <= distEnd ? header : blockEnd;
+};
+
+// Ставит блок раздела (заголовок + его тикеры) в точку drop, подтягивая его к
+// границе раздела. Возвращает итоговую позицию блока в списке БЕЗ его
+// собственных элементов — она же target_index для бэкенда.
+window.resolveSectionDrop = function(headerNode, followers) {
+  const container = document.getElementById('ticker-list');
+  const parent = headerNode ? headerNode.parentNode : null;
+  if (!headerNode || !container || !parent) return -1;
+  const followersList = followers || [];
+  const blockNodes = new Set([headerNode, ...followersList]);
+  const kids = Array.from(container.children);
+  const rest = kids.filter(n => !blockNodes.has(n));
+  // Сколько НЕ принадлежащих блоку элементов стоит перед заголовком — это и
+  // есть позиция drop в списке без блока (Sortable перенёс только заголовок).
+  let pos = 0;
+  for (const n of kids) {
+    if (n === headerNode) break;
+    if (!blockNodes.has(n)) pos++;
+  }
+  pos = typeof snapSectionDropIndex === 'function' ? snapSectionDropIndex(rest, pos) : pos;
+  // Переносим блок целиком в вычисленную точку. remove() перед insertBefore,
+  // чтобы при переносе внутри родителя не осталось дублей.
+  const before = rest[pos] || null;
+  headerNode.remove();
+  parent.insertBefore(headerNode, before);
+  moveSectionBlockAfterHeader(headerNode, followersList);
+  return pos;
+};
+
 // === ЛЁГКАЯ ПЕРЕРИСОВКА (БЕЗ ЗАПРОСА ЦЕН) ===
 // symbol -> данные последнего рендера с ценами. Нужна для того, чтобы
 // действия, которые меняют только оформление (флажок избранного, открытие/

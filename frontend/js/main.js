@@ -532,6 +532,17 @@ window.playAlertSound = function() {
 // Drag and Drop инициализация (Sortable грузится с CDN асинхронно — ждём его,
 // иначе при недоступности cdnjs здесь падал ReferenceError и весь код ниже не выполнялся)
 if (typeof Sortable !== 'undefined') {
+  // Состояние текущего перетаскивания. Для раздела запоминаем его тикеры
+  // (строки до следующего заголовка): Sortable тянет только сам заголовок,
+  // поэтому блок доставляем следом за ним вручную в onEnd.
+  let dragBlock = null;
+  const nodeSymbol = function (node) {
+    if (!node) return null;
+    if (node.dataset && node.dataset.symbol) return node.dataset.symbol;
+    const btn = node.querySelector ? node.querySelector('[data-symbol]') : null;
+    return btn ? btn.getAttribute('data-symbol') : null;
+  };
+
   new Sortable(document.getElementById('ticker-list'), {
     animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
     // Перетаскивание за всю строку (ручки «⋮» больше нет). Интерактивные
@@ -542,12 +553,44 @@ if (typeof Sortable !== 'undefined') {
     // На тач-устройствах драг стартует только после удержания — иначе
     // жест прокрутки списка перехватывается переносом строки.
     delay: 150, delayOnTouchOnly: true,
+    onStart: function (evt) {
+      // Спутников раздела снимаем ДО перестановки: после drop заголовок уже
+      // на новом месте, и его тикеры не отличить от тикеров соседнего раздела.
+      const isSection = !!(evt.item && evt.item.classList
+                           && evt.item.classList.contains('section-header'));
+      const followers = isSection && typeof sectionFollowerNodes === 'function'
+        ? sectionFollowerNodes(evt.item) : [];
+      const container = document.getElementById('ticker-list');
+      // Блоком считаем любой раздел, даже пустой: пустой заголовок, брошенный
+      // в середину чужого блока, тоже подтягивается к границе раздела —
+      // иначе тикеры после него «переехали» бы в пустой раздел.
+      dragBlock = isSection ? {
+        item: evt.item,
+        followers: followers,
+        // позиция блока до drag — чтобы не сохранять в БД пустое перемещение
+        startIndex: container ? Array.from(container.children).indexOf(evt.item) : -1,
+      } : null;
+    },
     onEnd: function (evt) {
+      // Перетащили заголовок раздела — переносим его тикеры следом за ним,
+      // иначе они остались бы на старом месте (то есть в предыдущем разделе).
+      // resolveSectionDrop заодно подтягивает блок к границе раздела: заголовок
+      // не должен вставать внутрь чужого блока (см. ui.js).
+      let blockSymbols = null;
+      if (dragBlock && dragBlock.item === evt.item && typeof resolveSectionDrop === 'function') {
+        const placedAt = resolveSectionDrop(evt.item, dragBlock.followers);
+        if (placedAt >= 0) {
+          blockSymbols = [evt.item, ...dragBlock.followers].map(nodeSymbol).filter(Boolean);
+        }
+      }
+      const blockStart = dragBlock ? dragBlock.startIndex : -1;
+      dragBlock = null;
+
       // Собираем новый порядок по DOM и находим перемещённый элемент.
       const newList = [];
       document.querySelectorAll('#ticker-list .ticker-item, #ticker-list .section-header').forEach(item => {
-        const btn = item.querySelector('[data-symbol]');
-        if (btn) newList.push(btn.getAttribute('data-symbol'));
+        const sym = nodeSymbol(item);
+        if (sym) newList.push(sym);
       });
       getCurrentList().tickers = newList;
       // Счётчики разделов должны обновиться в моменте: DOM-порядок после drop
@@ -560,8 +603,7 @@ if (typeof Sortable !== 'undefined') {
       // Сохраняем в БД только перемещённый элемент (move + target position),
       // а не весь список: payload не растёт с размером списка, и параллельные
       // правки с другого устройства не затираются снимком с этого.
-      const movedBtn = evt.item ? evt.item.querySelector('[data-symbol]') : null;
-      const symbol = movedBtn ? movedBtn.getAttribute('data-symbol') : null;
+      const symbol = nodeSymbol(evt.item);
       let targetIndex = -1;
       if (symbol && evt.oldIndex != null && evt.newIndex != null && evt.oldIndex !== evt.newIndex) {
         // target_index для бэкенда — позиция в списке БЕЗ перемещаемого
@@ -569,18 +611,27 @@ if (typeof Sortable !== 'undefined') {
         // стоит перед перемещённым после drop.
         const kids = Array.from(document.getElementById('ticker-list').children);
         const posInKids = kids.indexOf(evt.item);
+        const movedSet = new Set(blockSymbols || [symbol]);
         let othersBefore = 0;
         for (let i = 0; i < posInKids; i++) {
-          const btn = kids[i] ? kids[i].querySelector('[data-symbol]') : null;
-          const s = btn ? btn.getAttribute('data-symbol') : null;
-          if (s && s !== symbol) othersBefore++;
+          const s = nodeSymbol(kids[i]);
+          if (s && !movedSet.has(s)) othersBefore++;
         }
-        targetIndex = Math.max(0, Math.min(othersBefore, newList.length - 1));
+        targetIndex = Math.max(0, Math.min(othersBefore, newList.length - movedSet.size));
+        // Блок уже на прежнем месте (заголовок протащили внутри его же
+        // раздела) — сохранять нечего, иначе лишний запрос в БД.
+        if (blockSymbols && blockStart === othersBefore) targetIndex = -1;
       }
-      if (symbol && targetIndex >= 0) {
-        // fav-списки пропускаются внутри moveOrderToDb
-        window.moveOrderToDb(appState.activeListId, symbol, targetIndex);
-      } else if (typeof saveOrderToDb === 'function') {
+      if (targetIndex >= 0) {
+        if (blockSymbols && blockSymbols.length > 1 && typeof moveBlockOrderToDb === 'function') {
+          // Раздел едет вместе с тикерами — одним запросом, чтобы на сервере
+          // блок вырезался и вставлялся атомарно.
+          moveBlockOrderToDb(appState.activeListId, blockSymbols, targetIndex);
+        } else {
+          // fav-списки пропускаются внутри moveOrderToDb
+          window.moveOrderToDb(appState.activeListId, symbol, targetIndex);
+        }
+      } else if (!blockSymbols && typeof saveOrderToDb === 'function') {
         // fallback: не удалось определить перемещённый элемент — сохраняем
         // порядок по-старому всем списком
         saveOrderToDb(appState.activeListId, newList);
