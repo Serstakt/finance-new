@@ -137,7 +137,7 @@
   let pollPeriod = null; // активный период таймера поллинга (мс) — смена источника перезапускает его
   let overlayIds = []; // id созданных overlay — для сериализации разметки
   let lastDrawEndAt = 0; // Date.now() последнего завершения фигуры — guard сброса вида на dblclick
-  let currentInterval = 24; // активный ТФ (60|24|7|31)
+  let currentInterval = 7; // активный ТФ (60|24|7|31); по умолчанию недельный (7)
   // Активные индикаторы: name -> paneId. В 9.6 removeIndicator требует
   // (paneId, name) — поэтому храним оба.
   const indicators = new Map();
@@ -168,6 +168,11 @@
   // Выбор переживает перезагрузку страницы (localStorage).
 
   const VIEW_LS_KEY = 'wl_chart_view';
+  // Версия схемы сохранённого вида. В снимках без version (v1) ТФ по умолчанию
+  // был дневным (24) и мог попасть в localStorage вместе со сменой типа графика
+  // или шкалы. В v2 дефолт — недельный (7), поэтому interval из старого снимка
+  // не применяем: иначе у пользователя с сохранённым видом остался бы дневной ТФ.
+  const VIEW_LS_VERSION = 2;
   const LINE_COLOR = '#2962ff';
   const CHART_TYPE_LABELS = { candles: 'Свечи', bars: 'Бары', line: 'Линия', area: 'Области' };
   // Иконки типов графика (SVG инлайном) — один источник для триггера
@@ -210,14 +215,15 @@
       const v = JSON.parse(localStorage.getItem(VIEW_LS_KEY) || '{}');
       if (CHART_TYPE_STYLES[v.type]) chartType = v.type;
       if (SCALE_MODES.includes(v.scale)) scaleMode = v.scale;
-      // Выбранный ТФ переживает перезагрузку (символ приходит из списка)
-      if (TF_LOOKBACK_DAYS[v.interval]) currentInterval = v.interval;
+      // Выбранный ТФ переживает перезагрузку (символ приходит из списка).
+      // ТФ из снимка v1 не берём — там дефолтом был дневной (см. VIEW_LS_VERSION).
+      if (v.version === VIEW_LS_VERSION && TF_LOOKBACK_DAYS[v.interval]) currentInterval = v.interval;
     } catch (e) { /* битый JSON — остаются дефолты */ }
   };
 
   const saveView = () => {
     try {
-      localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ type: chartType, scale: scaleMode, interval: currentInterval }));
+      localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ version: VIEW_LS_VERSION, type: chartType, scale: scaleMode, interval: currentInterval }));
     } catch (e) { /* localStorage недоступен — вид не сохранится */ }
   };
 
@@ -2948,6 +2954,7 @@
     if (![60, 24, 7, 31].includes(value)) return;
     currentInterval = value;
     syncTfButtons();
+    saveView(); // выбранный ТФ переживает перезагрузку вместе с типом графика
     // Как в TradingView: клик по ТФ сразу перезагружает график выбранного тикера
     if (lastTicker) window.wlChartLoad(lastTicker);
     else setStatus(`Таймфрейм: ${document.getElementById(`tc-tf-${value}`)?.textContent || value}`);

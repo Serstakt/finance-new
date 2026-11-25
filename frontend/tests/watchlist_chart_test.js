@@ -516,7 +516,8 @@ const candle = (day, close, month = 11) => ({
   assert(applied.length === 0, 'на DOMContentLoaded без выбранного тикера график не грузится');
   await sandbox.window.wlChartLoad('SBER');
   await flush();
-  assert(els['tc-tf-24']._classes.has('active'), 'загрузка: кнопка ТФ 1д активна (дефолт)');
+  assert(els['tc-tf-7']._classes.has('active') && !els['tc-tf-24']._classes.has('active'),
+    'загрузка: кнопка ТФ 1н активна (дефолт — недельный, а не дневной)');
   assert(applied.length === 2, 'загрузка: график SBER построен по символу из списка');
   assert(/slice=1/.test(fetchUrls[fetchUrls.length - 1]), 'начальная загрузка: оконный режим slice=1');
   assert(loadMoreCb != null, 'loadMore: callback зарегистрирован');
@@ -610,7 +611,7 @@ const candle = (day, close, month = 11) => ({
   await sandbox.window.wlChartLoad('GAZP');
   await flush();
   const st1 = statusOf();
-  assert(fetchUrls[fetchUrls.length - 1] === '/api/candles/GAZP?interval=24',
+  assert(fetchUrls[fetchUrls.length - 1] === '/api/candles/GAZP?interval=7',
     'фолбэк: второй запрос без slice (полный, через хранилище)');
   assert(st1.warn && !st1.err, 'note бэкенда — warn, не error');
   assert(st1.text.includes('накопленную историю'), 'текст note попал в статус');
@@ -633,8 +634,8 @@ const candle = (day, close, month = 11) => ({
   assert(els['tc-leg-change'].textContent === '+2,00 (+1,35%)',
     'легенда: дельта обновилась на тике поллинга (котировка перезапрошена)');
 
-  // 2a) Отсчёт до закрытия бара: живая свеча (дневная, началась час
-  //     назад) — компактный остаток «23ч00м» (две старшие единицы);
+  // 2a) Отсчёт до закрытия бара: живая свеча (недельный ТФ — дефолт,
+  //     свеча открылась час назад) — остаток в днях с часами «NдЧЧч»;
   //     заодно fmtVol с триллионами (оборот SHIBUSDT печатался «2355.79B»)
   const localBegin = (msAgo) => {
     const d = new Date(Date.now() - msAgo);
@@ -651,12 +652,12 @@ const candle = (day, close, month = 11) => ({
   }];
   await sandbox.window.wlChartLoad('GAZP');
   await flush();
-  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт: живая свеча — компактный остаток «ЧЧчММм» до закрытия бара');
+  assert(/^\d+д\d{1,2}ч$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: живая свеча недельного ТФ — остаток «NдЧЧч» до закрытия бара');
   assert(els['tc-leg-v'].textContent === '2.36T',
     'fmtVol: триллионы форматируются — 2.36T (было «2355.79B»)');
   timers[0].cb(); // тик отсчёта раз в секунду — не падает, формат держится
-  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
+  assert(/^\d+д\d{1,2}ч$/.test(els['tc-sym-countdown'].textContent),
     'отсчёт: секундный тик пересчитывает остаток');
 
   // 3) Разметка: у SBER уже сохранена (шаг 0b), у GAZP пока пусто
@@ -683,8 +684,8 @@ const candle = (day, close, month = 11) => ({
   assert(statusOf().text.includes('разметка восстановлена: 1'), 'статус сообщает о восстановлении разметки SBER');
   assert(els['tc-leg-change'].textContent === '+3,00 (+0,95%)',
     'легенда: дельта пересчитана для новых данных');
-  assert(/^\d+ч\d{2}м$/.test(els['tc-sym-countdown'].textContent),
-    'отсчёт: остывшие данные — проекция к следующей границе суток (как в TV)');
+  assert(/^\d+д\d{1,2}ч$/.test(els['tc-sym-countdown'].textContent),
+    'отсчёт: остывшие данные — проекция к следующей границе недели (как в TV)');
 
   // 5a) Статус-тост (как сообщения в TradingView): обычное сообщение само
   //     гаснет — таймер 6 с, фаза затухания, затем очистка текста

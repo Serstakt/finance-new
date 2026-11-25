@@ -282,8 +282,8 @@ if (typeof window.BOOKMARK_SVG !== 'string') {
 // Обрезка текста новости для UI: Telegram-посты часто заканчиваются словами
 // «Читать далее» / «показать полностью» и т.п. — на вкладке «Новости», а также
 // на вкладке «Избранные» (новости, отмеченные флажком), всё начиная с этих
-// слов и до конца отсекаем (полный текст всегда доступен по клику на карточку —
-// она ведёт на исходный пост).
+// слов и до конца отсекаем. Клик по строке никуда не ведёт (см. newsRowHtml):
+// переход на внешний сайт новости намеренно убран.
 const trimNewsTeaser = (text) => {
   const s = String(text == null ? '' : text);
   const re = /(?:читать\s+далее|подробнее\s+в\s+источнике|перейти\s+к\s+публикации|показать\s+полностью|смотреть\s+полностью|читать\s+полностью|\bread\s+more\b|\bview\s+post\b|\bopen\s+post\b)/i;
@@ -396,6 +396,10 @@ const collapseNewsBody = (s) => {
 // Строка новости — общий шаблон ленты «Новости» и вкладки «Избранные».
 // ticker — для вкладки «Избранные»: бейдж тикера рисуем только когда пост
 // принадлежит другому тикету, чем выбранный.
+// Строка НЕ является ссылкой: клик по новости раньше открывал исходный пост
+// на внешнем сайте (smart-lab), теперь навигации нет — текст читается в ленте,
+// а единственное действие строки — флажок-закладка справа. data-link остаётся
+// ключом сверки флажков (canonicalNewsLink), а не ссылкой для перехода.
 function newsRowHtml(n, isFav, ticker, parsed) {
   const link = canonicalNewsLink(n.link);
   const teaser = trimNewsTeaser(n.full_text || n.title || link);
@@ -412,13 +416,13 @@ function newsRowHtml(n, isFav, ticker, parsed) {
   }
   return `
     <div class="news-item${isFav ? ' is-fav' : ''}" data-link="${escapeHtml(link)}">
-        <a href="${escapeHtml(n.link)}" target="_blank" rel="noopener" class="news-row-link">
+        <div class="news-row">
             <div class="news-time" title="${escapeHtml(timeFull)}">${escapeHtml(timeShort)}</div>
             <div class="news-text">
                 ${parts.heading ? `<div class="news-title">${badge}${escapeHtml(parts.heading)}</div>` : ''}
                 ${body ? `<div class="news-body">${escapeHtml(body)}</div>` : ''}
             </div>
-        </a>
+        </div>
         ${newsFlagBtnHtml(link, isFav)}
     </div>`;
 }

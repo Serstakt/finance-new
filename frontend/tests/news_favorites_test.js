@@ -196,6 +196,19 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf
     'Флажок позиционируется CSS-ом у правого края строки (.news-fav-flag absolute right)');
   assert(!/<div class="news-item[^"]*"[^>]*onmouseover/.test(byId['news-list'].innerHTML),
     'Hover-поведение переехало в CSS: инлайн onmouseover/onmouseout не используются');
+  // Переход на внешний сайт по клику на новость убран: строка — div, а не <a>;
+  // в разметке ленты нет href/target, клик ничего не открывает.
+  assert(!/<a\s[^>]*href=/.test(byId['news-list'].innerHTML)
+         && !byId['news-list'].innerHTML.includes('target="_blank"'),
+    'Клик по новости не ведёт на внешний сайт: в строке нет ссылки (a[href])');
+  assert(byId['news-list'].innerHTML.includes('class="news-row"'),
+    'Строка новости — некликабельный div.news-row');
+  // Серый текст ленты читаемый: тело новости и время — #b2b5be, не тусклый #787b86
+  assert(/\.news-body\s*\{[^}]*color:\s*#b2b5be/.test(cssText)
+         && /\.news-time\s*\{[^}]*color:\s*#b2b5be/.test(cssText),
+    'Текст и время новости — светло-серые #b2b5be (прежний #787b86 плохо читался)');
+  assert(!cssText.includes('.news-row-link'),
+    'Стили ссылки-строки .news-row-link удалены (строка больше не кликабельна)');
   // Группировка по дням + короткое время с полной датой в title
   assert(byId['news-list'].innerHTML.includes('news-day-header')
          && byId['news-list'].innerHTML.includes('октября') && byId['news-list'].innerHTML.includes('сентября'),
