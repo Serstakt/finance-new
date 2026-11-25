@@ -1141,33 +1141,32 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 }
 .news-day-count { font-weight: 500; font-size: 11px; color: #787b86; white-space: nowrap; }
 
-/* Строка новости: тонкий разделитель вместо рамки+фона карточки;
-   hover — фон строки без «подпрыгивания». Избранная — лёгкий тёплый тинт.
-   Заголовок и текст — одним размером 14px (читается единым блоком,
+/* Строка новости: тонкий разделитель вместо рамки+фона карточки.
+   Избранная — лёгкий тёплый тинт. Строка НЕ кликабельна: переход на внешний
+   сайт новости убран, поэтому нет hover-подсветки и курсора-указателя —
+   единственное действие строки — флажок-закладка справа.
+   Заголовок и текст — одним размером 15px (читается единым блоком,
    различаются только насыщенностью и цветом). */
 .news-item { position: relative; border-bottom: 1px solid #2a2e39; }
 .news-item.is-fav { background: rgba(239, 83, 80, 0.05); }
-.news-row-link {
+.news-row {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 9px 44px 9px 20px; /* справа 44px — место под флажок-bookmark */
-  text-decoration: none; color: #d1d4dc;
-  transition: background 0.15s;
+  color: #d1d4dc;
 }
-.news-row-link:hover { background: #2a2e39; }
-.news-item.is-fav .news-row-link:hover { background: rgba(239, 83, 80, 0.1); }
-.news-row-link:focus-visible { outline: 1px solid #2962ff; outline-offset: -1px; }
 
+/* Время и текст — светло-серые (#b2b5be), а не тусклые #787b86:
+   на тёмном фоне прежний серый читался плохо. */
 .news-time {
   flex-shrink: 0; width: 40px; padding-top: 2px;
-  font-size: 13px; color: #787b86; font-variant-numeric: tabular-nums;
+  font-size: 13px; color: #b2b5be; font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden;
 }
 .news-text { flex: 1; min-width: 0; }
 /* Текст новости единым стилем: без жирной первой строки, 15px */
 .news-title { font-size: 15px; font-weight: 400; line-height: 1.45; color: #d1d4dc; }
-.news-row-link:hover .news-title { color: #ffffff; }
 .news-body {
-  font-size: 15px; color: #787b86; line-height: 1.45; margin-top: 2px;
+  font-size: 15px; color: #b2b5be; line-height: 1.45; margin-top: 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .news-ticker-badge {
