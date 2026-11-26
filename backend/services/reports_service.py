@@ -43,10 +43,40 @@ except ImportError:  # pragma: no cover — совместимость со ст
     except ImportError:  # пакет не установлен — приложение продолжает работать
         fitz = None  # разбор PDF вернёт понятную ошибку при загрузке файла
 
-from backend.database.database import get_session, safe_create_all
+from backend.database.database import engine, get_session, safe_create_all
 from backend.database.models import ReportDocument
+from backend.services import report_metrics_service
 
 safe_create_all()
+
+
+def _ensure_schema() -> None:
+    """Добавляет колонки, появившиеся после первых версий раздела.
+
+    create_all() не меняет уже существующую таблицу, поэтому для баз,
+    созданных до привязки отчётов к бумаге, нужен лёгкий ALTER TABLE.
+    """
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql(
+            "PRAGMA table_info(report_documents)"
+        ).fetchall()
+        columns = {row[1] for row in rows}
+        if "ticker" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE report_documents ADD COLUMN ticker VARCHAR"
+            )
+        if "columns_json" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE report_documents ADD COLUMN columns_json "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_report_documents_ticker "
+            "ON report_documents (ticker)"
+        )
+
+
+_ensure_schema()
 
 logger = logging.getLogger(__name__)
 
@@ -1347,43 +1377,103 @@ def _document_to_dict(row: ReportDocument) -> dict:
         notes = json.loads(row.notes_json or "[]")
     except json.JSONDecodeError:
         notes = []
+    try:
+        columns = json.loads(row.columns_json or "[]")
+    except json.JSONDecodeError:
+        columns = []
     return {
         "id": row.id,
         "filename": row.filename,
+        "ticker": row.ticker or "",
         "period": row.period or "",
         "pages": row.pages or 0,
         "tables": tables,
+        "columns": columns,
         "notes": notes,
         "uploaded_at": (row.uploaded_at.isoformat() + "Z") if row.uploaded_at else "",
     }
 
 
-def ingest_upload(filename: str, data: bytes) -> dict:
-    """Разбирает загруженный PDF/ZIP, сохраняет таблицы в БД и отдаёт запись."""
+def ingest_upload(filename: str, data: bytes,
+                  ticker: str | None = None) -> dict:
+    """Разбирает загруженный PDF/ZIP, сохраняет таблицы в БД и отдаёт запись.
+
+    ticker — бумага, выбранная в разделе «Отчетность». Если он передан,
+    загрузка становится колонками её таблицы показателей; без ticker
+    документ сохраняется в общую историю (совместимость со старыми
+    вызовами и загрузками без компании).
+    """
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("Файл слишком большой (максимум 30 МБ)")
+
+    symbol = None
+    if ticker:
+        symbol = report_metrics_service.canonical_symbol(ticker)
+        if not symbol:
+            raise ValueError(
+                "Выберите бумагу Мосбиржи — для криптовалют отчётность "
+                "не поддерживается"
+            )
 
     files = extract_pdfs(filename, data)
     tables: list[dict] = []
     notes: list[dict] = []
+    columns: list[dict] = []
     pages_total = 0
     for name, pdf_bytes in files:
         parsed = parse_pdf(pdf_bytes, name)
         tables.extend(parsed["tables"])
         notes.extend(parsed["notes"])
         pages_total += parsed["pages"]
+        columns.extend(report_metrics_service.build_columns(parsed["tables"]))
 
     if not tables:
         reason = notes[0]["reason"] if notes else "таблицы отчётности не найдены"
         raise ValueError(f"Таблицы не распознаны: {reason}")
 
+    # ZIP может содержать несколько PDF; один и тот же период (например,
+    # год из годового отчёта и из баланса промежуточного) должен остаться
+    # одной колонкой. Более поздний файл уточняет значения.
+    merged_columns: dict[str, dict] = {}
+    for column in columns:
+        key = str(column.get("key") or "")
+        if not key:
+            continue
+        existing = merged_columns.get(key)
+        if existing is None:
+            merged_columns[key] = column
+            continue
+        merged = dict(existing)
+        merged.update({
+            field: column.get(field)
+            for field in ("label", "full_label", "kind", "year",
+                          "quarter", "end", "sort")
+            if column.get(field) is not None
+        })
+        values = dict(existing.get("values") or {})
+        values.update(column.get("values") or {})
+        merged["values"] = values
+        merged_columns[key] = merged
+    columns = sorted(
+        merged_columns.values(),
+        key=lambda column: int(column.get("sort") or 0),
+    )
+
+    if symbol and not columns:
+        raise ValueError(
+            "Таблицы распознаны, но периоды финансовых показателей не "
+            "найдены. Нужен документ с ОПиУ, ДДС или балансом."
+        )
+
     period = _period_from(tables)
     with get_session() as db:
         record = ReportDocument(
             filename=Path(filename or "report").name,
+            ticker=symbol,
             period=period,
             pages=pages_total,
             tables_json=json.dumps(tables, ensure_ascii=False),
+            columns_json=json.dumps(columns, ensure_ascii=False),
             notes_json=json.dumps(notes, ensure_ascii=False),
             uploaded_at=datetime.utcnow(),
         )

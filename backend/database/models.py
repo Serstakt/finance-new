@@ -175,13 +175,22 @@ class ReportDocument(Base):
     бывают по несколько мегабайт. notes_json — пояснения по нераспознанным
     таблицам (например, баланс на странице-скане без текстового слоя),
     period — подписи колонок для списка загрузок.
+
+    ticker — бумага, к которой отнесена загрузка (MOEX:SBER). По ней
+    раздел «Отчетность» строит таблицу показателей (как на smart-lab):
+    каждая загрузка добавляет колонки периодов. columns_json — уже
+    приведённые к единому виду показатели (см. report_metrics_service):
+    [{period, values}, ...]; это избавляет от повторного разбора таблиц
+    при каждом открытии раздела.
     """
     __tablename__ = "report_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     filename = Column(String, nullable=False)
+    ticker = Column(String, nullable=True, index=True)
     period = Column(String, nullable=True)
     pages = Column(Integer, nullable=False, default=0)
     tables_json = Column(Text, nullable=False, default="[]")
+    columns_json = Column(Text, nullable=False, default="[]")
     notes_json = Column(Text, nullable=False, default="[]")
     uploaded_at = Column(DateTime, default=datetime.utcnow)

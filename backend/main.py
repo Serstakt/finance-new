@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ from .services import heatmap_service
 from .services import symbol_search_service
 from .services import futoi_service
 from .services import reports_service
+from .services import report_metrics_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -251,14 +252,15 @@ async def get_futoi_series(
 
 
 # =============================================================================
-# ОТЧЁТНОСТЬ — бухгалтерская (финансовая) отчётность из PDF/ZIP
+# ОТЧЁТНОСТЬ — финансовые показатели компаний из загруженных PDF/ZIP
 #
-# Раздел справа от FUTOI. Пользователь сам загружает файл отчётности
-# (PDF или ZIP с PDF) — скачивать с e-disclosure ничего не нужно. Сервис
-# reports_service ищет в документе таблицы (ОПиУ, совокупный доход, ДДС,
-# изменения в капитале, баланс), распознаёт колонки по геометрии чисел
-# и сохраняет результат в SQLite. Сам PDF не хранится — только таблицы.
-# Фронтенд — js/reports.js: drag&drop, история загрузок, вкладки таблиц.
+# Пользователь выбирает бумагу из watchlist (кроме crypto) и загружает
+# файл отчётности. Сервис reports_service ищет в документе таблицы
+# (ОПиУ, ДДС, баланс), а report_metrics_service приводит статьи к
+# единому набору показателей (выручка, EBITDA, чистая прибыль, долг…)
+# и раскладывает их по периодам. Сам PDF не хранится — только таблицы
+# и уже посчитанные колонки. Фронтенд — js/reports.js: список бумаг,
+# таблица показателей и кнопка «Добавить колонку».
 # =============================================================================
 
 @app.get("/api/reports")
@@ -270,18 +272,49 @@ async def get_reports():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/reports/companies")
+async def get_report_companies():
+    """Бумаги watchlist (без crypto) и число загруженных по ним отчётов."""
+    try:
+        return report_metrics_service.list_companies()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/company")
+async def get_report_company(ticker: str = Query(..., description="MOEX:SBER или SBER")):
+    """Таблица показателей компании по периодам + список её документов."""
+    try:
+        company = report_metrics_service.company_financials(ticker)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if company is None:
+        raise HTTPException(status_code=400, detail="Бумага не поддерживается")
+    return company
+
+
 @app.post("/api/reports/upload")
-async def upload_report(file: UploadFile = File(...)):
+async def upload_report(
+    file: UploadFile = File(...),
+    ticker: str = Form(default="", description="Бумага: MOEX:SBER или SBER"),
+):
     """Загрузка PDF/ZIP: разбор таблиц в фоновом потоке и сохранение в БД.
 
     Разбор CPU-зависимый (PyMuPDF), поэтому выполняется в threadpool,
     чтобы не блокировать event loop и остальные запросы терминала.
+    ticker связывает загрузку с бумагой — её периоды появятся в таблице
+    раздела «Отчетность».
     """
     data = await file.read(reports_service.MAX_UPLOAD_BYTES + 1)
     if len(data) > reports_service.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Файл слишком большой (максимум 30 МБ)")
     try:
-        return await run_in_threadpool(reports_service.ingest_upload, file.filename or "report.pdf", data)
+        return await run_in_threadpool(
+            reports_service.ingest_upload,
+            file.filename or "report.pdf",
+            data,
+            ticker or None,
+        )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
