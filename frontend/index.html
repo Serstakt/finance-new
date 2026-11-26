@@ -35,6 +35,9 @@
     <div class="nav-title">📊 Финансовый терминал</div>
     <button class="nav-btn" data-page="home" onclick="navigateTo('home')">Главная</button>
     <button class="nav-btn" data-page="watchlist" onclick="navigateTo('watchlist')">Watchlist</button>
+    <!-- FUTOI — отдельный раздел справа от Watchlist: открытые позиции по
+         фьючерсам в разрезе физ./юр. лиц, дневной график (js/futoi.js). -->
+    <button class="nav-btn" data-page="futoi" onclick="navigateTo('futoi')">FUTOI</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
 </nav>
 
@@ -729,6 +732,71 @@
         </div>
     </div>
 
+    <!-- ==================================================================
+         FUTOI — открытые позиции по фьючерсам (физ. и юр. лица)
+         Данные: GET /api/futoi/instruments (список + дата снимка) и
+         GET /api/futoi/{ticker}?days=… (дневной ряд). Рендер — js/futoi.js:
+         линейный график на canvas с режимами «Лонги и шорты / Чистая
+         позиция / Доля шортов / Доля лонгов / Изменение за день / OI»,
+         выбором периода и инструмента, подсказкой по дню и сводкой.
+         ================================================================== -->
+    <div id="futoi-page" class="page">
+        <div class="futoi-container">
+            <div class="futoi-header">
+                <div class="futoi-title-group">
+                    <h1 class="futoi-title">FUTOI <span class="futoi-title-sub">открытые позиции</span></h1>
+                    <p class="futoi-subtitle">Фьючерсы Мосбиржи в разрезе физлиц и юрлиц · по корню инструмента (все серии)</p>
+                </div>
+                <div class="futoi-header-right">
+                    <span class="futoi-updated" id="futoi-updated"></span>
+                    <button class="futoi-refresh" id="futoi-refresh" type="button" title="Обновить данные FUTOI">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        <span>Обновить</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="futoi-toolbar">
+                <label class="futoi-select-wrap" for="futoi-instrument">
+                    <span class="futoi-select-label">Инструмент</span>
+                    <select id="futoi-instrument" title="Корень фьючерса: MX — все серии на индекс МосБиржи и т.д.">
+                        <option value="MX">MIX · Индекс МосБиржи</option>
+                    </select>
+                </label>
+                <div class="futoi-periods" id="futoi-periods" role="group" aria-label="Период графика">
+                    <button type="button" data-days="30">1М</button>
+                    <button type="button" data-days="90">3М</button>
+                    <button type="button" data-days="180">6М</button>
+                    <button type="button" data-days="365" class="active">1Г</button>
+                    <button type="button" data-days="3000" title="Вся доступная история">Всё</button>
+                </div>
+            </div>
+
+            <!-- Сводка по последнему торговому дню: лонги/шорты/нетто физлиц,
+                 доля шортов, нетто юрлиц и открытый интерес (js/futoi.js) -->
+            <div class="futoi-summary" id="futoi-summary"></div>
+
+            <div class="futoi-card">
+                <div class="futoi-modes" id="futoi-modes" role="group" aria-label="Режим графика">
+                    <button type="button" data-mode="longshort" class="active">Лонги и шорты</button>
+                    <button type="button" data-mode="net">Чистая позиция</button>
+                    <button type="button" data-mode="shortshare">Доля шортов</button>
+                    <button type="button" data-mode="longshare">Доля лонгов</button>
+                    <button type="button" data-mode="change">Изменение за день</button>
+                    <button type="button" data-mode="oi">OI контракта</button>
+                </div>
+                <!-- Легенда серий (клик скрывает/показывает линию) -->
+                <div class="futoi-legend" id="futoi-legend"></div>
+                <div class="futoi-chart-wrap" id="futoi-chart-wrap">
+                    <canvas id="futoi-chart"></canvas>
+                    <div class="futoi-tooltip" id="futoi-tooltip"></div>
+                    <div class="futoi-empty" id="futoi-empty">Загрузка данных…</div>
+                </div>
+                <div class="futoi-footnote" id="futoi-footnote"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="portfolio-page" class="page">
         <div class="portfolio-container">
             <!-- Заголовок и кнопки управления -->
@@ -971,6 +1039,10 @@
 <script defer src="js/symbol_search.js"></script>
 <script defer src="js/ui.js"></script>
 <script defer src="js/heatmap.js"></script>
+<!-- FUTOI (раздел справа от Watchlist): дневной график открытых позиций.
+     Подключён до main.js — navigateTo('futoi') вызывает window.loadFutoiPage
+     уже после разбора HTML, но до DOMContentLoaded, как и остальные разделы -->
+<script defer src="js/futoi.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/portfolio.js"></script>
 <script defer src="js/watchlist_chart.js?v=20261126"></script>
