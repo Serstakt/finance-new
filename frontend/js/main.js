@@ -179,11 +179,8 @@ window.deleteCurrentList = async function() {
 // === ЗАМЕТКИ К ТИКЕРАМ ===
 // Заметка («почему слежу за тикером») хранится в колонке watchlist_items.note,
 // источник истины — БД. Редактирование доступно только во вкладке «Заметки»
-// под графиком: там нет кнопок и prompt-диалогов — вместо них единое текстовое
-// полотно (<textarea id="notes-editor">) с автосохранением (см. renderNotesTab
-// и initNotesEditor в ui.js). NOTE_MAX_LEN объявлен в ui.js
-// (window.NOTE_MAX_LEN) и используется полотном заметок.
-const NOTE_MAX_LEN = window.NOTE_MAX_LEN || 500; // совпадает с backend/services/watchlist_service.py
+// под графиком: WYSIWYG-редактор Quill 2 (<div id="notes-editor">) с
+// автосохранением (см. renderNotesTab/initNotesEditor в ui.js).
 
 // Ищет первый обычный (не fav_) watchlist-список, содержащий тикер. Нужно
 // для setFavorite, открытого из fav_-списка («Красный», «Синий»…): флаг там

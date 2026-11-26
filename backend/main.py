@@ -660,7 +660,8 @@ async def set_watchlist_note(payload: schemas.WatchlistNote):
 
     Заметка хранится в колонке watchlist_items.note — тезисы «почему слежу»
     больше не зависят от localStorage и переживают смену браузера/устройства.
-    Пустая строка/null снимает заметку; длиннее NOTE_MAX_LEN — обрезается.
+    Пустая строка/null снимает заметку; форматирование хранится как безопасный
+    HTML (санитайзер в watchlist_service), длина не ограничивается.
     """
     result = watchlist_service.set_note(payload.list_id, payload.symbol, payload.note)
     if result.get("status") == "not_found":
