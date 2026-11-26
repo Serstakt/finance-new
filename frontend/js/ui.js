@@ -1258,6 +1258,17 @@ if (window.canRenderWithoutPrices(currentList)) {
     window.__alertSyncTimer = setTimeout(() => { syncAlertsWithDb(); }, 1500);
   }
 
+  // Цены отрисованных строк — графику: плашка «цена» на шкале, пунктир
+  // last-price и «Закр» легенды повторяют число строки списка. Свечи и
+  // котировки списка питаются разными лентами бэкенда (у MOEX свечи без
+  // задержки, marketdata в /api/prices отстаёт), поэтому без общей точки
+  // «текущая цена» на графике расходилась с ценой в списке (watchlist_chart.js:
+  // wlChartApplyListPrices). Тикер не из списка (введён в шапке графика) —
+  // график живёт по свечам.
+  if (typeof window.wlChartApplyListPrices === 'function') {
+    window.wlChartApplyListPrices(dataMap);
+  }
+
   // График: перезагружаем KLineChart только при СМЕНЕ активного тикера.
   // При автообновлении цен/сортировке вызов createChart с тем же символом
   // приводил к лишним перезагрузкам свечей — теперь это исключено.

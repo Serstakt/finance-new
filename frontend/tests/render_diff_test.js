@@ -307,6 +307,10 @@ vm.runInContext(`
   window.__lastMenuNode = null;
   window.createChartCalls = [];
   window.createChart = function(sym) { createChartCalls.push(sym); document.getElementById('wl-chart-area').dataset.activeSymbol = sym; };
+  // График watchlist_chart.js: render() пушит цены отрисованных строк, чтобы
+  // плашка «цена» на шкале показывала то же число, что строка списка.
+  window.listPricesPushed = [];
+  window.wlChartApplyListPrices = function (prices) { listPricesPushed.push(prices); };
 `, sandbox);
 
 // реальные исходники
@@ -367,6 +371,14 @@ function findNode(root, cls) {
   const secNode = sandbox.__rowsCache.map.get('SECTION:Росия');
   assert(!!sberEntry && !!gazpEntry && !!secNode, 'Кэш узлов заполнен');
   assert(sberEntry.el.querySelector('#price-SBER').textContent.includes('300'), 'Цена SBER отображена');
+
+  // Цены отрисованных строк ушли графику (одна карта на рендер): там из них
+  // строится плашка «цена» на шкале — иначе она расходилась с ценой строки
+  const pushed = sandbox.listPricesPushed[sandbox.listPricesPushed.length - 1];
+  assert(pushed && pushed['SBER'] && pushed['SBER'].price === 300
+    && pushed['GAZP'] && pushed['GAZP'].price === 120
+    && pushed['BINANCE:BTCUSDT'] && pushed['BINANCE:BTCUSDT'].price === 70000,
+    'Графику отправлены цены всех отрисованных строк (как в списке)');
 
   // --- Автообновление БЕЗ изменения цен: те же самые DOM-узлы, без пересоздания ---
   const before = container.children.slice();
