@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -17,6 +18,7 @@ from .services import candle_store_service
 from .services import heatmap_service
 from .services import symbol_search_service
 from .services import futoi_service
+from .services import reports_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -246,6 +248,68 @@ async def get_futoi_series(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ОТЧЁТНОСТЬ — бухгалтерская (финансовая) отчётность из PDF/ZIP
+#
+# Раздел справа от FUTOI. Пользователь сам загружает файл отчётности
+# (PDF или ZIP с PDF) — скачивать с e-disclosure ничего не нужно. Сервис
+# reports_service ищет в документе таблицы (ОПиУ, совокупный доход, ДДС,
+# изменения в капитале, баланс), распознаёт колонки по геометрии чисел
+# и сохраняет результат в SQLite. Сам PDF не хранится — только таблицы.
+# Фронтенд — js/reports.js: drag&drop, история загрузок, вкладки таблиц.
+# =============================================================================
+
+@app.get("/api/reports")
+async def get_reports():
+    """История загруженных отчётов (без таблиц — только шапки)."""
+    try:
+        return {"reports": reports_service.list_documents()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/reports/upload")
+async def upload_report(file: UploadFile = File(...)):
+    """Загрузка PDF/ZIP: разбор таблиц в фоновом потоке и сохранение в БД.
+
+    Разбор CPU-зависимый (PyMuPDF), поэтому выполняется в threadpool,
+    чтобы не блокировать event loop и остальные запросы терминала.
+    """
+    data = await file.read(reports_service.MAX_UPLOAD_BYTES + 1)
+    if len(data) > reports_service.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (максимум 30 МБ)")
+    try:
+        return await run_in_threadpool(reports_service.ingest_upload, file.filename or "report.pdf", data)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось разобрать файл: {e}")
+
+
+@app.get("/api/reports/{report_id}")
+async def get_report(report_id: int):
+    """Распознанные таблицы одного отчёта."""
+    try:
+        report = reports_service.get_document(report_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not report:
+        raise HTTPException(status_code=404, detail="Отчёт не найден")
+    return report
+
+
+@app.delete("/api/reports/{report_id}")
+async def delete_report(report_id: int):
+    """Удаление загрузки из истории (вместе с распознанными таблицами)."""
+    try:
+        deleted = reports_service.delete_document(report_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Отчёт не найден")
+    return {"ok": True}
 
 
 # =============================================================================

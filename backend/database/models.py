@@ -164,3 +164,24 @@ class AlertNotificationLog(Base):
     alert_id = Column(Integer, nullable=False, unique=True, index=True)
     chat_id = Column(String, nullable=False)
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ReportDocument(Base):
+    """Загруженная бухгалтерская отчётность и распознанные таблицы.
+
+    Пользователь загружает PDF (или ZIP с PDF) прямо в разделе «Отчетность»;
+    сервис reports_service вытаскивает таблицы и складывает их JSON в
+    tables_json. Сам PDF не храним: после разбора он не нужен, а файлы
+    бывают по несколько мегабайт. notes_json — пояснения по нераспознанным
+    таблицам (например, баланс на странице-скане без текстового слоя),
+    period — подписи колонок для списка загрузок.
+    """
+    __tablename__ = "report_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    filename = Column(String, nullable=False)
+    period = Column(String, nullable=True)
+    pages = Column(Integer, nullable=False, default=0)
+    tables_json = Column(Text, nullable=False, default="[]")
+    notes_json = Column(Text, nullable=False, default="[]")
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
