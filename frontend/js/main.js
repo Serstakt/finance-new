@@ -101,6 +101,13 @@ window.navigateTo = function(pageName) {
     // при каждом открытии «Главной» (состав мог измениться в Watchlist).
     if (typeof window.loadHeatmap === 'function') window.loadHeatmap();
   }
+  if (pageName === 'futoi') {
+    // FUTOI: ленивая инициализация раздела (список инструментов + дневной
+    // ряд открытых позиций). Повторный вход перерисовывает холст — при
+    // первой загрузке он мог быть скрыт вместе со страницей и получить
+    // нулевые размеры (js/futoi.js: loadFutoiPage).
+    if (typeof window.loadFutoiPage === 'function') window.loadFutoiPage();
+  }
   log(`Переход на страницу: ${pageName}`, 'info');
 };
 

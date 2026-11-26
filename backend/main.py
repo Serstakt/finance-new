@@ -16,6 +16,7 @@ from .services import notification_service
 from .services import candle_store_service
 from .services import heatmap_service
 from .services import symbol_search_service
+from .services import futoi_service
 from .models import schemas
 
 # Путь к фронтенду
@@ -208,6 +209,43 @@ async def get_heatmap_changes(
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     return {"changes": changes}
+
+
+# =============================================================================
+# FUTOI — ОТКРЫТЫЕ ПОЗИЦИИ ПО ФЬЮЧЕРСАМ (физ. и юр. лица)
+#
+# Данные MOEX ISS+ (/iss/analyticalproducts/futoi/...): по корню фьючерса
+# (MX — все серии на индекс МосБиржи) отдаются лонги/шорты физлиц и юрлиц.
+# С токеном MOEX_API_TOKEN — apim.moex.com (без задержки), без токена —
+# анонимный iss.moex.com. На бесплатном тарифе ISS+ последние 14 дней
+# недоступны: сервис сам укорачивает диапазон и помечает ответ delayed.
+# Фронтенд (js/futoi.js) строит дневной линейный график.
+# =============================================================================
+
+@app.get("/api/futoi/instruments")
+async def get_futoi_instruments():
+    """Инструменты FUTOI для селектора + дата последнего доступного снимка."""
+    try:
+        return await futoi_service.fetch_instruments()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/futoi/{ticker}")
+async def get_futoi_series(
+    ticker: str,
+    days: int = Query(default=365, ge=7, le=3000,
+                      description="Глубина истории в календарных днях (30/90/180/365/3000)"),
+    force: bool = Query(default=False,
+                        description="Игнорировать 5-минутный кэш (кнопка «Обновить»)"),
+):
+    """Дневной ряд открытых позиций FUTOI по инструменту (FIZ/YUR + total)."""
+    try:
+        return await futoi_service.fetch_futoi_series(ticker, days, force=force)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================

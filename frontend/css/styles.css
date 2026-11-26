@@ -3207,3 +3207,341 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
 .tc-compare-close:hover {
   color: #ef5350;
 }
+
+/* ==========================================================================
+   FUTOI — ОТКРЫТЫЕ ПОЗИЦИИ ПО ФЬЮЧЕРСАМ (раздел справа от Watchlist)
+   Данные — MOEX ISS+ FUTOI (services/futoi_service.py), рендер —
+   js/futoi.js: линейный график на canvas, сводка, легенда, тултип.
+   ========================================================================== */
+#futoi-page {
+  flex-direction: column;
+  padding: 20px;
+  overflow-y: auto;
+  background: #131722;
+}
+
+.futoi-container {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.futoi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.futoi-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #d1d4dc;
+  line-height: 1.15;
+}
+
+.futoi-title-sub {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #787b86;
+  margin-left: 6px;
+}
+
+.futoi-subtitle {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: #787b86;
+}
+
+.futoi-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.futoi-updated {
+  font-size: 12px;
+  color: #787b86;
+  white-space: nowrap;
+}
+
+.futoi-updated.delayed {
+  color: #d9a441;
+}
+
+.futoi-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  color: #d1d4dc;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.futoi-refresh:hover { background: #2a2e39; border-color: #2962ff; }
+.futoi-refresh svg { width: 14px; height: 14px; }
+.futoi-refresh.loading svg { animation: futoi-spin 0.9s linear infinite; }
+@keyframes futoi-spin { to { transform: rotate(360deg); } }
+
+.futoi-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.futoi-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #787b86;
+}
+
+.futoi-select-label { white-space: nowrap; }
+
+#futoi-instrument {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  color: #d1d4dc;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  min-width: 280px;
+  max-width: 100%;
+  cursor: pointer;
+}
+#futoi-instrument:focus { outline: none; border-color: #2962ff; }
+
+.futoi-periods {
+  display: flex;
+  gap: 4px;
+  background: #131722;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+  padding: 3px;
+}
+.futoi-periods button {
+  background: transparent;
+  border: none;
+  color: #787b86;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.futoi-periods button:hover { color: #d1d4dc; background: #232836; }
+.futoi-periods button.active { background: #2962ff; color: #fff; }
+
+/* Сводка по последнему торговому дню */
+.futoi-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 10px;
+}
+
+.futoi-sum-card {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.futoi-sum-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #787b86;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.futoi-sum-value {
+  margin-top: 6px;
+  font-size: 21px;
+  font-weight: 700;
+  color: #d1d4dc;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.futoi-sum-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #787b86;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.futoi-pos { color: #26a69a; }
+.futoi-neg { color: #ef5350; }
+
+/* Карточка графика */
+.futoi-card {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.futoi-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.futoi-modes button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #787b86;
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.futoi-modes button:hover { color: #d1d4dc; background: #232836; }
+.futoi-modes button.active { background: #2962ff; color: #fff; }
+
+.futoi-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.futoi-leg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: #d1d4dc;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.futoi-leg-item:hover { background: #232836; }
+.futoi-leg-item.off { color: #5a5f6b; text-decoration: line-through; }
+.futoi-leg-item.off .futoi-leg-dot { opacity: 0.35; }
+
+.futoi-leg-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.futoi-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: clamp(360px, 52vh, 620px);
+  min-height: 320px;
+}
+
+#futoi-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.futoi-tooltip {
+  position: absolute;
+  display: none;
+  z-index: 5;
+  pointer-events: none;
+  background: rgba(30, 34, 45, 0.97);
+  border: 1px solid #363a45;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 180px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  color: #d1d4dc;
+}
+
+.futoi-tt-date {
+  font-weight: 700;
+  color: #e6e9f0;
+  padding-bottom: 5px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.futoi-tt-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+}
+
+.futoi-tt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.futoi-tt-label {
+  color: #9aa3b5;
+  flex: 1;
+  white-space: nowrap;
+}
+
+.futoi-tt-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.futoi-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: #787b86;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.futoi-footnote {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5f6471;
+}
+
+@media (max-width: 720px) {
+  #futoi-page { padding: 12px; }
+  .futoi-chart-wrap { height: clamp(300px, 45vh, 460px); }
+  .futoi-sum-value { font-size: 18px; }
+  #futoi-instrument { min-width: 0; width: 100%; }
+  .futoi-select-wrap { width: 100%; }
+}
