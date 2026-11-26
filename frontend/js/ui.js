@@ -127,6 +127,9 @@ window.setupColumnHeaders = function() {
       // Стрелки ↑/↓ — SVG-иконки из разметки; направление задаёт общий
       // resetSortHeaders (data-dir), видимость — CSS (.sort-icon-dir-up/down).
       resetSortHeaders(currentSort.field, currentSort.direction);
+      // Запоминаем выбор в localStorage: после F5 список остаётся
+      // отсортированным по той же колонке (loadSortState в state.js).
+      if (typeof saveSortState === 'function') saveSortState();
       render();
       log(`Сортировка: ${field} (${currentSort.direction === 'asc' ? 'по возрастанию' : 'по убыванию'})`, 'info');
     });

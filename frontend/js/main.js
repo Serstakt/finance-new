@@ -391,8 +391,11 @@ window.importAllData = function() {
           window.alert('Импорт не выполнен: ни один список не удалось сохранить в БД.');
           return;
         }
-        currentSort = { field: null, direction: 'asc' };
-        if (typeof resetSortHeaders === 'function') resetSortHeaders();
+        if (typeof resetSortState === 'function') resetSortState();
+        else {
+          currentSort = { field: null, direction: 'asc' };
+          if (typeof resetSortHeaders === 'function') resetSortHeaders();
+        }
 
         // Перечитываем состояние из БД — единственный источник истины.
         await loadListNamesFromDb();
@@ -633,8 +636,11 @@ if (typeof Sortable !== 'undefined') {
         // порядок по-старому всем списком
         saveOrderToDb(appState.activeListId, newList);
       }
-      currentSort = { field: null, direction: 'asc' };
-      if (typeof resetSortHeaders === 'function') resetSortHeaders();
+      if (typeof resetSortState === 'function') resetSortState();
+      else {
+        currentSort = { field: null, direction: 'asc' };
+        if (typeof resetSortHeaders === 'function') resetSortHeaders();
+      }
       log('Порядок обновлен', 'info');
     }
   });
