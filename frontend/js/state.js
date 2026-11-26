@@ -23,7 +23,8 @@ window.removeLegacyStorageKeys = function() {
   } catch (e) {}
 };
 // В localStorage остаются только переходящие UI-настройки: размер панели
-// отладки ('debug_panel_height'), кэш цен ('ticker_cache') и логотипов.
+// отладки ('debug_panel_height'), сортировка колонок watchlist
+// ('watchlist_sort'), кэш цен ('ticker_cache') и логотипов.
 // Сессионные UI-настройки: активная страница/вкладка под графиком.
 // Активный таб (выбранный список) тоже живёт в sessionStorage — это
 // настройка вида конкретной вкладки браузера, а не данные списка.
@@ -82,6 +83,50 @@ window.currentSort = { field: null, direction: 'asc' };
 window.activePickerSymbol = null;
 window.currentAlertSymbol = null;
 
+// === СОРТИРОВКА КОЛОНОК WATCHLIST (переживает перезагрузку) ===
+// Клик по заголовку «Тикер / Цена / Изм. / Изм.%» задаёт currentSort, по
+// которому sortList() упорядочивает тикеры внутри разделов. Раньше это
+// состояние жило только в памяти и сбрасывалось каждым F5. Теперь поле и
+// направление хранятся в localStorage — это UI-настройка, а не данные списка
+// (сами тикеры по-прежнему только в БД).
+window.SORT_STATE_KEY = 'watchlist_sort';
+const SORT_FIELDS = ['ticker', 'price', 'change', 'changePct'];
+
+// Восстанавливает сортировку из localStorage и подсвечивает заголовок.
+// Битый JSON / приватный режим / неизвестное поле — просто оставляем
+// сортировку выключенной, страница работает как раньше.
+window.loadSortState = function() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(window.SORT_STATE_KEY) || 'null');
+    if (!saved || !SORT_FIELDS.includes(saved.field)) return;
+    const direction = saved.direction === 'desc' ? 'desc' : 'asc';
+    window.currentSort = { field: saved.field, direction };
+    if (typeof window.resetSortHeaders === 'function') {
+      window.resetSortHeaders(saved.field, direction);
+    }
+  } catch (e) { /* localStorage недоступен — сортировка не восстановится */ }
+};
+
+// Сохраняет текущую сортировку (или удаляет ключ, если она сброшена).
+window.saveSortState = function() {
+  try {
+    if (window.currentSort.field) {
+      localStorage.setItem(window.SORT_STATE_KEY, JSON.stringify(window.currentSort));
+    } else {
+      localStorage.removeItem(window.SORT_STATE_KEY);
+    }
+  } catch (e) { /* localStorage недоступен/переполнен — сортировка не сохранится */ }
+};
+
+// Сброс сортировки единой точкой (смена списка, импорт, drag&drop):
+// память + localStorage + подсветка заголовков. Без очистки ключа сброшенная
+// пользователем сортировка «всплывала» бы после перезагрузки страницы.
+window.resetSortState = function() {
+  window.currentSort = { field: null, direction: 'asc' };
+  window.saveSortState();
+  if (typeof window.resetSortHeaders === 'function') window.resetSortHeaders();
+};
+
 window.appState = {
   activeListId: 'default',
   favorites: {},
@@ -116,6 +161,10 @@ window.loadState = function() {
     const savedTab = sessionStorage.getItem(window.UI_STATE_KEY);
     if (savedTab) window.__pendingListId = savedTab;
   } catch (e) {}
+
+  // Сортировка колонок — UI-настройка браузера: восстанавливаем до первого
+  // render(), чтобы список сразу отрисовался в сохранённом порядке.
+  window.loadSortState();
 
   // Данные watchlist сюда НЕ загружаются: единственный источник истины — БД.
   // Одноразовый перенос старого снимка из localStorage делает
@@ -817,8 +866,11 @@ window.switchList = function(listId) {
   // Активный таб — UI-настройка вкладки браузера: sessionStorage, не localStorage.
   try { sessionStorage.setItem(window.UI_STATE_KEY, listId); } catch (e) {}
   populateListSelector();
-  currentSort = { field: null, direction: 'asc' };
-  if (typeof resetSortHeaders === 'function') resetSortHeaders(); // сброс SVG-стрелок без textContent-костыля
+  // Сортировка привязана к активному списку в памяти, но хранится глобально:
+  // при смене списка сбрасываем и её копию в localStorage (resetSortState),
+  // иначе после F5 всплыл бы порядок прошлого списка.
+  if (typeof window.resetSortState === 'function') window.resetSortState();
+  else { currentSort = { field: null, direction: 'asc' }; if (typeof resetSortHeaders === 'function') resetSortHeaders(); }
   if (typeof render === 'function') render();
   // тикеры обычных списков живут в БД — подтягиваем актуальный состав
   if (typeof syncListWithDb === 'function') syncListWithDb(listId);
