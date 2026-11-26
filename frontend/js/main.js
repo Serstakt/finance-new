@@ -108,6 +108,11 @@ window.navigateTo = function(pageName) {
     // нулевые размеры (js/futoi.js: loadFutoiPage).
     if (typeof window.loadFutoiPage === 'function') window.loadFutoiPage();
   }
+  if (pageName === 'reports') {
+    // Отчетность: история загрузок + распознанные таблицы. Повторный вход
+    // не перезагружает уже открытый отчёт, только список (js/reports.js).
+    if (typeof window.loadReportsPage === 'function') window.loadReportsPage();
+  }
   log(`Переход на страницу: ${pageName}`, 'info');
 };
 
