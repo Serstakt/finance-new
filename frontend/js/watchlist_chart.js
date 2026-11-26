@@ -124,7 +124,14 @@
 //     «Стиль» (цвета линий/гистограмм, толщина); изменения применяются
 //     через overrideIndicator и переживают перезагрузку (wl_chart_indicators:
 //     настройки применяются при каждом добавлении, набор включённых
-//     индикаторов тоже восстанавливается — как шаблоны индикаторов в TV).
+//     индикаторов тоже восстанавливается — как шаблоны индикаторов в TV);
+//   - текущая цена графика — как в строке watchlist: свечи и котировки
+//     списка питаются разными лентами бэкенда (у MOEX свечи без задержки,
+//     а снимок marketdata в /api/prices отстаёт), поэтому close последней
+//     свечи расходился с ценой в списке. ui.js пушит цены отрисованных
+//     строк (wlChartApplyListPrices), график подтягивает к ним последнюю
+//     свечу — плашка на оси, пунктир last-price и «Закр» легенды совпадают
+//     со списком; тикер не из списка (введён в шапке) — цена по свечам.
 
 (() => {
   let chartInstance = null;
@@ -2495,6 +2502,17 @@
   let dailyQuote = null;       // {changeValue, changeDay} текущего тикера (как в списке)
   let dailyQuoteTicker = null; // тикер, к которому относится dailyQuote — защита от гонки смены
 
+  // ---- Текущая цена графика — как в строке списка ----
+  // Свечи и котировки списка — разные ленты бэкенда: у MOEX свечи приходят
+  // без задержки, а снимок marketdata доски (/api/prices, LAST) отстаёт
+  // (~15 мин в backwards-compatible режиме Algopack), поэтому close
+  // последней свечи на графике и цена в строке watchlist расходились.
+  // Список — источник истины «текущей цены»: ui.js после каждой отрисовки
+  // пушит цены строк (wlChartApplyListPrices), график подтягивает к ним
+  // последнюю свечу. Дельта легенды берётся из той же ручки (dailyQuote),
+  // так что цена и изменение рядом всегда про одну и ту же котировку.
+  let listPrices = new Map(); // тикер (normalizeTicker) -> цена из строки списка
+
   // ru-формат числа как в списке (ui.js formatNumber): запятая, фикс. знаки
   const fmtListNum = (n, decimals) => Number(n).toLocaleString('ru-RU',
     { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -2543,17 +2561,66 @@
       .catch(e => { console.debug('Котировка для легенды не получена:', e); });
   };
 
+  // Последняя (ещё формирующаяся) свеча «тикует» ценой списка: подтягиваем
+  // close/high/low бара, чтобы пунктир last-price, плашка на оси и «Закр»
+  // легенды стояли на цене строки, а не на close свечной ленты. High/low
+  // расширяются — цена последней сделки не может выйти за пределы бара.
+  // Совпадение всех трёх полей — no-op (updateData каждый тик перерисовывает
+  // бар, лишние вызовы не нужны).
+  const applyLiveLastPrice = (price) => {
+    if (!chartInstance) return;
+    const n = Number(price);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const list = chartInstance.getDataList();
+    const last = list && list.length ? list[list.length - 1] : null;
+    if (!last || !Number.isFinite(last.timestamp)) return;
+    const high = Number.isFinite(last.high) ? Math.max(last.high, n) : n;
+    const low = Number.isFinite(last.low) ? Math.min(last.low, n) : n;
+    if (last.close === n && last.high === high && last.low === low) return;
+    chartInstance.updateData({
+      timestamp: last.timestamp, open: last.open, high, low, close: n, volume: last.volume,
+    });
+  };
+
+  // Приём цен отрисованного списка (ui.js render): карта тикер -> цена.
+  // Заменяем карту целиком — тикеры, ушедшие из списка, теряют привязку и
+  // снова показывают close последней свечи. Цена активного тикера
+  // применяется сразу, не дожидаясь следующего тика поллинга.
+  window.wlChartApplyListPrices = function (prices) {
+    if (!prices) return;
+    const next = new Map();
+    for (const [sym, data] of Object.entries(prices)) {
+      const n = Number(data && data.price);
+      if (Number.isFinite(n) && n > 0) next.set(normalizeTicker(sym), n);
+    }
+    listPrices = next;
+    if (lastTicker == null || !listPrices.has(lastTicker)) return;
+    // Перечитываем легенду и плашку целиком: свеча подтянута к цене строки,
+    // «Закр»/OHLC и позиция пунктира должны обновиться сразу, а не на
+    // следующем тике поллинга
+    refreshChartReadouts();
+  };
+
   // Дельта в легенде на холсте (после «Закр»). Источник — котировка из
   // ручки списка (dailyQuote): те же числа и тот же ru-формат, что в
   // строке watchlist («-1,17 (-0,40%)»). Нет котировки (ручка сбойнула/
   // ещё грузится) — расчёт по последним двум свечам того же формата.
-  // Текущую цену показывает цветной тег на шкале цены
+  // Текущую цену показывает цветной тег на шкале цены — она тоже из списка
+  // (listPrices): close свечи и marketdata принадлежат разным лентам и
+  // расходились, а официальная дельта считается от цены той же строки.
   const updateSymbolQuote = (list) => {
     const priceEl = document.getElementById('tc-sym-price');
     const changeEl = document.getElementById('tc-leg-change');
-    // Цена — верхняя строка поля «цена + отсчёт» на шкале цены: всегда из
-    // данных графика (последняя свеча), независимо от источника дельты
-    if (priceEl && list && list.length) priceEl.textContent = fmtNum(list[list.length - 1].close);
+    // Цена — верхняя строка поля «цена + отсчёт» на шкале цены: значение
+    // строки списка (ui.js), фолбэк — close последней свечи графика.
+    // Тикер, введённый в шапке вручную, в списке отсутствует — живёт по
+    // свечам, как раньше.
+    const listPrice = lastTicker != null ? listPrices.get(lastTicker) : undefined;
+    if (Number.isFinite(listPrice)) applyLiveLastPrice(listPrice);
+    const bars = chartInstance ? chartInstance.getDataList() : list;
+    const lastBar = bars && bars.length ? bars[bars.length - 1] : null;
+    if (priceEl && lastBar) priceEl.textContent = fmtNum(lastBar.close);
+    syncAxisPriceTag();
     if (!changeEl) return;
     const render = (text, up) => {
       changeEl.textContent = text || '';
@@ -2652,6 +2719,13 @@
   // с обновлёнными значениями могла смениться — догоняем размер холста
   const refreshChartReadouts = () => {
     if (!chartInstance) return;
+    // Цена строки списка — в последнюю свечу ДО чтения легенды: «Закр»,
+    // OHLC и пунктир last-price должны показывать уже подтянутое значение,
+    // а не close свечной ленты (updateSymbolQuote ниже — для путей без
+    // refreshChartReadouts, например ответа fetchSymbolQuote)
+    if (lastTicker != null && listPrices.has(lastTicker)) {
+      applyLiveLastPrice(listPrices.get(lastTicker));
+    }
     const list = chartInstance.getDataList();
     const lastBar = list.length ? list[list.length - 1] : null;
     applyPricePrecision(list);

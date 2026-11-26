@@ -2333,6 +2333,39 @@ const candle = (day, close, month = 11) => ({
   assert(tagEl.style.visibility === '',
     'плашка цены: кроссхейр ушёл — плашка снова видима');
 
+  // ---- 19) Цена графика = цена строки списка ----
+  // Свечи и котировки строк — разные ленты бэкенда (у MOEX свечи без
+  // задержки, marketdata в /api/prices отстаёт), поэтому close последней
+  // свечи расходился с ценой в списке. ui.js пушит цены отрисованных строк
+  // (wlChartApplyListPrices): график подтягивает к ним последнюю свечу.
+  sandbox.window.wlChartApplyListPrices({ 'MOEX:GAZP': { price: 205.5 } });
+  assert(els['tc-sym-price'].textContent === '205.50',
+    'цена строки: плашка на оси показывает цену из списка, а не close свечи (12)');
+  assert(els['tc-leg-c'].textContent === '205.50',
+    'цена строки: «Закр» легенды — то же число, что в списке');
+  const lastBar = applied[applied.length - 1];
+  assert(lastBar.close === 205.5 && lastBar.high === 205.5 && lastBar.low === 5,
+    'цена строки: последняя свеча подтянута к цене — пунктир last-price на её уровне, high/low расширены');
+  assert(tagEl.style.top === '189px',
+    'цена строки: плашка цены переехала на цену из списка (205.5 − 17)');
+
+  // Тикер ушёл из списка (карта заменяется целиком): привязки нет — свеча
+  // возвращается к close источника на ближайшем тике поллинга
+  sandbox.window.wlChartApplyListPrices({ 'MOEX:SBER': { price: 310 } });
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(20, 12)] }];
+  await timers[timers.length - 1].cb(); await flush();
+  assert(els['tc-sym-price'].textContent === '12.00',
+    'цена строки: тикера нет в списке — снова close последней свечи');
+
+  // Пока тикер в списке, тик поллинга не сбивает цену: источник обновил
+  // свечу (150), плашка остаётся на цене строки
+  sandbox.window.wlChartApplyListPrices({ 'MOEX:GAZP': { price: 205.5 } });
+  fetchQueue = [{ symbol: 'MOEX:GAZP', interval: 24, candles: [candle(20, 150)] }];
+  await timers[timers.length - 1].cb(); await flush();
+  assert(els['tc-sym-price'].textContent === '205.50'
+    && applied[applied.length - 1].close === 205.5,
+    'цена строки: на тике поллинга свеча «тикнула» из источника, а цена осталась из списка');
+
   if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
   console.log('\nALL PASS');
 })().catch(e => { console.error('ERROR:', e); process.exit(1); });
