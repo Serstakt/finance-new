@@ -175,19 +175,203 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWlCon
 // «Алерты» живут в правой колонке (switchRightTab) и не перекрываются
 // вкладками. Активная вкладка левой колонки запоминается в sessionStorage
 // ('bottomTab'), чтобы переключение не сбрасывалось при перерисовке списка.
-// NOTE_MAX_LEN считается по ВИДИМОМУ тексту без разметки — совпадает с
-// лимитом колонки watchlist_items.note (backend/services/watchlist_service.py).
-window.NOTE_MAX_LEN = 500;
+
+// --- Санитайзер HTML заметок ---
+// Единый whitelist: ровно то, что умеет генерировать Quill 2 с нашим
+// тулбаром (заголовки, инлайн-форматы, списки, цитаты, код, ссылки, цвет).
+// Quill пишет выравнивание/отступы классами ql-*, цвет — inline-style,
+// списки — <ol><li data-list="bullet|ordered">. Всё остальное (скрипты,
+// iframe, обработчики, произвольные классы/стили) вырезается.
+// Основной санитайзер — DOMPurify (CDN); если он недоступен, работает
+// эквивалентный DOM-фильтр ниже.
+const NOTES_ALLOWED_TAGS = new Set([
+  'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'FONT', 'BR', 'DIV', 'P',
+  'UL', 'OL', 'LI', 'SPAN', 'BLOCKQUOTE', 'PRE', 'CODE', 'H1', 'H2', 'H3', 'A',
+]);
+const NOTES_ALLOWED_ATTRS = {
+  A: ['href', 'target', 'rel'],
+  LI: ['class', 'data-list'],
+  OL: ['class'],
+  UL: ['class'],
+  DIV: ['class'],
+  P: ['class'],
+  H1: ['class'],
+  H2: ['class'],
+  H3: ['class'],
+  BLOCKQUOTE: ['class'],
+  PRE: ['class'],
+  CODE: ['class'],
+  SPAN: ['class', 'style'],
+  FONT: ['color', 'size', 'face'],
+};
+// Классы форматирования Quill (UI-классы ql-ui/ql-cursor сюда не входят)
+const NOTES_ALLOWED_CLASS_RE = /^(?:ql-align-(?:center|right|justify)|ql-indent-[1-8]|ql-direction-rtl|ql-size-(?:small|large|huge)|ql-syntax)$/;
+const NOTES_ALLOWED_STYLE_PROPS = new Set(['color', 'background-color', 'text-align', 'font-family', 'font-size']);
+
+function notesFilterClasses(value) {
+  return String(value || '')
+    .split(/\s+/)
+    .filter(cls => NOTES_ALLOWED_CLASS_RE.test(cls))
+    .join(' ');
+}
+
+function notesFilterStyle(value) {
+  return String(value || '')
+    .split(';')
+    .map(decl => decl.trim())
+    .filter(Boolean)
+    .filter(decl => {
+      const sep = decl.indexOf(':');
+      if (sep <= 0) return false;
+      const prop = decl.slice(0, sep).trim().toLowerCase();
+      const val = decl.slice(sep + 1).trim();
+      if (!NOTES_ALLOWED_STYLE_PROPS.has(prop)) return false;
+      // никаких url()/expression()/javascript: в значениях стилей
+      return !/url\s*\(|expression\s*\(|javascript:/i.test(val);
+    })
+    .join('; ');
+}
+
+function notesIsSafeHref(value) {
+  return /^(?:https?:|mailto:|tel:)/i.test(String(value || '').trim());
+}
+
+const NOTES_LIST_VALUES_RE = /^(?:bullet|ordered|checked|unchecked)$/;
+
+// Резервный DOM-санитайзер (если DOMPurify не загрузился с CDN).
+function notesSanitizeFallback(html) {
+  const doc = (typeof DOMParser !== 'undefined')
+    ? new DOMParser().parseFromString(String(html || ''), 'text/html')
+    : null;
+  if (!doc || !doc.body) return escapeHtml(String(html || ''));
+  const cleanNode = (node) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === 3) continue; // текст
+      if (child.nodeType !== 1) { node.removeChild(child); continue; }
+      const tag = String(child.tagName || '').toUpperCase();
+      if (!NOTES_ALLOWED_TAGS.has(tag)) {
+        // неразрешённый тег — оставляем только его текст
+        node.replaceChild(doc.createTextNode(child.textContent || ''), child);
+        continue;
+      }
+      const allowed = NOTES_ALLOWED_ATTRS[tag] || [];
+      for (const attr of Array.from(child.attributes || [])) {
+        const name = String(attr.name).toLowerCase();
+        if (!allowed.includes(name)) { child.removeAttribute(attr.name); continue; }
+        if (name === 'class') {
+          const cls = notesFilterClasses(attr.value);
+          if (cls) child.setAttribute('class', cls); else child.removeAttribute('class');
+        } else if (name === 'style') {
+          const style = notesFilterStyle(attr.value);
+          if (style) child.setAttribute('style', style); else child.removeAttribute('style');
+        } else if (name === 'data-list' && !NOTES_LIST_VALUES_RE.test(attr.value)) {
+          child.removeAttribute(name);
+        } else if (name === 'href' && !notesIsSafeHref(attr.value)) {
+          child.removeAttribute(name);
+        }
+      }
+      if (tag === 'A') {
+        if (!child.getAttribute('href')) {
+          node.replaceChild(doc.createTextNode(child.textContent || ''), child);
+          continue;
+        }
+        child.setAttribute('target', '_blank');
+        child.setAttribute('rel', 'noopener noreferrer');
+      }
+      if (tag === 'SPAN' && !child.attributes.length) {
+        // пустые span (например, служебный span.ql-ui) в разметке не нужны
+        node.replaceChild(doc.createTextNode(child.textContent || ''), child);
+        continue;
+      }
+      cleanNode(child);
+    }
+  };
+  cleanNode(doc.body);
+  return doc.body.innerHTML;
+}
+
+window.notesSanitize = function(html) {
+  const src = String(html ?? '');
+  if (!src) return '';
+  const dp = window.DOMPurify;
+  if (dp && typeof dp.sanitize === 'function') {
+    try {
+      if (!window.__notesPurifyHooked) {
+        window.__notesPurifyHooked = true;
+        dp.addHook('uponSanitizeAttribute', (node, data) => {
+          const name = String(data.attrName || '').toLowerCase();
+          if (name === 'class') {
+            const cls = notesFilterClasses(data.attrValue);
+            if (cls) data.attrValue = cls; else data.keepAttr = false;
+          } else if (name === 'style') {
+            const style = notesFilterStyle(data.attrValue);
+            if (style) data.attrValue = style; else data.keepAttr = false;
+          } else if (name === 'href') {
+            if (!notesIsSafeHref(data.attrValue)) data.keepAttr = false;
+          } else if (name === 'data-list') {
+            if (!NOTES_LIST_VALUES_RE.test(String(data.attrValue || ''))) data.keepAttr = false;
+          } else if (name === 'target') {
+            if (data.attrValue !== '_blank') data.keepAttr = false;
+          } else if (name === 'rel') {
+            data.attrValue = 'noopener noreferrer';
+          }
+        });
+        dp.addHook('afterSanitizeAttributes', (node) => {
+          if (node.tagName === 'A' && node.getAttribute('href')) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+          }
+        });
+      }
+      return dp.sanitize(src, {
+        ALLOWED_TAGS: Array.from(NOTES_ALLOWED_TAGS, t => t.toLowerCase()),
+        ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'style', 'data-list', 'color', 'size', 'face'],
+        ALLOW_DATA_ATTR: true, // произвольные data-* снимает хук выше
+        ALLOW_ARIA_ATTR: false,
+        KEEP_CONTENT: true,
+      });
+    } catch (e) {
+      // повреждённый/слишком сложный HTML — уходим в резервный фильтр
+    }
+  }
+  return notesSanitizeFallback(src);
+};
+
+// --- Доступ к экземпляру Quill ---
+// Контейнер обязан оставаться #notes-editor: тесты и старые вызовы передают
+// этот элемент в getNotesSerialize(editor).
+function getNotesQuill() {
+  const q = window.__notesQuill;
+  const editor = document.getElementById('notes-editor');
+  if (!q || !editor || q.container !== editor) return null;
+  return q;
+}
+
+function notesQuillPlain(quill) {
+  return String(quill.getText() || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function notesDomPlain(editor) {
+  return String(editor.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 // Отрисовка содержимого вкладки «Заметки» для выбранного тикера.
-// Вкладка — WYSIWYG-редактор (подобие Word): панель форматирования +
-// contenteditable-полотно <div id="notes-editor">. Заметка хранится как
-// безопасный HTML (бэкенд дополнительно вырезает теги для поиска/лимитов).
-// Загрузка чужого HTML недопустима — содержимое прогоняется через санитайзер.
+// В Quill содержимое загружается Delta из безопасного HTML; старые заметки
+// (plain text в БД) приходят без тегов и переводятся в <br>.
 window.renderNotesTab = function(symbol) {
   const editor = document.getElementById('notes-editor');
-  const statusEl = document.getElementById('notes-editor-status');
   if (!editor) return;
+  if (editor.dataset.initialized !== '1' && typeof window.initNotesEditor === 'function') {
+    window.initNotesEditor();
+  }
+  const statusEl = document.getElementById('notes-editor-status');
+  const listEl = document.getElementById('notes-list');
 
   const valid = !!symbol && !symbol.startsWith('SECTION:');
   // Заметка привязана к паре (список, тикер) и хранится в колонке
@@ -202,194 +386,226 @@ window.renderNotesTab = function(symbol) {
   const key = valid ? noteKey(noteListId, symbol) : '';
   const editable = valid;
 
-  const raw = valid ? (appState.notes[key] || '') : '';
-  // Старые заметки хранились как обычный текст (без тегов) — переводим
-  // переводы строк в <br>, чтобы они корректно отображались в полотне.
-  editor.innerHTML = String(raw).includes('<') ? notesSanitize(raw)
-    : escapeHtml(raw).replace(/\n/g, '<br>');
-  editor.contentEditable = editable ? 'true' : 'false';
-  editor.classList.toggle('disabled', !editable);
-  editor.dataset.placeholder = !valid
-    ? 'Выберите тикер в списке, чтобы вести заметки'
-    : 'Здесь можно вести заметки по выбранному тикеру…';
-  if (statusEl) statusEl.textContent = '';
-  // data-empty нужен для плейсхолдера в contenteditable (там нет :placeholder)
-  editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
-  updateNotesToolbar();
-  // Запоминаем состояние, чтобы автосохранение не сработало на самой загрузке
-  window.__notesEditorState = { key, symbol: valid ? symbol : '', value: getNotesSerialize(editor) };
+  const raw = valid ? String(appState.notes[key] || '') : '';
+  // Повторная отрисовка списка (обновление цен, флажки, сворачивание) не должна
+  // перезаписывать полотно, если открыта та же заметка и источник не менялся:
+  // иначе сбрасывались бы курсор/выделение, история undo и несохранённый ввод.
+  const st = window.__notesEditorState;
+  const sameNote = !!(st && st.key === key && st.raw === raw);
+
+  if (!sameNote) {
+    // Старые заметки хранились как обычный текст (без тегов) — переводим
+    // переводы строк в <br>, чтобы они корректно отображались в полотне.
+    const safeHtml = !raw ? ''
+      : (raw.includes('<') ? notesSanitize(raw) : escapeHtml(raw).replace(/\n/g, '<br>'));
+    const placeholder = valid
+      ? 'Здесь можно вести заметки по выбранному тикеру…'
+      : 'Выберите тикер в списке, чтобы вести заметки';
+    const quill = getNotesQuill();
+    window.__notesLoading = true;
+    try {
+      if (quill) {
+        quill.enable(editable);
+        if (safeHtml) {
+          quill.setContents(quill.clipboard.convert({ html: safeHtml }), 'silent');
+        } else {
+          quill.setText('', 'silent');
+        }
+        quill.root.dataset.placeholder = placeholder;
+        try { quill.history.clear(); } catch (e) { /* история недоступна */ }
+      } else {
+        editor.innerHTML = safeHtml;
+        editor.contentEditable = editable ? 'true' : 'false';
+        editor.classList.toggle('disabled', !editable);
+        editor.dataset.placeholder = placeholder;
+        // data-empty нужен для плейсхолдера в contenteditable (там нет :placeholder)
+        editor.dataset.empty = safeHtml ? 'false' : 'true';
+      }
+    } finally {
+      window.__notesLoading = false;
+    }
+  }
+
+  if (listEl) listEl.classList.toggle('notes-disabled', !editable);
+  if (!sameNote) {
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.className = 'notes-status';
+    }
+    // Запоминаем состояние, чтобы автосохранение не сработало на самой загрузке
+    window.__notesEditorState = {
+      key,
+      symbol: valid ? symbol : '',
+      value: getNotesSerialize(editor),
+      raw,
+    };
+  }
 };
 
-// Сериализация полотна заметок: пустое полотно -> '', убираем «мусорные»
-// <br> в конце; если видимый текст длиннее NOTE_MAX_LEN — сохраняем только
-// первые NOTE_MAX_LEN видимых символов (разметку при этом теряем, но данные
-// пользователя важнее форматирования сверх лимита).
+// Сериализация полотна заметок: пустое -> '', «мусорные» <br> в конце
+// убираем. Длины заметки не ограничиваем — храним весь введённый текст.
 function getNotesSerialize(editor) {
+  const quill = getNotesQuill();
+  if (quill && (!editor || editor === quill.container)) {
+    const plain = notesQuillPlain(quill);
+    if (!plain) return '';
+    const html = notesSanitize(quill.root.innerHTML);
+    return html || `<p>${escapeHtml(plain)}</p>`;
+  }
+  if (!editor) return '';
   let html = editor.innerHTML;
   if (/^\s*(<br\s*\/?>|&nbsp;|\u00a0)+\s*$/i.test(html)) return '';
   html = html.replace(/(<br\s*\/?>\s*)+$/i, '').trim();
-  const plain = (editor.textContent || '').replace(/\u00a0/g, ' ').trim();
+  const plain = notesDomPlain(editor);
   if (!plain) return '';
-  if (plain.length > NOTE_MAX_LEN) {
-    return escapeHtml(plain.slice(0, NOTE_MAX_LEN)).replace(/\n/g, '<br>');
-  }
   return html;
 }
-
-// Санитайзер HTML из contenteditable: разрешаем только теги форматирования,
-// которые создаёт сам редактор. Неразрешённые теги раскладываем в текст,
-// атрибуты снимаем (кроме безобидных у FONT и whitelisted-свойств у SPAN).
-const NOTES_ALLOWED_TAGS = new Set(['B','STRONG','I','EM','U','S','STRIKE','FONT','BR','DIV','P','UL','OL','LI','SPAN','BLOCKQUOTE']);
-const NOTES_ALLOWED_ATTRS = { FONT: ['color','size','face'], SPAN: ['style'] };
-window.notesSanitize = function(html) {
-  const doc = (typeof DOMParser !== 'undefined') ? new DOMParser().parseFromString(String(html || ''), 'text/html') : null;
-  if (!doc || !doc.body) return escapeHtml(String(html || ''));
-  const cleanNode = (node) => {
-    const kids = Array.from(node.childNodes);
-    for (const child of kids) {
-      if (child.nodeType === 3) continue; // текст оставляем как есть
-      if (child.nodeType !== 1) { node.removeChild(child); continue; }
-      const tag = String(child.tagName || '').toUpperCase();
-      if (!NOTES_ALLOWED_TAGS.has(tag)) {
-        // неразрешённый тег — заменяем его текстовым содержимым
-        const text = doc.createTextNode(child.textContent || '');
-        node.replaceChild(text, child);
-        continue;
-      }
-      const allowed = NOTES_ALLOWED_ATTRS[tag] || [];
-      for (const attr of Array.from(child.attributes || [])) {
-        if (!allowed.includes(String(attr.name).toLowerCase())) child.removeAttribute(attr.name);
-      }
-      if (tag === 'SPAN' && child.getAttribute && child.getAttribute('style')) {
-        const style = String(child.getAttribute('style'));
-        // пропускаем только цвет/шрифт/выравнивание — остальное удаляем
-        const safe = style.split(';').filter(s => /^(color|font-family|font-size|text-align|background-color)\s*:/i.test(s.trim())).join('; ');
-        if (safe.trim()) child.setAttribute('style', safe); else child.removeAttribute('style');
-      }
-      cleanNode(child);
-    }
-  };
-  cleanNode(doc.body);
-  return doc.body.innerHTML;
-};
-
-// Подсветка активных кнопок форматирования (как «нажатые» в Word).
-// queryCommandState может кидаться в нестандартных окружениях — молча игнорируем.
-window.updateNotesToolbar = function() {
-  if (typeof document.queryCommandState !== 'function') return;
-  document.querySelectorAll('#notes-toolbar button[data-cmd]').forEach(btn => {
-    let on = false;
-    try { on = document.queryCommandState(btn.dataset.cmd); } catch (e) { on = false; }
-    btn.classList.toggle('active', !!on);
-  });
-};
-
-// Выполнить команду форматирования над выделением в полотне заметок.
-window.notesExec = function(cmd) {
-  const editor = document.getElementById('notes-editor');
-  if (!editor || editor.classList.contains('disabled')) return;
-  editor.focus();
-  try { document.execCommand(cmd, false, null); } catch (e) { /* команда недоступна */ }
-  updateNotesToolbar();
-  notesOnInput();
-};
-
-// Команда с параметром (шрифт, размер, цвет).
-window.notesFormat = function(cmd, value) {
-  const editor = document.getElementById('notes-editor');
-  if (!editor || editor.classList.contains('disabled') || !value) return;
-  editor.focus();
-  notesRestoreSel();
-  try { document.execCommand(cmd, false, value); } catch (e) { /* команда недоступна */ }
-  const sel = cmd === 'fontName' ? 'notes-font-select' : (cmd === 'fontSize' ? 'notes-size-select' : null);
-  const selEl = sel && document.getElementById(sel);
-  if (selEl) selEl.value = '';
-  updateNotesToolbar();
-  notesOnInput();
-};
-
-// Выбор цвета: нативный color-input уводит фокус/выделение из полотна —
-// сохраняем диапазон перед открытием и восстанавливаем перед применением.
-window.notesSaveSel = function() {
-  const sel = (typeof window.getSelection === 'function') ? window.getSelection() : null;
-  if (!sel || sel.rangeCount === 0) return;
-  const editor = document.getElementById('notes-editor');
-  if (editor && editor.contains && editor.contains(sel.anchorNode)) {
-    window.__notesSavedRange = sel.getRangeAt(0).cloneRange();
-  }
-};
-window.notesRestoreSel = function() {
-  const r = window.__notesSavedRange;
-  if (!r || typeof window.getSelection !== 'function') return;
-  try {
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-  } catch (e) { /* ignore */ }
-};
 
 // Автосохранение из WYSIWYG-полотна заметок: пользователь печатает/форматирует —
 // изменения пишутся в кэш appState.notes и в БД (setNoteInDb) с дебаунсом.
 // Пустой текст очищает заметку. Ctrl+S сохраняет немедленно.
 let __notesSaveTimer = null;
+
+function notesSetStatus(text, cls) {
+  const el = document.getElementById('notes-editor-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'notes-status' + (cls ? ' ' + cls : '');
+}
+
 window.notesDoSave = async function() {
   const editor = document.getElementById('notes-editor');
   const st = window.__notesEditorState;
-  if (!editor || !st || !st.key || editor.classList.contains('disabled')) return;
+  if (!editor || !st || !st.key) return;
+  const quill = getNotesQuill();
+  if (!quill && editor.classList.contains('disabled')) return;
   const html = getNotesSerialize(editor);
   if (html === st.value) return; // ничего не изменилось
   st.value = html;
+  // raw синхронизируем с локальным кэшем: следующая отрисовка списка увидит
+  // тот же источник и не будет перезагружать полотно (курсор/история целы).
+  st.raw = html;
   if (html) appState.notes[st.key] = html;
   else delete appState.notes[st.key];
-  const setStatus = (text, cls) => {
-    const el = document.getElementById('notes-editor-status');
-    if (!el) return;
-    el.textContent = text;
-    el.className = cls || '';
-  };
-  setStatus('Сохраняю…', 'saving');
+  notesSetStatus('Сохраняю…', 'saving');
   const [listId] = st.key.split('|');
   const saved = await setNoteInDb(listId, st.symbol, html || null);
-  if (saved) setStatus('Сохранено', 'saved');
-  else setStatus('Не удалось сохранить в БД — изменения только локально', 'error');
-  setTimeout(() => setStatus('', ''), 2500);
+  if (saved) {
+    notesSetStatus('Сохранено', 'saved');
+    setTimeout(() => {
+      const el = document.getElementById('notes-editor-status');
+      if (el && el.textContent === 'Сохранено') {
+        el.textContent = '';
+        el.className = 'notes-status';
+      }
+    }, 2500);
+  } else {
+    notesSetStatus('Не удалось сохранить в БД — изменения только локально', 'error');
+  }
 };
 
-// Общий обработчик «изменение в полотне»: обновляем видимость плейсхолдера
-// (в contenteditable нет нативного placeholder) и ставим автосохранение в очередь.
+// Общий обработчик «изменение в полотне»: ставим автосохранение в очередь
+// с дебаунсом. Вызывается и Quill (text-change), и fallback-полотном.
 window.notesOnInput = function() {
-  const editor = document.getElementById('notes-editor');
-  if (editor) editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
   clearTimeout(__notesSaveTimer);
-  __notesSaveTimer = setTimeout(() => notesDoSave(), 600);
+  __notesSaveTimer = setTimeout(() => notesDoSave(), 650);
 };
 
-window.initNotesEditor = function() {
-  const editor = document.getElementById('notes-editor');
-  if (!editor || editor.dataset.initialized === '1') return;
-  editor.dataset.initialized = '1';
+// Создание Quill-редактора. Тулбар — кастомная разметка из index.html;
+// snow-тема сама подставит SVG-иконки стандартным кнопкам, а для истории
+// (ql-undo/ql-redo) иконки заданы вручную.
+function notesCreateQuill(editor) {
+  const toolbarHandlers = {
+    undo() {
+      const q = getNotesQuill();
+      if (!q) return;
+      q.focus();
+      q.history.undo();
+    },
+    redo() {
+      const q = getNotesQuill();
+      if (!q) return;
+      q.focus();
+      q.history.redo();
+    },
+  };
+  const quill = new window.Quill(editor, {
+    theme: 'snow',
+    placeholder: 'Здесь можно вести заметки по выбранному тикеру…',
+    formats: [
+      'header', 'bold', 'italic', 'underline', 'strike',
+      'color', 'background', 'list', 'indent', 'align',
+      'blockquote', 'code-block', 'link',
+    ],
+    modules: {
+      toolbar: { container: '#notes-toolbar', handlers: toolbarHandlers },
+      history: { delay: 450, maxStack: 200, userOnly: true },
+    },
+  });
+  window.__notesQuill = quill;
 
-  editor.addEventListener('input', notesOnInput);
-  editor.addEventListener('paste', (e) => {
-    // Вставляем только текст — иначе чужой HTML (стили/скрипты) попадёт в полотно
-    e.preventDefault();
-    const text = ((e.clipboardData || {}).getData) ? e.clipboardData.getData('text/plain') : '';
-    try { document.execCommand('insertText', false, text); } catch (err) { /* ignore */ }
+  // Любое пользовательское изменение (ввод, форматирование, undo/redo) —
+  // в очередь автосохранения.
+  quill.on('text-change', (delta, oldDelta, source) => {
+    if (window.__notesLoading || source === 'silent') return;
     notesOnInput();
   });
-  editor.addEventListener('keyup', updateNotesToolbar);
-  editor.addEventListener('mouseup', updateNotesToolbar);
-  editor.addEventListener('blur', () => {
-    clearTimeout(__notesSaveTimer);
-    notesDoSave();
-  });
-  editor.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+
+  // Ctrl/Cmd+S — сохранить немедленно (как в остальном терминале).
+  quill.root.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
       e.preventDefault();
       clearTimeout(__notesSaveTimer);
       notesDoSave();
     }
   });
+  return quill;
+}
+
+// Резервный редактор, если CDN Quill недоступен: обычный contenteditable
+// с тем же автосохранением/санитайзером (без панели форматирования).
+function notesInitFallbackEditor(editor) {
+  const listEl = document.getElementById('notes-list');
+  if (listEl) listEl.classList.add('notes-fallback');
+  editor.contentEditable = 'true';
+  editor.addEventListener('input', () => {
+    editor.dataset.empty = getNotesSerialize(editor) ? 'false' : 'true';
+    notesOnInput();
+  });
+  editor.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = ((e.clipboardData || {}).getData) ? e.clipboardData.getData('text/plain') : '';
+    try { document.execCommand('insertText', false, text); } catch (err) { /* ignore */ }
+    notesOnInput();
+  });
+  editor.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
+      e.preventDefault();
+      clearTimeout(__notesSaveTimer);
+      notesDoSave();
+    }
+  });
+  editor.addEventListener('blur', () => {
+    clearTimeout(__notesSaveTimer);
+    notesDoSave();
+  });
+}
+
+window.initNotesEditor = function() {
+  const editor = document.getElementById('notes-editor');
+  if (!editor || editor.dataset.initialized === '1') return;
+  editor.dataset.initialized = '1';
+  if (typeof window.Quill === 'function') {
+    try {
+      notesCreateQuill(editor);
+      return;
+    } catch (e) {
+      // If Quill упал на инициализации — остаёмся с простым полотном
+      if (window.console && console.error) console.error('Quill init failed:', e);
+      window.__notesQuill = null;
+    }
+  }
+  notesInitFallbackEditor(editor);
 };
 
 // Переключение вкладок ЛЕВОЙ колонки нижней панели:

@@ -13,6 +13,7 @@ import json
 import re
 import sqlite3
 
+from bs4 import BeautifulSoup
 from sqlalchemy import func
 
 from backend.database.database import Base, DB_PATH, engine, get_session, safe_create_all
@@ -23,15 +24,104 @@ safe_create_all()
 # Допустимые цвета флажков (должны совпадать с FLAG_COLORS на фронтенде).
 VALID_FLAG_COLORS = {"red", "blue", "yellow", "orange", "green"}
 
-# Максимальная длина заметки к тикеру (колонка watchlist_items.note).
-# Считается по ВИДИМОМУ тексту без HTML-разметки — совпадает с
-# window.NOTE_MAX_LEN на фронтенде.
-NOTE_MAX_LEN = 500
+# --- Санитайзер HTML заметок (вкладка «Заметки», редактор Quill 2) ---
+# Фронтенд сохраняет разметку (заголовки, списки, цитаты, ссылки, цвет),
+# поэтому «note» теперь может содержать HTML. Хранить произвольный HTML
+# нельзя (stored XSS), поэтому сервер ещё раз фильтрует его по тому же
+# whitelist, что и DOMPurify на клиенте. Длина заметки не ограничивается:
+# колонка TEXT хранит весь введённый пользователем текст.
+NOTE_ALLOWED_TAGS = {
+    "b", "strong", "i", "em", "u", "s", "strike", "font", "br", "div", "p",
+    "ul", "ol", "li", "span", "blockquote", "pre", "code", "h1", "h2", "h3", "a",
+}
+NOTE_ALLOWED_ATTRS = {
+    "a": {"href", "target", "rel"},
+    "li": {"class", "data-list"},
+    "ol": {"class"},
+    "ul": {"class"},
+    "div": {"class"},
+    "p": {"class"},
+    "h1": {"class"},
+    "h2": {"class"},
+    "h3": {"class"},
+    "blockquote": {"class"},
+    "pre": {"class"},
+    "code": {"class"},
+    "span": {"class", "style"},
+    "font": {"color", "size", "face"},
+}
+NOTE_ALLOWED_CLASS_RE = re.compile(
+    r"^(?:ql-align-(?:center|right|justify)|ql-indent-[1-8]|ql-direction-rtl"
+    r"|ql-size-(?:small|large|huge)|ql-syntax)$"
+)
+NOTE_ALLOWED_STYLE_PROPS = {"color", "background-color", "text-align", "font-family", "font-size"}
+NOTE_SAFE_HREF_RE = re.compile(r"^(?:https?:|mailto:|tel:)", re.IGNORECASE)
+NOTE_LIST_VALUES = {"bullet", "ordered", "checked", "unchecked"}
+_NOTE_HAS_TAG_RE = re.compile(r"<\s*[a-zA-Z][^>]*>")
 
-# Разметка, которую приносит WYSIWYG-редактор заметок (вкладка «Заметки»):
-# <br> и закрытие блочных тегов — границы строк, остальные теги — просто стиль.
-_NOTE_LINE_BREAK_RE = re.compile(r"<(?:br\s*/?>|/div|/p|/li)[^>]*>", re.IGNORECASE)
-_NOTE_TAG_RE = re.compile(r"<[^>]+>")
+
+def _sanitize_note_html(raw: str) -> str:
+    """Оставляет только безобидную разметку редактора заметок."""
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup.find_all(True):
+        name = str(tag.name).lower()
+        if name not in NOTE_ALLOWED_TAGS:
+            tag.unwrap()
+            continue
+        allowed = NOTE_ALLOWED_ATTRS.get(name, set())
+        clean_attrs = {}
+        for attr_name, attr_value in list(tag.attrs.items()):
+            attr_name = str(attr_name).lower()
+            if attr_name not in allowed:
+                continue
+            if isinstance(attr_value, list):
+                attr_value = " ".join(str(v) for v in attr_value)
+            value = str(attr_value)
+            if attr_name == "class":
+                classes = [c for c in value.split() if NOTE_ALLOWED_CLASS_RE.match(c)]
+                if classes:
+                    clean_attrs["class"] = " ".join(classes)
+            elif attr_name == "style":
+                decls = []
+                for decl in value.split(";"):
+                    if ":" not in decl:
+                        continue
+                    prop, val = decl.split(":", 1)
+                    prop = prop.strip().lower()
+                    val = val.strip()
+                    if prop not in NOTE_ALLOWED_STYLE_PROPS:
+                        continue
+                    if re.search(r"url\s*\(|expression\s*\(|javascript:", val, re.IGNORECASE):
+                        continue
+                    decls.append(f"{prop}: {val}")
+                if decls:
+                    clean_attrs["style"] = "; ".join(decls)
+            elif attr_name == "data-list":
+                if value in NOTE_LIST_VALUES:
+                    clean_attrs["data-list"] = value
+            elif attr_name == "href":
+                if NOTE_SAFE_HREF_RE.match(value.strip()):
+                    clean_attrs["href"] = value.strip()
+            else:
+                clean_attrs[attr_name] = value
+        if name == "a":
+            if "href" not in clean_attrs:
+                tag.unwrap()
+                continue
+            clean_attrs["target"] = "_blank"
+            clean_attrs["rel"] = "noopener noreferrer"
+        tag.attrs = clean_attrs
+        if name == "span" and not tag.attrs and not tag.get_text(strip=True):
+            # служебные пустые span (ql-ui/ql-cursor) в БД не нужны
+            tag.unwrap()
+    return str(soup)
+
+
+def _note_visible_text(html_fragment: str) -> str:
+    soup = BeautifulSoup(html_fragment, "html.parser")
+    for br in soup.find_all("br"):
+        br.replace_with(" ")
+    return " ".join(soup.get_text(" ").split())
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -406,26 +496,28 @@ def set_collapsed(list_id: str, section_symbol: str, collapsed: bool) -> dict:
 
 
 def normalize_note(note: str | None) -> str | None:
-    """Приводит заметку к виду для хранения: снимает HTML-разметку, которую
-    приносит WYSIWYG-редактор (вкладка «Заметки»), схлопывает пробелы,
-    ограничивает длину по видимому тексту.
+    """Приводит заметку к виду для хранения в watchlist_items.note.
 
-    NOTE_MAX_LEN считается по символам БЕЗ разметки — фронтенд хранит в БД
-    HTML (жирный/курсив/списки), но лимит и поиск должны относиться к тому,
-    что пользователь видит. Границы строк (<br>, </div|p|li>) сохраняются
-    как переводы строк, остальные теги вырезаются, сущности декодируются.
+    Редактор «Заметки» (Quill 2) сохраняет безопасный HTML: заголовки,
+    инлайн-форматы, списки, цитаты, код и ссылки. Сервер повторно фильтрует
+    разметку собственным whitelist (защита от stored XSS, если запрос пришёл
+    в обход фронтенда). Длина не ограничивается — сохраняется весь текст.
 
-    Пустая/None возвращает None (заметка снимается).
+    Старые заметки (plain text без тегов) сохраняются как раньше: пробелы
+    схлопываются, HTML-сущности декодируются. Пустая/None возвращает None.
     """
     if note is None:
         return None
-    text = _NOTE_LINE_BREAK_RE.sub("\n", str(note))
-    text = _NOTE_TAG_RE.sub("", text)
-    text = html_lib.unescape(text)
-    cleaned = " ".join(text.split())  # strip + collapse \n, \t, множественные пробелы
-    if not cleaned:
+    raw = str(note)
+    if not _NOTE_HAS_TAG_RE.search(raw):
+        # Старый формат: обычный текст (в т.ч. многострочный — как раньше,
+        # схлопываем пробелы/переводы строк).
+        return " ".join(html_lib.unescape(raw).split()) or None
+
+    safe_html = _sanitize_note_html(raw)
+    if not _note_visible_text(safe_html):
         return None
-    return cleaned[:NOTE_MAX_LEN]
+    return safe_html
 
 
 def set_note(list_id: str, symbol: str, note: str | None) -> dict:

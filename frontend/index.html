@@ -6,7 +6,18 @@
     <!-- Версионный параметр — одноразовый сброс эвристического кэша браузеров,
          закэшировавших статику до включения Cache-Control: no-cache на бэкенде;
          дальше ревалидация по etag держит файлы свежими без него -->
-    <link rel="stylesheet" href="css/styles.css?v=20261125">
+    <!-- Quill 2 — современный WYSIWYG-редактор вкладки «Заметки».
+         Стили темы подключаются ДО styles.css: наши тёмные переопределения
+         (.ql-toolbar/.ql-container) должны идти последними.
+         Версия запинена: кастомная тёмная тема рассчитана на разметку 2.0.x. -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css">
+    <link rel="stylesheet" href="css/styles.css?v=20261126">
+    <!-- DOMPurify — санитайзер HTML заметок (whitelist тегов/атрибутов).
+         Загружается до js/ui.js: renderNotesTab/notesDoSave используют его
+         при каждом чтении/сохранении. Если CDN недоступен — в ui.js остаётся
+         резервный DOM-санитайзер (аккуратный, но более строгий). -->
+    <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.5.0/dist/purify.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
     <!-- ВАЖНО: внешние скрипты (Sortable, KLineChart) загружаются АСИНХРОННО (defer).
          Обычный <script src="..."> блокирует разбор страницы: если CDN недоступен
          (блокировка провайдером/регионом, файрвол, антивирус, прокси), вкладка
@@ -572,56 +583,108 @@
                         Избранных новостей пока нет
                     </div>
                 </div>
-                <!-- Вкладка «Заметки»: WYSIWYG-редактор (подобие Word):
-                     панель форматирования + contenteditable-полотно.
-                     Текст сохраняется в watchlist_items.note как HTML
-                     (бэкенд очищает теги для поиска/лимитов). Автосохранение. -->
+                <!-- Вкладка «Заметки»: WYSIWYG-редактор Quill 2 (современная
+                     замена contenteditable + execCommand). Заметка привязана к
+                     выбранному тикеру и хранится в watchlist_items.note как
+                     безопасный HTML (whitelist тегов/атрибутов на бэкенде и
+                     DOMPurify на фронтенде). Автосохранение с дебаунсом, Ctrl+S.
+                     Разметка:
+                       .notes-toolbar-shell — тулбар Quill + статус автосохранения;
+                       #notes-toolbar       — кастомный тулбар (иконки темы snow);
+                       #notes-editor        — контейнер Quill (внутри .ql-editor). -->
                 <div id="notes-list" class="tab-pane" style="display: none;">
-                    <div id="notes-toolbar">
-                        <select id="notes-font-select" title="Шрифт" onchange="notesFormat('fontName', this.value)">
-                            <option value="">Шрифт</option>
-                            <option value="Arial, Helvetica, sans-serif">Arial</option>
-                            <option value="'Times New Roman', Times, serif">Times New Roman</option>
-                            <option value="'Courier New', Courier, monospace">Courier New</option>
-                            <option value="Georgia, serif">Georgia</option>
-                            <option value="Verdana, Geneva, sans-serif">Verdana</option>
-                            <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
-                        </select>
-                        <select id="notes-size-select" title="Размер шрифта" onchange="notesFormat('fontSize', this.value)">
-                            <option value="">Размер</option>
-                            <option value="1">Очень мелкий</option>
-                            <option value="2">Мелкий</option>
-                            <option value="3">Обычный</option>
-                            <option value="4">Средний</option>
-                            <option value="5">Крупный</option>
-                            <option value="6">Очень крупный</option>
-                            <option value="7">Максимальный</option>
-                        </select>
-                        <span class="notes-sep"></span>
-                        <button type="button" data-cmd="bold" title="Жирный (Ctrl+B)" onclick="notesExec('bold')"><b>Ж</b></button>
-                        <button type="button" data-cmd="italic" title="Курсив (Ctrl+I)" onclick="notesExec('italic')"><i>К</i></button>
-                        <button type="button" data-cmd="underline" title="Подчеркнутый (Ctrl+U)" onclick="notesExec('underline')"><u>Ч</u></button>
-                        <button type="button" data-cmd="strikeThrough" title="Зачеркнутый" onclick="notesExec('strikeThrough')"><s>З</s></button>
-                        <input type="color" id="notes-color" title="Цвет текста" value="#d1d4dc"
-                               onmousedown="notesSaveSel()" onchange="notesFormat('foreColor', this.value)">
-                        <span class="notes-sep"></span>
-                        <button type="button" data-cmd="insertUnorderedList" title="Маркированный список" onclick="notesExec('insertUnorderedList')">•≡</button>
-                        <button type="button" data-cmd="insertOrderedList" title="Нумерованный список" onclick="notesExec('insertOrderedList')">1≡</button>
-                        <button type="button" title="Увеличить отступ" onclick="notesExec('indent')" >⇥</button>
-                        <button type="button" title="Уменьшить отступ" onclick="notesExec('outdent')">⇤</button>
-                        <span class="notes-sep"></span>
-                        <button type="button" data-cmd="justifyLeft" title="По левому краю" onclick="notesExec('justifyLeft')">⬅</button>
-                        <button type="button" data-cmd="justifyCenter" title="По центру" onclick="notesExec('justifyCenter')">↔</button>
-                        <button type="button" data-cmd="justifyRight" title="По правому краю" onclick="notesExec('justifyRight')">➡</button>
-                        <span class="notes-sep"></span>
-                        <button type="button" title="Отменить (Ctrl+Z)" onclick="notesExec('undo')">↩️</button>
-                        <button type="button" title="Повторить (Ctrl+Y)" onclick="notesExec('redo')">↪️</button>
-                        <button type="button" title="Очистить все форматирование" onclick="notesExec('removeFormat')">✂️</button>
-                        <!-- Статус автосохранения: правый угол панели инструментов -->
-                        <div id="notes-editor-status"></div>
+                    <div class="notes-toolbar-shell">
+                        <div id="notes-toolbar" role="toolbar" aria-label="Форматирование заметки">
+                            <span class="ql-formats">
+                                <select class="ql-header" title="Стиль текста" aria-label="Стиль текста">
+                                    <option value="1">Заголовок 1</option>
+                                    <option value="2">Заголовок 2</option>
+                                    <option selected>Обычный текст</option>
+                                </select>
+                            </span>
+                            <span class="ql-formats">
+                                <button class="ql-bold" title="Жирный (Ctrl+B)"></button>
+                                <button class="ql-italic" title="Курсив (Ctrl+I)"></button>
+                                <button class="ql-underline" title="Подчёркнутый (Ctrl+U)"></button>
+                                <button class="ql-strike" title="Зачёркнутый"></button>
+                            </span>
+                            <span class="ql-formats">
+                                <!-- Цвет текста/фона: именно <select> — тема snow
+                                     превращает его в палитру-свотчи (button
+                                     Quill как пикер не воспринимает). -->
+                                <select class="ql-color" title="Цвет текста" aria-label="Цвет текста">
+                                    <option value="" selected></option>
+                                    <option value="#e6e9f0"></option>
+                                    <option value="#ff6b6b"></option>
+                                    <option value="#ff9f43"></option>
+                                    <option value="#ffca28"></option>
+                                    <option value="#35c2a3"></option>
+                                    <option value="#4c8dff"></option>
+                                    <option value="#b388ff"></option>
+                                    <option value="#ffffff"></option>
+                                    <option value="#9aa3b5"></option>
+                                    <option value="#d32f2f"></option>
+                                    <option value="#ef6c00"></option>
+                                    <option value="#f9a825"></option>
+                                    <option value="#00897b"></option>
+                                    <option value="#1e88e5"></option>
+                                    <option value="#8e24aa"></option>
+                                </select>
+                                <select class="ql-background" title="Цвет фона" aria-label="Цвет фона">
+                                    <option value="" selected></option>
+                                    <option value="#2c3242"></option>
+                                    <option value="#3a2a35"></option>
+                                    <option value="#3a3422"></option>
+                                    <option value="#22392f"></option>
+                                    <option value="#233350"></option>
+                                    <option value="#32284a"></option>
+                                    <option value="#5c2b2b"></option>
+                                    <option value="#7a5c00"></option>
+                                    <option value="#1f5c47"></option>
+                                    <option value="#1f4a8c"></option>
+                                </select>
+                            </span>
+                            <span class="ql-formats">
+                                <button class="ql-list" value="ordered" title="Нумерованный список"></button>
+                                <button class="ql-list" value="bullet" title="Маркированный список"></button>
+                                <button class="ql-indent" value="-1" title="Уменьшить отступ"></button>
+                                <button class="ql-indent" value="+1" title="Увеличить отступ"></button>
+                            </span>
+                            <span class="ql-formats">
+                                <button class="ql-blockquote" title="Цитата"></button>
+                                <button class="ql-code-block" title="Блок кода"></button>
+                                <button class="ql-link" title="Ссылка"></button>
+                            </span>
+                            <span class="ql-formats">
+                                <select class="ql-align" title="Выравнивание" aria-label="Выравнивание">
+                                    <option selected></option>
+                                    <option value="center"></option>
+                                    <option value="right"></option>
+                                    <option value="justify"></option>
+                                </select>
+                            </span>
+                            <span class="ql-formats">
+                                <button class="ql-clean" title="Очистить форматирование"></button>
+                            </span>
+                            <span class="ql-formats notes-history-group">
+                                <!-- Кастомные кнопки истории: Quill не рисует для них
+                                     иконки автоматически — SVG задаём явно. -->
+                                <button class="ql-undo" type="button" title="Отменить (Ctrl+Z)" aria-label="Отменить">
+                                    <svg viewBox="0 0 18 18" aria-hidden="true"><polyline class="ql-stroke" points="5 7 2 10 5 13"/><path class="ql-stroke" d="M2 10h9a4 4 0 0 1 0 8H8"/></svg>
+                                </button>
+                                <button class="ql-redo" type="button" title="Повторить (Ctrl+Y)" aria-label="Повторить">
+                                    <svg viewBox="0 0 18 18" aria-hidden="true"><polyline class="ql-stroke" points="13 7 16 10 13 13"/><path class="ql-stroke" d="M16 10H7a4 4 0 0 0 0 8h3"/></svg>
+                                </button>
+                            </span>
+                        </div>
+                        <!-- Статус автосохранения: «Сохраняю…» / «Сохранено» / ошибка -->
+                        <span id="notes-editor-status" class="notes-status" aria-live="polite"></span>
                     </div>
-                    <div id="notes-editor" contenteditable="true" spellcheck="true"
-                         data-placeholder="Здесь можно вести заметки по выбранному тикеру…"></div>
+                    <div class="notes-canvas">
+                        <div class="notes-canvas-inner">
+                            <div id="notes-editor" spellcheck="true"></div>
+                        </div>
+                    </div>
                 </div>
                 </div>
                 <!-- Конец левой колонки (Новости / Избранные / Заметки) -->

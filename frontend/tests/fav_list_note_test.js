@@ -41,6 +41,17 @@ function extractPlainFn(src, name) {
   return src.slice(start, end + 2);
 }
 
+// Вырезает фрагмент между двумя маркерами (для блока констант/санитайзера,
+// который нельзя достать одной функцией).
+function extractBetween(src, startMarker, endMarker) {
+  const start = src.indexOf(startMarker);
+  const end = src.indexOf(endMarker, start);
+  if (start === -1 || end === -1) {
+    throw new Error(`Не найден блок ${startMarker} .. ${endMarker}`);
+  }
+  return src.slice(start, end);
+}
+
 const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'main.js'), 'utf8');
 const stateSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8');
 const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'ui.js'), 'utf8');
@@ -50,10 +61,16 @@ const code = [
   extractFn(stateSrc, 'noteKey'),
   extractFn(mainSrc, 'findListWithTicker'),
   extractFn(uiSrc, 'escapeHtml'),
-  extractFn(uiSrc, 'renderNotesTab'),
-  extractFn(uiSrc, 'updateNotesToolbar'),
-  extractFn(uiSrc, 'notesDoSave'),
+  // Константы + оба санитайзера (DOMPurify в vm-песочнице нет — работает
+  // резервный DOM-фильтр; для plain-text заметок он не вызывается вовсе).
+  extractBetween(uiSrc, 'const NOTES_ALLOWED_TAGS', '// --- Доступ к экземпляру Quill ---'),
+  extractPlainFn(uiSrc, 'getNotesQuill'),
+  extractPlainFn(uiSrc, 'notesQuillPlain'),
+  extractPlainFn(uiSrc, 'notesDomPlain'),
   extractPlainFn(uiSrc, 'getNotesSerialize'),
+  extractPlainFn(uiSrc, 'notesSetStatus'),
+  extractFn(uiSrc, 'renderNotesTab'),
+  extractFn(uiSrc, 'notesDoSave'),
 ].join('\n\n');
 
 // ---------- Окружение ----------
@@ -102,7 +119,6 @@ vm.createContext(sandbox);
 
 vm.runInContext(`
   window.API_BASE = '';
-  window.NOTE_MAX_LEN = 500;
   window.appState = {
     activeListId: 'fav_red',
     lists: {

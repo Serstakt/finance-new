@@ -711,55 +711,288 @@ tv-market-data a[href*="tradingview.com"] { display: none !important; }
    Колокольчики алертов убраны из строк тикеров в watchlist. */
 
 /* --- Заметки к тикерам (watchlist_items.note) ---
-   Иконки заметок из строк watchlist убраны: редактирование доступно только
-   во вкладке «Заметки» под графиком — WYSIWYG-редактором (подобие Word). */
+   Редактор — Quill 2 (тема snow) с полностью кастомным тёмным оформлением:
+   шапка с тикером/счётчиком/статусом, компактный тулбар, «бумажное» полотно
+   по центру. Все цвета — локальные токены --n-*, чтобы не задевать остальной
+   терминал. Разметку редактора (.ql-editor) Quill генерирует сам. */
+#notes-list {
+  --n-bg: #171a23;
+  --n-bg-deep: #12151d;
+  --n-surface: #1e222d;
+  --n-surface-2: #252a36;
+  --n-border: #2c3242;
+  --n-border-soft: #232836;
+  --n-text: #e6e9f0;
+  --n-muted: #7f8798;
+  --n-accent: #4c8dff;
+  --n-accent-soft: rgba(76, 141, 255, 0.14);
+  --n-danger: #ff6b6b;
+  --n-ok: #35c2a3;
+  --n-warn: #ffca28;
+  display: flex; flex-direction: column; min-height: 0;
+  position: relative;
+  background: var(--n-bg);
+  color-scheme: dark;
+}
 
-/* Вкладка «Заметки»: панель форматирования + растягиваемое полотно */
-#notes-list { display: flex; flex-direction: column; }
+/* Статус автосохранения: точка-индикатор + текст состояния.
+   Живёт справа от тулбара — отдельной шапки у вкладки нет. */
+.notes-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0; margin-left: auto; padding-right: 2px;
+  font-size: 11px; color: var(--n-muted); white-space: nowrap;
+}
+.notes-status:empty { display: none; }
+.notes-status::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: 0.7;
+}
+.notes-status.saving { color: var(--n-warn); }
+.notes-status.saving::before { animation: notes-pulse 1s ease-in-out infinite; }
+.notes-status.saved { color: var(--n-ok); }
+.notes-status.error { color: var(--n-danger); }
+@keyframes notes-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
 
-/* Панель инструментов в стиле Word: группы кнопок, разделители, подсветка активных */
-#notes-toolbar {
-  flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-  padding: 6px 12px; background: #22262f; border-bottom: 1px solid #363a45;
+/* Тулбар: «плавающая» панель с группами кнопок Quill + статус справа */
+.notes-toolbar-shell {
+  flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; background: var(--n-bg);
+  border-bottom: 1px solid var(--n-border-soft);
 }
-#notes-toolbar select {
-  background: #1e222d; color: #d1d4dc; border: 1px solid #363a45; border-radius: 4px;
-  font-size: 12px; padding: 3px 4px; cursor: pointer; max-width: 120px;
+#notes-toolbar.ql-toolbar.ql-snow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  flex: 1; min-width: 0;
+  margin: 0; padding: 4px;
+  font-family: inherit; font-size: 12px;
+  background: var(--n-surface);
+  border: 1px solid var(--n-border-soft);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
-#notes-toolbar button {
-  min-width: 28px; height: 26px; padding: 0 6px;
-  background: transparent; color: #d1d4dc; border: 1px solid transparent;
-  border-radius: 4px; font-size: 13px; cursor: pointer; line-height: 1;
+#notes-toolbar.ql-toolbar.ql-snow .ql-formats {
+  display: inline-flex; align-items: center; gap: 1px; margin-right: 6px;
 }
-#notes-toolbar button:hover { background: #363a45; border-color: #4a4f5c; }
-#notes-toolbar button.active { background: #2962ff33; border-color: #2962ff; color: #fff; }
-#notes-toolbar input[type="color"] {
-  width: 28px; height: 26px; padding: 2px; cursor: pointer;
-  background: transparent; border: 1px solid #363a45; border-radius: 4px;
+#notes-toolbar.ql-toolbar.ql-snow .ql-formats:last-child { margin-right: 0; }
+#notes-toolbar.ql-toolbar.ql-snow button {
+  width: 28px; height: 28px; padding: 5px;
+  border: 1px solid transparent; border-radius: 7px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.notes-sep { width: 1px; height: 20px; background: #363a45; margin: 0 6px; flex-shrink: 0; }
+#notes-toolbar.ql-toolbar.ql-snow button:hover {
+  background: var(--n-surface-2); border-color: var(--n-border);
+}
+#notes-toolbar.ql-toolbar.ql-snow button.ql-active {
+  background: var(--n-accent-soft); border-color: rgba(76, 141, 255, 0.35);
+}
+#notes-toolbar.ql-toolbar.ql-snow button:focus-visible {
+  outline: 2px solid var(--n-accent); outline-offset: 1px;
+}
+/* Иконки: приглушённые в покое, акцентные при hover/активности */
+#notes-toolbar .ql-stroke { stroke: #9aa3b5; }
+#notes-toolbar .ql-fill { fill: #9aa3b5; }
+#notes-toolbar button:hover .ql-stroke,
+#notes-toolbar button.ql-active .ql-stroke,
+#notes-toolbar .ql-picker-label:hover .ql-stroke,
+#notes-toolbar .ql-picker-label.ql-active .ql-stroke { stroke: var(--n-accent) !important; }
+#notes-toolbar button:hover .ql-fill,
+#notes-toolbar button.ql-active .ql-fill { fill: var(--n-accent) !important; }
+#notes-toolbar button.ql-active .ql-color-label { fill: var(--n-accent) !important; }
 
-/* Полотно заметки: тёмный фон в стиле терминала (сливается с панелью) */
-#notes-editor {
-  flex: 1; min-height: 0; width: 100%; overflow-y: auto; outline: none;
-  background: #1e222d; color: #d1d4dc; padding: 16px 24px;
-  font-family: 'Times New Roman', Georgia, serif; font-size: 15px; line-height: 1.6;
-  box-shadow: inset 0 0 0 1px #363a45;
+/* Пикеры (стиль абзаца, выравнивание, цвет) */
+#notes-toolbar.ql-toolbar.ql-snow .ql-picker {
+  height: 28px; font-size: 11px; color: #9aa3b5;
 }
-#notes-editor:empty::before,
-#notes-editor[data-empty="true"]::before {
-  content: attr(data-placeholder); color: #787b86; pointer-events: none;
+#notes-toolbar .ql-picker-label {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 7px; border: 1px solid transparent; border-radius: 7px;
 }
-#notes-editor ul, #notes-editor ol { margin: 4px 0; padding-left: 28px; }
-#notes-editor div, #notes-editor p { margin: 0 0 4px; }
-#notes-editor.disabled { opacity: 0.6; cursor: not-allowed; background: #22262f; }
-#notes-editor-status {
-  flex-shrink: 0; margin-left: auto; padding: 0 4px; font-size: 12px; color: #787b86;
-  text-align: right; white-space: nowrap; min-height: 22px; line-height: 22px;
+#notes-toolbar .ql-picker-label:hover { background: var(--n-surface-2); }
+#notes-toolbar .ql-picker-label.ql-active,
+#notes-toolbar .ql-picker-label:hover { color: var(--n-accent); }
+#notes-toolbar .ql-picker-options {
+  margin-top: 6px; padding: 6px;
+  background: var(--n-surface-2);
+  border: 1px solid var(--n-border); border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.48);
 }
-#notes-editor-status.saved { color: #26a69a; }
-#notes-editor-status.error { color: #ef5350; }
-#notes-editor-status.saving { color: #ffca28; }
+#notes-toolbar .ql-picker-item {
+  padding: 5px 9px; border-radius: 6px; color: var(--n-text);
+}
+#notes-toolbar .ql-picker-item:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+#notes-toolbar .ql-picker-item.ql-selected { color: var(--n-accent); }
+/* Стиль абзаца: русские подписи вместо зашитых в тему snow английских */
+#notes-toolbar .ql-picker.ql-header { width: 112px; }
+#notes-toolbar .ql-picker.ql-header .ql-picker-label::before,
+#notes-toolbar .ql-picker.ql-header .ql-picker-item::before { content: 'Обычный' !important; }
+#notes-toolbar .ql-picker.ql-header .ql-picker-label[data-value="1"]::before,
+#notes-toolbar .ql-picker.ql-header .ql-picker-item[data-value="1"]::before { content: 'Заголовок 1' !important; }
+#notes-toolbar .ql-picker.ql-header .ql-picker-label[data-value="2"]::before,
+#notes-toolbar .ql-picker.ql-header .ql-picker-item[data-value="2"]::before { content: 'Заголовок 2' !important; }
+/* Палитра цвета/фона: сетка свотчей Quill в тёмной рамке. Общие стили
+   .ql-picker-item (отступы/радиус) к свотчам не применяем. */
+#notes-toolbar .ql-color-picker .ql-picker-label { padding: 0 5px; }
+#notes-toolbar .ql-color-picker .ql-picker-options { padding: 6px; }
+#notes-toolbar .ql-color-picker .ql-picker-item {
+  width: 18px; height: 18px; padding: 0; margin: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 5px;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+#notes-toolbar .ql-color-picker .ql-picker-item:hover {
+  background: inherit; transform: scale(1.1); border-color: rgba(255, 255, 255, 0.5);
+}
+#notes-toolbar .ql-color-picker .ql-picker-item.ql-selected {
+  border-color: var(--n-accent);
+  box-shadow: 0 0 0 1px var(--n-accent);
+}
+
+/* Полотно: прокручивается вся область, «бумага» по центру */
+.notes-canvas {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px 14px 16px;
+  background:
+    radial-gradient(900px 240px at 50% -100px, rgba(76, 141, 255, 0.07), transparent 70%),
+    var(--n-bg);
+  scrollbar-width: thin; scrollbar-color: #2f3547 transparent;
+}
+.notes-canvas::-webkit-scrollbar { width: 10px; }
+.notes-canvas::-webkit-scrollbar-track { background: transparent; }
+.notes-canvas::-webkit-scrollbar-thumb {
+  background: #2f3547; border-radius: 999px; border: 3px solid var(--n-bg);
+}
+.notes-canvas::-webkit-scrollbar-thumb:hover { background: #3d455c; }
+.notes-canvas-inner {
+  display: flex; width: 100%; min-height: 100%;
+}
+#notes-editor.ql-container.ql-snow {
+  display: flex; flex: 1; flex-direction: column;
+  width: 100%; min-height: 0; height: auto;
+  font-family: inherit; font-size: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 140px),
+    var(--n-surface);
+  border: 1px solid var(--n-border); border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+#notes-editor.ql-container.ql-snow:focus-within {
+  border-color: rgba(76, 141, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.12), 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+#notes-editor .ql-editor {
+  flex: 1; height: auto; min-height: 0; overflow: visible;
+  padding: 18px 22px 22px;
+  color: var(--n-text);
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14.5px; line-height: 1.75; letter-spacing: 0.01em;
+  tab-size: 4;
+}
+#notes-editor .ql-editor.ql-blank::before {
+  left: 22px; right: 22px;
+  color: var(--n-muted); font-style: normal; opacity: 1;
+}
+/* Типографика содержимого заметки */
+#notes-editor .ql-editor p { margin: 0 0 8px; }
+#notes-editor .ql-editor h1 {
+  margin: 4px 0 10px; font-size: 22px; line-height: 1.32;
+  font-weight: 700; letter-spacing: -0.01em; color: #f2f5fb;
+}
+#notes-editor .ql-editor h2 {
+  margin: 6px 0 8px; font-size: 17px; line-height: 1.4;
+  font-weight: 650; color: #eef2f9;
+}
+#notes-editor .ql-editor strong { font-weight: 650; color: #f4f7fc; }
+#notes-editor .ql-editor em { font-style: italic; }
+#notes-editor .ql-editor s { opacity: 0.72; }
+#notes-editor .ql-editor a {
+  color: var(--n-accent); text-decoration: none;
+  border-bottom: 1px solid rgba(76, 141, 255, 0.45);
+}
+#notes-editor .ql-editor a:hover { border-bottom-color: var(--n-accent); }
+#notes-editor .ql-editor blockquote {
+  margin: 10px 0; padding: 8px 14px;
+  border-left: 3px solid var(--n-accent); border-radius: 0 8px 8px 0;
+  background: rgba(76, 141, 255, 0.07); color: #c9d4e6;
+}
+#notes-editor .ql-editor pre.ql-syntax {
+  margin: 10px 0; padding: 13px 16px;
+  background: var(--n-bg-deep);
+  border: 1px solid var(--n-border); border-radius: 10px;
+  color: #c9d4e6; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.6; overflow-x: auto;
+}
+/* Маркеры списков Quill 2 (li[data-list] + span.ql-ui) — акцентный цвет */
+#notes-editor .ql-editor li[data-list="bullet"] > .ql-ui::before { color: var(--n-accent); }
+#notes-editor .ql-editor li[data-list="ordered"] > .ql-ui::before { color: var(--n-muted); }
+#notes-editor .ql-editor ::selection { background: rgba(76, 141, 255, 0.32); }
+
+/* Недоступное состояние (не выбран тикер / нет прав на запись) */
+#notes-list.notes-disabled .notes-toolbar-shell {
+  opacity: 0.45; pointer-events: none; filter: grayscale(0.4);
+}
+#notes-list.notes-disabled #notes-editor { opacity: 0.7; }
+#notes-list.notes-disabled #notes-editor .ql-editor { cursor: default; }
+
+/* Резервный режим, если CDN Quill недоступен: простое полотно без тулбара
+   (автосохранение и санитайзер продолжают работать — см. ui.js). */
+#notes-list.notes-fallback .notes-toolbar-shell { display: none; }
+#notes-list.notes-fallback #notes-editor {
+  display: block; flex: 1; min-height: 0; overflow-y: auto;
+  padding: 18px 22px;
+  background: var(--n-surface);
+  border: 1px solid var(--n-border); border-radius: 14px;
+  color: var(--n-text);
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14.5px; line-height: 1.75;
+  outline: none; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+#notes-list.notes-fallback #notes-editor:focus {
+  border-color: rgba(76, 141, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.12), 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+#notes-list.notes-fallback #notes-editor:empty::before,
+#notes-list.notes-fallback #notes-editor[data-empty="true"]::before {
+  content: attr(data-placeholder); color: var(--n-muted); pointer-events: none;
+}
+#notes-list.notes-fallback #notes-editor ul,
+#notes-list.notes-fallback #notes-editor ol { margin: 4px 0; padding-left: 26px; }
+#notes-list.notes-fallback #notes-editor p,
+#notes-list.notes-fallback #notes-editor div { margin: 0 0 8px; }
+
+/* Тултип ссылки Quill (редактирование/удаление) и подписи — по-русски */
+#notes-list .ql-snow .ql-tooltip {
+  z-index: 5; padding: 7px 10px;
+  background: var(--n-surface-2);
+  border: 1px solid var(--n-border); border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  color: var(--n-text); font-family: inherit; font-size: 12px;
+}
+#notes-list .ql-snow .ql-tooltip::before { color: var(--n-muted); }
+#notes-list .ql-snow .ql-tooltip[data-mode="link"]::before { content: 'Ссылка:'; }
+#notes-list .ql-snow .ql-tooltip[data-mode="formula"]::before { content: 'Формула:'; }
+#notes-list .ql-snow .ql-tooltip[data-mode="video"]::before { content: 'Видео:'; }
+#notes-list .ql-snow .ql-tooltip input[type="text"] {
+  height: 26px; padding: 0 8px; font-size: 12px;
+  color: var(--n-text); background: var(--n-bg-deep);
+  border: 1px solid var(--n-border); border-radius: 6px;
+}
+#notes-list .ql-snow .ql-tooltip input[type="text"]:focus {
+  outline: none; border-color: var(--n-accent);
+}
+#notes-list .ql-snow .ql-tooltip a { color: var(--n-accent); }
+#notes-list .ql-snow .ql-tooltip a.ql-remove { color: var(--n-danger); }
+#notes-list .ql-snow .ql-tooltip a.ql-action::after { content: 'Изменить'; }
+#notes-list .ql-snow .ql-tooltip.ql-editing a.ql-action::after { content: 'Сохранить'; }
+#notes-list .ql-snow .ql-tooltip a.ql-remove::before { content: 'Удалить'; }
+
+@media (max-width: 900px) {
+  .notes-toolbar-shell { padding: 6px 10px; }
+  .notes-canvas { padding: 12px 12px 20px; }
+  #notes-editor .ql-editor { padding: 18px; }
+  #notes-editor .ql-editor.ql-blank::before { left: 18px; right: 18px; }
+}
 
 .skeleton {
   background: linear-gradient(90deg, #2a2e39 25%, #363a45 50%, #2a2e39 75%);
