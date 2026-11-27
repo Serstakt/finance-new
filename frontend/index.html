@@ -38,8 +38,8 @@
     <!-- FUTOI — отдельный раздел справа от Watchlist: открытые позиции по
          фьючерсам в разрезе физ./юр. лиц, дневной график (js/futoi.js). -->
     <button class="nav-btn" data-page="futoi" onclick="navigateTo('futoi')">FUTOI</button>
-    <!-- Отчетность — справа от FUTOI: загрузка PDF/ZIP с бухгалтерской
-         отчётностью, распознанные таблицы (ОПиУ, ДДС, капитал) — js/reports.js. -->
+    <!-- Отчетность — справа от FUTOI: бумаги watchlist (кроме crypto),
+         таблица показателей по периодам и загрузка PDF/ZIP — js/reports.js. -->
     <button class="nav-btn" data-page="reports" onclick="navigateTo('reports')">Отчетность</button>
     <button class="nav-btn" data-page="portfolio" onclick="navigateTo('portfolio')">Портфель</button>
 </nav>
@@ -801,71 +801,68 @@
     </div>
 
     <!-- ==================================================================
-         ОТЧЁТНОСТЬ — бухгалтерская (финансовая) отчётность из PDF/ZIP
-         Раздел справа от FUTOI. Пользователь сам загружает файл (PDF или
-         ZIP с PDF) — скачивать с e-disclosure не нужно. Данные:
-         POST /api/reports/upload (разбор таблиц на бэкенде),
-         GET /api/reports (история), GET/DELETE /api/reports/{id}.
-         Рендер — js/reports.js: drag&drop, история загрузок, вкладки
-         таблиц (ОПиУ / совокупный доход / ДДС / капитал / баланс),
-         статьи с отступами, жирные итоги, отрицательные значения в
-         скобках; страницы-сканы честно помечаются как нераспознанные.
+         ОТЧЁТНОСТЬ — финансовые показатели компаний из watchlist
+         Слева — бумаги watchlist (кроме crypto), справа — таблица в духе
+         smart-lab: строки-показатели, колонки-периоды (кварталы,
+         полугодия, 9 месяцев, годы). Кнопка «Добавить колонку» загружает
+         PDF/ZIP по выбранной бумаге; бэкенд разбирает ОПиУ/ДДС/баланс и
+         добавляет колонки. Данные:
+         GET /api/reports/companies, GET /api/reports/company?ticker=...
+         POST /api/reports/upload (file + ticker), GET/DELETE /api/reports/{id}.
+         Рендер — js/reports.js.
          ================================================================== -->
     <div id="reports-page" class="page">
         <div class="reports-container">
             <div class="reports-header">
                 <div class="reports-title-group">
-                    <h1 class="reports-title">Отчетность <span class="reports-title-sub">бухгалтерская</span></h1>
-                    <p class="reports-subtitle">PDF или ZIP с отчётностью → распознанные таблицы (ОПиУ, ДДС, капитал)</p>
+                    <h1 class="reports-title">Отчетность <span class="reports-title-sub">финансовые показатели</span></h1>
+                    <p class="reports-subtitle">Бумаги из watchlist → кварталы, полугодия и годы из загруженных отчётов</p>
                 </div>
                 <div class="reports-header-right">
                     <span class="reports-updated" id="reports-updated"></span>
-                    <button class="reports-refresh" id="reports-refresh" type="button" title="Обновить историю загрузок">
+                    <button class="reports-refresh" id="reports-refresh" type="button" title="Обновить список бумаг и показатели">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                         <span>Обновить</span>
                     </button>
-                    <button class="reports-upload-btn" id="reports-upload-btn" type="button" title="Загрузить PDF или ZIP с отчётностью">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
-                        <span>Загрузить файл</span>
+                    <button class="reports-upload-btn" id="reports-add-column" type="button"
+                            disabled title="Загрузить PDF/ZIP с отчётностью и добавить колонку периодов">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                        <span>Добавить колонку</span>
                     </button>
-                </div>
-            </div>
-
-            <!-- Зона загрузки: клик/Enter открывает выбор файла, drag&drop
-                 тоже поддерживается. input скрыт — стилизована сама зона. -->
-            <div class="reports-dropzone" id="reports-dropzone" role="button" tabindex="0"
-                 aria-label="Загрузить PDF или ZIP с бухгалтерской отчётностью">
-                <input type="file" id="reports-file-input" accept=".pdf,.zip,application/pdf,application/zip" hidden>
-                <span class="reports-drop-icon" aria-hidden="true">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
-                </span>
-                <div class="reports-drop-text">
-                    <div class="reports-drop-title" id="reports-drop-title">Перетащите сюда PDF или ZIP с отчётностью</div>
-                    <div class="reports-drop-hint" id="reports-drop-hint">или нажмите, чтобы выбрать файл · до 30 МБ</div>
+                    <input type="file" id="reports-file-input" accept=".pdf,.zip,application/pdf,application/zip" hidden>
                 </div>
             </div>
 
             <div class="reports-layout">
-                <!-- История загрузок: последний отчёт сверху, удаление — крестиком.
-                     Список хранится в БД (report_documents), не в localStorage. -->
+                <!-- Бумаги: тикеры всех списков watchlist, кроме crypto.
+                     Счётчик справа — число загруженных документов. -->
                 <aside class="reports-sidebar">
-                    <div class="reports-sidebar-title">История загрузок</div>
-                    <div class="reports-history" id="reports-history"></div>
+                    <div class="reports-sidebar-head">
+                        <div class="reports-sidebar-title">Бумаги</div>
+                        <span class="reports-company-count" id="reports-company-count"></span>
+                    </div>
+                    <label class="reports-search">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        <input type="search" id="reports-company-search" placeholder="Поиск по тикеру" autocomplete="off">
+                    </label>
+                    <div class="reports-company-list" id="reports-company-list"></div>
                 </aside>
 
-                <!-- Распознанный отчёт: вкладки таблиц + сама таблица -->
-                <section class="reports-view" id="reports-view">
+                <!-- Таблица показателей выбранной бумаги, документы и
+                     распознанные таблицы. Всё собирает js/reports.js. -->
+                <section class="reports-main" id="reports-main">
                     <div class="reports-empty">
                         <span class="reports-empty-icon" aria-hidden="true">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-3"/></svg>
                         </span>
-                        <div class="reports-empty-title">Отчётность ещё не загружена</div>
-                        <div class="reports-empty-hint">Перетащите PDF или ZIP с отчётностью в зону выше — таблицы появятся здесь.</div>
+                        <div class="reports-empty-title">Выберите бумагу</div>
+                        <div class="reports-empty-hint">Слева — тикеры из watchlist. По выбранной бумаге появится таблица показателей.</div>
                     </div>
                 </section>
             </div>
         </div>
     </div>
+
 
     <div id="portfolio-page" class="page">
         <div class="portfolio-container">
@@ -1113,9 +1110,10 @@
      Подключён до main.js — navigateTo('futoi') вызывает window.loadFutoiPage
      уже после разбора HTML, но до DOMContentLoaded, как и остальные разделы -->
 <script defer src="js/futoi.js"></script>
-<!-- Отчетность (раздел справа от FUTOI): загрузка PDF/ZIP, история и
-     распознанные таблицы. Подключён до main.js — navigateTo('reports')
-     вызывает window.loadReportsPage так же, как остальные разделы -->
+<!-- Отчетность (раздел справа от FUTOI): бумаги watchlist, таблица
+     показателей по периодам, загрузка PDF/ZIP и исходные таблицы.
+     Подключён до main.js — navigateTo('reports') вызывает
+     window.loadReportsPage так же, как остальные разделы -->
 <script defer src="js/reports.js"></script>
 <script defer src="js/main.js"></script>
 <script defer src="js/portfolio.js"></script>
