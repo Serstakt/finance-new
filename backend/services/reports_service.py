@@ -128,6 +128,11 @@ _UNITS_RE = re.compile(
     r"\(?\s*в\s+(?:миллионах|миллиардах|тысячах|млн|млрд|тыс\.)",
     re.IGNORECASE,
 )
+# Единицы в OCR-шапке стоят отдельными токенами («Прим. млн руб. …») без
+# «в миллионах…». На границу шапки такая строка претендовать не должна
+# (в OCR-отчётах она ниже подписей колонок), но для пересчёта значений
+# в млрд ₽ годится — см. _parse_table.
+_UNITS_FALLBACK_RE = re.compile(r"\b(?:млн|млрд|тыс\.?)\s*руб", re.IGNORECASE)
 _NUMERIC_RE = re.compile(r"^[([]?[-−–]?\d[\d\s\u00a0'’.,]*[)\]]?$")
 _DIGIT_RE = re.compile(r"\d")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
@@ -426,7 +431,9 @@ def _build_columns(lines: list[Line], page_width: float) -> list[Column]:
         for text in texts:
             if _is_year(text) or re.fullmatch(r"\d{1,2}", text):
                 noise += 1
-        return noise < max(1, len(texts)) * 0.7
+        # Половина «значений» — годы/короткие числа (шапка, битые фрагменты
+        # вроде «4 51» рядом с «2026») — это не колонка данных.
+        return noise < max(1, len(texts)) * 0.5
 
     data_groups = [group for group in merged if is_data_group(group_texts(group))]
     finals = sorted(median(group) for group in (data_groups or merged))
@@ -539,6 +546,10 @@ def _is_headerish(line: Line) -> bool:
     if numeric and len(numeric) == len(line.tokens):
         # Только числа: годы шапки («2026 2025») или короткие подписи.
         return all(_is_year(t.text) or len(_clean(t.text)) <= 2 for t in numeric)
+    if numeric and all(_is_year(t.text) for t in numeric):
+        # Числа строки — только годы («2026 г. 31 Декабря», «(не
+        # аудировано) 2025 г.»): это шапка, а не статья с данными.
+        return True
 
     label = " ".join(t.text for t in line.tokens if not _is_number(t.text))
     return bool(_HEADER_LABEL_RE.search(label))
@@ -602,6 +613,18 @@ def _header_names(
             if text not in shared:
                 shared.append(text)
             return
+        # Подпись может охватывать несколько колонок («За три месяца» над
+        # парой «2026 / 2025») — тогда она входит в названия всех колонок,
+        # с которыми перекрывается.
+        overlapped = [
+            i for i, column in enumerate(columns)
+            if column.left < group["x1"] and column.right > group["x0"]
+        ]
+        if len(overlapped) > 1:
+            for index in overlapped:
+                if text not in per_column[index]:
+                    per_column[index].append(text)
+            return
         # Подписи периодов прижаты к своей колонке — смотрим на правый
         # край с широким допуском, как у чисел.
         token = Token(
@@ -650,7 +673,13 @@ def _header_names(
     names: list[str] = []
     for i, parts in enumerate(per_column):
         name = re.sub(r"\s+", " ", " ".join(parts)).strip()
-        if prefix and prefix not in name:
+        # Общий префикс шапки («за девятимесячный период, завершившийся
+        # 30 сентября 2026 г.») нужен колонкам без своего года — иначе
+        # он перебивает тип и год самой колонки («за три месяца … 2025»).
+        if (
+            prefix and prefix not in name
+            and not re.search(r"\b(?:19|20)\d{2}\b", name)
+        ):
             name = f"{prefix} {name}".strip()
         if not name:
             name = fallback_years.get(i, f"Значение {i + 1}")
@@ -877,6 +906,14 @@ def _parse_table(
             header_lines.append(line)
     row_lines = pre_rows + zone[start:]
     units = zone[units_index].text if units_index is not None else ""
+    if not units:
+        # OCR-шапка: единицы стоят токенами «млн руб.» среди подписей
+        # колонок, а граница данных может пройти выше них (мусорная строка
+        # с годом). Смотрим шапку и первые строки «данных».
+        for line in header_lines + pre_rows + row_lines[:3]:
+            if _UNITS_FALLBACK_RE.search(line.text):
+                units = line.text
+                break
 
     # Годы из строки «2026 2025» — запасные названия, если подписи не нашлись.
     fallback_years: dict[int, str] = {}
@@ -958,6 +995,10 @@ _OCR_DPI = 400
 _OCR_MAX_PAGES = 24
 _OCR_TIMEOUT = 240
 _OCR_NUM_CHARS = set("0123456789()[]-−–—.,%'’ \u00a0")
+# OCR путает цифры с похожими буквами («3 193 878» → «з 193 878»).
+# Одиночный токен-двойник нормализуем до склейки числовых токенов,
+# иначе «з» не приклеивается и число теряет старший разряд.
+_OCR_DIGIT_LOOKALIKES = {"з": "3", "З": "3", "о": "0", "О": "0", "б": "6", "Б": "6"}
 
 
 def _ocr_supported() -> bool:
@@ -986,6 +1027,7 @@ def _ocr_page_lines(
     """
     words: list[dict] = []
     for raw_line in raw_lines:
+        line_words: list[dict] = []
         for raw in raw_line.get("words") or []:
             text = _clean(str(raw.get("t") or ""))
             if not text:
@@ -997,11 +1039,33 @@ def _ocr_page_lines(
                 height = float(raw.get("h") or 0.0) * scale
             except (TypeError, ValueError):
                 continue
-            words.append({
+            line_words.append({
                 "text": text,
                 "x0": x, "x1": x + width,
                 "y0": y, "y1": y + height,
             })
+        # Одиночные цифры-двойники («3 193 878» OCR читает как «з 193
+        # 878») чиним только вплотную к числу — иначе предлог «о» в
+        # заголовке «отчет о совокупном доходе» превращался бы в «0».
+        glue_limit = max(
+            (word["y1"] - word["y0"]) * 1.2 for word in line_words
+        ) if line_words else 0.0
+        for index, word in enumerate(line_words):
+            if len(word["text"]) != 1 or word["text"] not in _OCR_DIGIT_LOOKALIKES:
+                continue
+            neighbours = line_words[max(0, index - 1):index] + \
+                line_words[index + 1:index + 2]
+            near_number = any(
+                _ocr_numeric(other["text"])
+                and min(
+                    abs(other["x0"] - word["x1"]),
+                    abs(word["x0"] - other["x1"]),
+                ) <= max(2.0, glue_limit)
+                for other in neighbours
+            )
+            if near_number:
+                word["text"] = _OCR_DIGIT_LOOKALIKES[word["text"]]
+        words.extend(line_words)
     if not words:
         return []
 
@@ -1079,7 +1143,11 @@ def _run_windows_ocr(document, page_indices: list[int]) -> dict[int, list[Line]]
             "-OutFile", str(out_path),
         ]
         completed = subprocess.run(
-            command, capture_output=True, text=True, timeout=_OCR_TIMEOUT,
+            command, capture_output=True, text=True,
+            # PowerShell пишет в UTF-8/UTF-16; кодировка консоли (cp1251
+            # на русской Windows) ломает чтение вывода и роняет OCR.
+            encoding="utf-8", errors="replace",
+            timeout=_OCR_TIMEOUT,
         )
         if completed.returncode != 0:
             message = (completed.stderr or completed.stdout or "OCR failed").strip()

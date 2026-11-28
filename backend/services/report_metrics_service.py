@@ -57,6 +57,51 @@ GROUP_LABELS = {
     GROUP_RATIOS: "Мультипликаторы",
 }
 
+# =============================================================================
+# СЕКТОРЫ
+# =============================================================================
+# Набор строк таблицы зависит от сектора компании: у банка свои статьи
+# (ЧПД, комиссионные, резервы…), у остальных — общий шаблон. Сектор пока
+# определяется статичным списком тикеров Мосбиржи; расширяется по мере
+# необходимости (нефтегаз и прочие — следующие шаблоны).
+SECTOR_DEFAULT = "default"
+SECTOR_BANK = "bank"
+
+BANK_TICKERS = frozenset({
+    "SBER", "SBERP",   # Сбербанк (ао/ап)
+    "VTBR",            # ВТБ
+    "CBOM", "SVCB",    # Совкомбанк (ао/ап)
+    "TCSG",            # ТКС Холдинг (Т-Банк)
+    "ROSB",            # Росбанк
+    "MTSB",            # МТС Банк
+    "BSPB", "BSPBP",   # Банк «Санкт-Петербург» (ао/ап)
+    "ZILL",            # Банк «Зенит»
+    "VOSK",            # Восточный экспресс банк
+})
+
+# Признак банковской отчетности в распознанных колонках: если ЧПД
+# извлечён, отчет банковский независимо от тикера (список тикеров
+# неполон — новые банки, апы, случайные тикеры watchlist).
+BANK_SENTINEL_METRIC = "net_interest_income"
+
+
+def sector_for_symbol(symbol: object) -> str:
+    """Сектор компании по тикеру: «bank» или общий шаблон."""
+    value = str(symbol or "").strip().upper()
+    code = value.split(":", 1)[1] if ":" in value else value
+    return SECTOR_BANK if code in BANK_TICKERS else SECTOR_DEFAULT
+
+
+def sector_for_columns(symbol: object, columns: list) -> str:
+    """Сектор по тикеру, а при наличии банковских статей — по отчету."""
+    if sector_for_symbol(symbol) == SECTOR_BANK:
+        return SECTOR_BANK
+    for column in columns:
+        values = column.get("values") or {}
+        if BANK_SENTINEL_METRIC in values:
+            return SECTOR_BANK
+    return SECTOR_DEFAULT
+
 
 @dataclass(frozen=True)
 class MetricDef:
@@ -189,6 +234,13 @@ METRICS = (
         patterns=(
             r"^итого активы$",
             r"^активы$",
+            # Активы = капитал + обязательства — банковские балансы
+            # (Совкомбанк) подводят итог этой строкой.
+            r"^итого капитал и обязательств",
+            # «Итого» под разделом «Активы» и «Всего активов» —
+            # банковские балансы (Совкомбанк, ВТБ).
+            r"^итого$",
+            r"^всего актив",
             r"^total assets$",
         ),
         core=True,
@@ -260,6 +312,270 @@ METRICS = (
 
 METRICS_BY_KEY = {metric.key: metric for metric in METRICS}
 
+# =============================================================================
+# БАНКОВСКИЙ ШАБЛОН
+# =============================================================================
+# Статьи банковских МСФО (Сбербанк, ВТБ…) и рыночные строки. Денежные
+# статьи парсятся из ОПиУ/баланса, мультипликаторы и рентабельность —
+# только если такая строка реально есть в загруженном отчёте (source
+# "any" — таблица может быть любой): рыночных данных (цена × число
+# акций, кредитный портфель для COR/NPL) раздел не подтягивает, а
+# выдумывать числа нельзя.
+BANK_ONLY_METRICS = (
+    MetricDef(
+        "net_interest_income", "Чистый процентный доход", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            # Точная строка важнее производной «…после расходов по
+            # кредитным убыткам», которая матчится тем же общим шаблоном.
+            r"^чист\w* процентн\w* доход$",
+            r"^net interest income$",
+            r"^чист\w* процентн\w* доход",
+            r"^net interest income",
+        ),
+        core=True,
+    ),
+    MetricDef(
+        "net_fee_income", "Чистые комиссионные", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^чист\w* комиссионн\w* доход$",
+            r"^чист\w* комиссионн",
+            r"^net fee",
+            r"^net commission",
+        ),
+        core=True,
+    ),
+    MetricDef(
+        "net_operating_income", "Чистый операц. доход", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            # «…до создания резерва» приоритетнее: в банковских ОПиУ это
+            # основной «Чистый операционный доход», строка «после создания
+            # резерва» матчится только общим шаблоном ниже.
+            r"^чист\w* операционн\w* доход до",
+            r"^чист\w* операционн\w* доход",
+            r"^net operating income",
+        ),
+        core=True,
+        hint="Доход до резервов: из отчета или оценка (опер. доходы + резервы + небанковский чистый доход).",
+    ),
+    MetricDef(
+        "net_profit_shareholders", "Чистая прибыль (акционерам)", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^чист\w* прибыль.*приходящ\w* на акционер",
+            r"чист\w*.*прибыл\w*.*относящ\w*.*акционер",
+            r"^profit attributable to (?:the )?shareholders",
+            # Подстатья под заголовком «…приходящаяся на:»: «Акционеры
+            # Банка» (Сбербанк) / «- акционеров Банка» (Совкомбанк).
+            r"^акционер\w* банка$",
+        ),
+        core=True,
+        hint="Прибыль, приходящаяся на акционеров банка, без неконтролирующих долей.",
+    ),
+    MetricDef(
+        "operating_expenses", "Операционные расходы", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^операционн\w* расход",
+            r"^operating expenses",
+            # «Непроцентные расходы» — тот же блок расходов в ОПиУ
+            # Совкомбанка и Т-Банка.
+            r"^непроцентн\w* расход",
+        ),
+        absolute=True,
+        core=True,
+    ),
+    MetricDef(
+        "provisions", "Создание резервов", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^расход\w* по кредитным убыткам",
+            r"^создание .*резерв.*кредит",
+            r"^создание .*резерв",
+            r"^резерв на возможные потери",
+            r"^provision .*(?:impairment|credit)",
+        ),
+        absolute=True,
+        core=True,
+        hint="Резерв на возможные потери по кредитам, по модулю.",
+    ),
+    MetricDef(
+        "net_profit_total", "Чистая прибыль", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^чист\w* прибыль$",
+            r"^чист\w* прибыль (?:убыток|за период)",
+            r"^чист\w* убыток$",
+            r"^прибыл\w* за отчетный период$",
+            r"^profit(?: loss)? for the period$",
+        ),
+        core=True,
+        hint="Чистая прибыль за период, включая неконтролирующие доли.",
+    ),
+    # Источники для расчёта чистого операционного дохода там, где такой
+    # строки в отчете нет (сжатые ОПиУ). В шаблон строк их не выводим.
+    MetricDef(
+        "operating_income_total", "Операционные доходы (после резервов)",
+        UNIT_MONEY, GROUP_INCOME, "income",
+        patterns=(
+            r"^операционн\w* доходы$",
+            r"^operating income$",
+        ),
+        hint="Итог доходов ОПиУ до операционных расходов, после резервов.",
+    ),
+    MetricDef(
+        "nonbank_net_income", "Чистый доход по небанковской деятельности",
+        UNIT_MONEY, GROUP_INCOME, "income",
+        patterns=(
+            r"^чист\w* доход по небанковской",
+            r"^net non-banking",
+        ),
+    ),
+    MetricDef(
+        "pe", "PE", UNIT_RATIO, GROUP_RATIOS, "any",
+        patterns=(
+            r"^p e$",
+            r"\bp e ratio\b",
+            r"^price to earnings",
+        ),
+        core=True,
+        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+    ),
+    MetricDef(
+        "pb", "PB", UNIT_RATIO, GROUP_RATIOS, "any",
+        patterns=(
+            r"^p b v$",
+            r"^p b$",
+            r"^price to book",
+        ),
+        core=True,
+        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+    ),
+    MetricDef(
+        "market_cap", "Капитализация", UNIT_MONEY, GROUP_RATIOS, "any",
+        patterns=(
+            r"^капитализация",
+            r"^market capitali[sz]ation",
+        ),
+        core=True,
+        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+    ),
+    MetricDef(
+        "roe", "ROE", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^roe$",
+            r"^рентабельность капитал",
+            r"^return on equity",
+        ),
+        core=True,
+        derived=True,
+        hint="Годовые: ЧП (акционерам) / Капитал × 100 (поток за период приведён к году).",
+    ),
+    MetricDef(
+        "roa", "ROA", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^roa$",
+            r"^рентабельность актив",
+            r"^return on assets",
+        ),
+        core=True,
+        derived=True,
+        hint="Годовые: Чистая прибыль / Активы × 100 (активы на конец периода).",
+    ),
+    MetricDef(
+        "nim", "NIM", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^nim$",
+            r"^процентная маржа",
+            r"^net interest margin",
+        ),
+        core=True,
+        derived=True,
+        hint="Годовые: ЧПД / Активы × 100 — приближение по активам на конец периода.",
+    ),
+    MetricDef(
+        "npl", "NPL", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^npl$",
+            r"^дол\w* проблемн\w* кредит",
+            r"^non performing loan",
+        ),
+        core=True,
+        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+    ),
+    MetricDef(
+        "cor", "COR", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^cor$",
+            r"^стоимость риска",
+            r"^cost of risk",
+        ),
+        core=True,
+        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+    ),
+    MetricDef(
+        "cir", "CIR", UNIT_PERCENT, GROUP_RATIOS, "any",
+        patterns=(
+            r"^cir$",
+            r"^cost to income",
+            r"^отношение расходов к доходам",
+        ),
+        core=True,
+        derived=True,
+        hint="Операционные расходы / Чистый операц. доход × 100.",
+    ),
+    MetricDef(
+        "deposits", "Депозиты", UNIT_MONEY, GROUP_BALANCE, "balance",
+        patterns=(
+            # Только клиентские средства: «Депозиты и счета банков» —
+            # межбанковский блок, к депозитам клиентов не относится.
+            r"^средства клиент",
+            r"^текущ\w* счет\w* и депозиты клиент",
+            r"^депозиты клиент",
+            r"^customer (?:current accounts and )?deposits",
+            r"^customer accounts",
+        ),
+        core=True,
+        hint="Средства клиентов на текущих счетах и депозитах (баланс).",
+    ),
+)
+
+BANK_ONLY_BY_KEY = {metric.key: metric for metric in BANK_ONLY_METRICS}
+
+# Единый каталог разбора: банковские статьи распознаются всегда, а какой
+# шаблон строк показывать — решает сектор компании при выдаче.
+PARSING_METRICS = METRICS + BANK_ONLY_METRICS
+PARSING_BY_KEY = {metric.key: metric for metric in PARSING_METRICS}
+
+# Порядок строк банковского шаблона — как согласовано (частично
+# переиспользуются ключи общего каталога: equity, total_assets).
+BANK_TEMPLATE = (
+    "net_interest_income",
+    "net_fee_income",
+    "net_operating_income",
+    "net_profit_shareholders",
+    "operating_expenses",
+    "provisions",
+    "net_profit_total",
+    "pe",
+    "pb",
+    "equity",
+    "market_cap",
+    "roe",
+    "roa",
+    "nim",
+    "npl",
+    "cor",
+    "cir",
+    "total_assets",
+    "deposits",
+)
+
+# Ключи, считающиеся из исходных статей колонки (см. _derive_column).
+_BANK_DERIVED = frozenset({"roe", "roa", "nim", "cir"})
+
 # Приоритет источника при склейке одной и той же статьи из разных таблиц:
 # амортизация в ОПиУ (расход) точнее для EBITDA, чем корректировка в ДДС.
 _SOURCE_PRIORITY = {"income": 0, "balance": 1, "cashflow": 2}
@@ -275,7 +591,11 @@ _MONTH_WORD_RE = (
     r"(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]|июн\w*|июл\w*"
     r"|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)"
 )
-_DATE_WORD_RE = re.compile(r"(\d{1,2})\s+" + _MONTH_WORD_RE + r"\s+(\d{4})")
+# Между месяцем и годом в OCR-шапке вклиниваются слова пометки
+# («30 сентября (не аудировано) 2026 г.») — допускаем до трёх.
+_DATE_WORD_RE = re.compile(
+    r"(\d{1,2})\s+" + _MONTH_WORD_RE + r"(?:\s+\w+){0,3}?\s+(\d{4})"
+)
 _DATE_NUM_RE = re.compile(r"(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})")
 _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 _YEAR_ONLY_RE = re.compile(r"^(?:19|20)\d{2}$")
@@ -354,15 +674,19 @@ def _unit_scale(units: object) -> Optional[float]:
 
 
 def _kind_from_text(text: str) -> Optional[str]:
-    """Тип периода по словам «квартал / 6 месяцев / 9 месяцев / год»."""
+    """Тип периода по словам «квартал / 6 месяцев / 9 месяцев / год».
+
+    «девят\w*\s*мес» покрывает и «девять месяцев», и «девятимесячный»
+    (в слитной форме пробела между корнем и «мес» нет).
+    """
     value = _norm(text)
-    if re.search(r"\b9\s*мес|девят\w* месяц", value):
+    if re.search(r"\b9\s*мес|девят\w*\s*мес", value):
         return "nine"
-    if re.search(r"\b6\s*мес|шест\w* месяц|полугод", value):
+    if re.search(r"\b6\s*мес|шест\w*\s*мес|полугод", value):
         return "half"
-    if re.search(r"\b3\s*мес|тр\w* месяц|квартал", value):
+    if re.search(r"\b3\s*мес|тр\w*\s*мес|квартал", value):
         return "quarter"
-    if re.search(r"\b12\s*мес|\bгод\w*|annual", value):
+    if re.search(r"\b12\s*мес|двенадцат\w*\s*мес|\bгод\w*|annual", value):
         return "year"
     return None
 
@@ -431,10 +755,14 @@ def _parse_period(raw_label: object, fallback_text: str = "") -> Optional[_Perio
     label_text = _norm(raw)
     fallback = _norm(fallback_text)
 
-    year_match = _YEAR_RE.search(label_text) or _YEAR_RE.search(fallback)
-    if not year_match:
+    # Год колонки — последний год в подписи. Общая строка шапки («за …
+    # 30 сентября 2026 г.») попадает в начало подписи каждой колонки,
+    # а собственный год колонки («… 2025 г.») — в конец, поэтому первый
+    # год верить нельзя.
+    years = _YEAR_RE.findall(label_text) or _YEAR_RE.findall(fallback)
+    if not years:
         return None
-    year = int(year_match.group(1))
+    year = int(years[-1])
 
     parsed_date = _extract_date(label_text)
     if parsed_date is None or parsed_date.year != year:
@@ -570,6 +898,10 @@ def _wrap_value(number: float, metric: MetricDef,
         return {"v": round(number * scale, 6), "u": "bn"}
     if metric.unit == UNIT_PER_SHARE:
         return {"v": round(number, 6), "u": "share"}
+    if metric.unit == UNIT_PERCENT:
+        return {"v": round(number, 6), "u": "pct"}
+    if metric.unit == UNIT_RATIO:
+        return {"v": round(number, 6), "u": "x"}
     return None
 
 
@@ -593,7 +925,7 @@ def _choose_candidate(candidates: list[dict], combine: str) -> Optional[dict]:
                               "u": candidates[0]["value"]["u"]},
                 }
     return min(candidates, key=lambda item: (
-        item["priority"], item["indent"], -item["order"],
+        item["priority"], item["indent"], item["order"],
     ))
 
 
@@ -616,8 +948,10 @@ def _collect_metrics(rows: list[dict], column_index: int, source: str,
         number = _parse_number(raw)
         if number is None:
             continue
-        for metric in METRICS:
-            if metric.source != source:
+        for metric in PARSING_METRICS:
+            # source "any" — мультипликаторы/рентабельность ищем в любой
+            # из распознанных таблиц.
+            if metric.source != source and metric.source != "any":
                 continue
             priority = _match_priority(metric, label)
             if priority is None:
@@ -636,7 +970,7 @@ def _collect_metrics(rows: list[dict], column_index: int, source: str,
 
     source_priority = _SOURCE_PRIORITY.get(source, 9)
     for key, items in candidates.items():
-        chosen = _choose_candidate(items, METRICS_BY_KEY[key].combine)
+        chosen = _choose_candidate(items, PARSING_BY_KEY[key].combine)
         if not chosen:
             continue
         existing = values.get(key)
@@ -667,7 +1001,16 @@ def _same_unit(left: Optional[dict], right: Optional[dict]) -> bool:
     return bool(left and right and left.get("u") == right.get("u"))
 
 
-def _derive_column(values: dict) -> None:
+def _annual_factor(kind: object) -> float:
+    """Множитель приведения потока за период к году (как на smart-lab)."""
+    return {
+        "quarter": 4.0,
+        "half": 2.0,
+        "nine": 4.0 / 3.0,
+    }.get(str(kind or ""), 1.0)
+
+
+def _derive_column(values: dict, kind: str = "") -> None:
     """Производные показатели — только если есть исходные данные."""
     revenue = values.get("revenue")
     operating = values.get("operating_profit")
@@ -711,9 +1054,62 @@ def _derive_column(values: dict) -> None:
             "v": round(debt["v"] / ebitda["v"], 4), "u": "x",
         }
 
+    # Банковский шаблон: рентабельности считаем только из статей одной
+    # единицы (млрд ₽ / как в отчёте) и не затираем значение, если строка
+    # ROE/ROA/NIM/CIR была в самом отчёте. ROE/ROA/NIM — годовые
+    # (поток за период приведён к году, как на smart-lab).
+    shareholders = values.get("net_profit_shareholders")
+    net_total = values.get("net_profit_total") or net_profit
+    nii = values.get("net_interest_income")
+    opex = values.get("operating_expenses")
+    noi = values.get("net_operating_income")
+    if noi is None:
+        # Нет строки «Чистый операционный доход» (сжатые ОПиУ) — оценка
+        # до резервов: операционные доходы (после резервов) + резервы +
+        # чистый доход по небанковской деятельности.
+        operating_income = values.get("operating_income_total")
+        nonbank = values.get("nonbank_net_income")
+        parts = [operating_income, values.get("provisions"), nonbank]
+        if (
+            operating_income
+            and all(_same_unit(operating_income, part) for part in parts[1:])
+        ):
+            noi = {
+                "v": round(sum(part["v"] for part in parts if part), 6),
+                "u": operating_income["u"],
+            }
+            values["net_operating_income"] = noi
+    assets = values.get("total_assets")
+    equity = values.get("equity")
+    factor = _annual_factor(kind)
+    derived_bank = (
+        # ROE/ROA/NIM — поток к запасу: годовые (фактор по типу периода).
+        ("roe", shareholders, equity, factor),
+        ("roa", net_total, assets, factor),
+        ("nim", nii, assets, factor),
+        # CIR — отношение двух потоков одного периода, множитель
+        # сокращается.
+        ("cir", opex, noi, 1.0),
+    )
+    for key, numerator, denominator, ratio_factor in derived_bank:
+        if key in values:
+            continue
+        if (
+            numerator and denominator
+            and _same_unit(numerator, denominator)
+            and denominator["v"]
+        ):
+            values[key] = {
+                "v": round(
+                    numerator["v"] / denominator["v"] * 100 * ratio_factor,
+                    4,
+                ),
+                "u": "pct",
+            }
+
 
 def _finalize_column(column: dict) -> dict:
-    _derive_column(column["values"])
+    _derive_column(column["values"], str(column.get("kind") or ""))
     column["values"] = {
         key: {"v": value["v"], "u": value["u"]}
         for key, value in column["values"].items()
@@ -737,8 +1133,11 @@ def build_columns(tables: list[dict]) -> list[dict]:
         if key == "balance":
             balance_tables.append(table)
             continue
-        if key not in ("income", "cashflow"):
+        # В сжатой отчётности банков ОПиУ объединён с отчётом о совокупном
+        # доходе — статьи ОПиУ лежат в таблице «comprehensive».
+        if key not in ("income", "cashflow", "comprehensive"):
             continue
+        collect_source = "income" if key == "comprehensive" else key
         scale = _unit_scale(table.get("units"))
         rows = table.get("rows") or []
         raw_title = str(table.get("raw_title") or table.get("title") or "")
@@ -750,7 +1149,7 @@ def build_columns(tables: list[dict]) -> list[dict]:
             if column is None:
                 column = _new_column(period)
                 periods[period.key] = column
-            _collect_metrics(rows, index, key, scale, column["values"])
+            _collect_metrics(rows, index, collect_source, scale, column["values"])
 
     for table in balance_tables:
         scale = _unit_scale(table.get("units"))
@@ -878,6 +1277,7 @@ def list_companies() -> dict:
             "ticker": symbol,
             "code": _bare_ticker(symbol),
             "exchange": "MOEX",
+            "sector": sector_for_symbol(symbol),
             "documents": entry.get("documents", 0),
             "periods": entry.get("periods", 0),
             "in_watchlist": True,
@@ -893,6 +1293,7 @@ def list_companies() -> dict:
             "ticker": symbol,
             "code": _bare_ticker(symbol),
             "exchange": "MOEX",
+            "sector": sector_for_symbol(symbol),
             "documents": entry["documents"],
             "periods": entry["periods"],
             "in_watchlist": False,
@@ -903,6 +1304,7 @@ def list_companies() -> dict:
             "ticker": "__orphans__",
             "code": "Без компании",
             "exchange": "",
+            "sector": SECTOR_DEFAULT,
             "documents": orphans,
             "periods": 0,
             "in_watchlist": False,
@@ -915,7 +1317,12 @@ def list_companies() -> dict:
 # ФИНАНСОВАЯ ТАБЛИЦА КОМПАНИИ
 # =============================================================================
 
-def metrics_catalog() -> list[dict]:
+def metrics_catalog(sector: str = SECTOR_DEFAULT) -> list[dict]:
+    """Строки таблицы по сектору: банковский шаблон или общий каталог."""
+    if sector == SECTOR_BANK:
+        defs = [PARSING_BY_KEY[key] for key in BANK_TEMPLATE]
+    else:
+        defs = METRICS
     return [
         {
             "key": metric.key,
@@ -927,7 +1334,7 @@ def metrics_catalog() -> list[dict]:
             "derived": metric.derived,
             "hint": metric.hint,
         }
-        for metric in METRICS
+        for metric in defs
     ]
 
 
@@ -999,12 +1406,17 @@ def company_financials(ticker: str) -> Optional[dict]:
     )
     documents.reverse()  # в интерфейсе новые загрузки сверху
 
+    # Сектор: сначала по тикеру, при отсутствии в списке — по содержимому
+    # отчета (ЧПД в колонках значит банковский отчет).
+    sector = sector_for_columns(symbol, ordered)
+
     return {
         "ticker": symbol or "__orphans__",
         "code": "Без компании" if orphan_mode else _bare_ticker(symbol),
         "exchange": "" if orphan_mode else "MOEX",
+        "sector": sector,
         "columns": ordered,
-        "metrics": metrics_catalog(),
+        "metrics": metrics_catalog(sector),
         "documents": documents,
         "has_columns": bool(ordered),
     }

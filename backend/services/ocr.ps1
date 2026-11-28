@@ -30,6 +30,8 @@ function Await($WinRtTask, $ResultType) {
 }
 
 [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime] | Out-Null
+[Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType=WindowsRuntime] | Out-Null
+[Windows.Storage.Streams.DataWriter, Windows.Storage.Streams, ContentType=WindowsRuntime] | Out-Null
 [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime] | Out-Null
 [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime] | Out-Null
 [Windows.Globalization.Language, Windows.Globalization, ContentType=WindowsRuntime] | Out-Null
@@ -51,9 +53,16 @@ $files = Get-ChildItem -Path $ImageDir -Filter *.png | Sort-Object Name
 $result = @()
 
 foreach ($file in $files) {
-    $storageFile = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($file.FullName)) ([Windows.Storage.StorageFile])
-    $stream = Await ($storageFile.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    # Читаем PNG в память обычным .NET API и отдаём декодеру поток:
+    # StorageFile.GetFileFromPathAsync завязан на брокер WinRT и падает с
+    # «Отказано в доступе», когда PowerShell запущен не из интерактивной
+    # сессии (сервис, планировщик, дочерний процесс Python и т.п.).
+    $memory = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+    $writer = New-Object Windows.Storage.Streams.DataWriter($memory.GetOutputStreamAt(0))
+    $writer.WriteBytes([System.IO.File]::ReadAllBytes($file.FullName))
+    Await ($writer.StoreAsync()) ([uint32]) | Out-Null
+    Await ($writer.FlushAsync()) ([bool]) | Out-Null
+    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($memory)) ([Windows.Graphics.Imaging.BitmapDecoder])
     $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
 
     $ocr = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
