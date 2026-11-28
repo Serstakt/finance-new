@@ -210,12 +210,18 @@ async def fetch_moex_price(ticker: str) -> dict:
     price = get_col('LAST') or get_col('LASTVALUE') or get_col('VALTODAY')
     change_percent = get_col('LASTTOPREVPRICE') or get_col('LASTCHANGEPRC')
     change_value = get_col('CHANGE') or get_col('LASTCHANGE')
+    # Капитализация есть только у акций (в marketdata доски TQBR); у индексов
+    # и валют этих колонок нет — get_col вернёт None и поле останется пустым.
+    capitalization = get_col('ISSUECAPITALIZATION')
+    capitalization_time = get_col('ISSUECAPITALIZATION_UPDATETIME')
 
     return {
         "symbol": f"MOEX:{ticker}",
         "price": float(price) if price else None,
         "changeDay": float(change_percent) if change_percent else None,
-        "changeValue": float(change_value) if change_value else None
+        "changeValue": float(change_value) if change_value else None,
+        "ISSUECAPITALIZATION": float(capitalization) if capitalization else None,
+        "ISSUECAPITALIZATION_UPDATETIME": capitalization_time,
     }
 
 
@@ -302,11 +308,15 @@ def _parse_board_marketdata(data: dict, tickers: list[str]) -> dict[str, dict]:
         price = get_col('LAST') or get_col('LASTVALUE') or get_col('VALTODAY')
         change_percent = get_col('LASTTOPREVPRICE') or get_col('LASTCHANGEPRC')
         change_value = get_col('CHANGE') or get_col('LASTCHANGE')
+        capitalization = get_col('ISSUECAPITALIZATION')
+        capitalization_time = get_col('ISSUECAPITALIZATION_UPDATETIME')
         out[t] = {
             "symbol": f"MOEX:{t}",
             "price": float(price) if price else None,
             "changeDay": float(change_percent) if change_percent else None,
             "changeValue": float(change_value) if change_value else None,
+            "ISSUECAPITALIZATION": float(capitalization) if capitalization else None,
+            "ISSUECAPITALIZATION_UPDATETIME": capitalization_time,
         }
     return out
 
@@ -324,7 +334,8 @@ async def _fetch_board_prices(engine: str, market: str, board: str,
     host = "apim.moex.com" if token else "iss.moex.com"
     board_name = board.lower() if token else board
     cols = ("SECID,LAST,LASTVALUE,LASTCHANGE,LASTCHANGEPRC,"
-            "LASTTOPREVPRICE,CHANGE,VALTODAY")
+            "LASTTOPREVPRICE,CHANGE,VALTODAY,"
+            "ISSUECAPITALIZATION,ISSUECAPITALIZATION_UPDATETIME")
     url = (f"https://{host}/iss/engines/{engine}/markets/{market}/"
            f"boards/{board_name}/securities.json?marketdata.columns={cols}")
     headers = {"Authorization": f"Bearer {token}"} if token else {}

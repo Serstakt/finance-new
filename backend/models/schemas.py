@@ -13,6 +13,12 @@ class PriceResponse(BaseModel):
     # Логотип монеты (CoinGecko image, поле приходит из /coins/markets).
     # Для MOEX-тикеров может приходить favicon с сайта эмитента или None.
     logo: str | None = None
+    # Капитализация акции в рублях (MOEX ISS, marketdata.ISSUECAPITALIZATION)
+    # и время её последнего пересчёта (ISSUECAPITALIZATION_UPDATETIME,
+    # строка «ЧЧ:ММ:СС»). Заполняется только для акций Мосбиржи; у крипты,
+    # индексов и валют останется None.
+    ISSUECAPITALIZATION: float | None = None
+    ISSUECAPITALIZATION_UPDATETIME: str | None = None
 
 
 class BatchPriceResponse(BaseModel):

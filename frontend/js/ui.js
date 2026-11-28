@@ -713,8 +713,15 @@ window.MORE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" f
 // запасной путь).
 window.rowMenuItems = function(sym) {
   const baseTicker = sym.split(':').length > 1 ? sym.split(':')[1] : sym;
-  return [
+  const items = [
     { label: `Открыть ${baseTicker} на Smart-Lab`, action: () => window.open(`https://smart-lab.ru/forum/${baseTicker}/`, '_blank', 'noopener') },
+  ];
+  // Отчетность ведётся только по бумагам Мосбиржи (крипта в раздел
+  // не попадает — см. canonical_symbol в report_metrics_service).
+  if (!sym.startsWith('BINANCE:')) {
+    items.push({ label: `Перейти в отчетность ${baseTicker}`, action: () => openReportsForTicker(sym) });
+  }
+  items.push(
     { label: 'Перейти в заметки', action: () => {
         sessionStorage.setItem('bottomTab', 'notes');
         const np = document.getElementById('news-panel');
@@ -723,7 +730,8 @@ window.rowMenuItems = function(sym) {
       } },
     { label: 'Убрать из избранного', action: () => setFavorite(sym, null) },
     { label: 'Удалить из списка', danger: true, action: () => removeTickerFromList(sym) },
-  ];
+  );
+  return items;
 };
 
 // Удаление тикера из активного списка (общий путь для корзины и контекстного меню).
