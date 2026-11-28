@@ -60,6 +60,10 @@
     uploading: false,
     openDoc: null,        // {id, loading, data, activeTable}
     bound: false,
+    // Текущая капитализация выбранной бумаги (ISSUECAPITALIZATION из
+    // /api/prices): {cap: number|null, updated: 'ЧЧ:ММ:СС'}. Обновляется
+    // на каждом real-time-тике (см. таймер в bindHandlers).
+    market: { cap: null, updated: '' },
   };
 
   // --- Вспомогательное ------------------------------------------------------
@@ -174,7 +178,7 @@
     if (metric.unit === 'pct') return '%';
     if (metric.unit === 'x') return '×';
     for (let i = 0; i < columns.length; i += 1) {
-      const cell = columns[i].values && columns[i].values[metric.key];
+      const cell = cellForMetric(metric.key, columns[i]);
       if (cell) return cell.u === 'bn' ? 'млрд ₽' : 'как в отчёте';
     }
     return '';
@@ -196,6 +200,69 @@
       return null;
     }
     return (currentCell.v - previous.v) / Math.abs(previous.v) * 100;
+  }
+
+  // --- Мультипликаторы по текущей капитализации -----------------------------
+  // Капитализация приходит из /api/prices (ISSUECAPITALIZATION, рубли).
+  // Потоки за период приводятся к году, как на smart-lab: квартал ×4,
+  // полугодие ×2, 9 месяцев ×4/3. Мультипликатор считается только из статей
+  // в млрд ₽ (u === 'bn'): «как в отчёте» без распознанных единиц к рублям
+  // не приводится — выдумывать масштаб нельзя. Значение строки из самого
+  // отчёта приоритетнее (см. cellForMetric).
+  const ANNUAL_FACTORS = { quarter: 4, half: 2, nine: 4 / 3 };
+
+  function marketCell(metricKey, column, cap) {
+    if (!cap || !Number.isFinite(cap) || cap <= 0 || !column) return null;
+    const capBn = cap / 1e9;
+    const values = column.values || {};
+    const factor = ANNUAL_FACTORS[column.kind] || 1;
+    // Статья в млрд ₽, иначе для рыночного расчёта непригодна.
+    const pick = (key) => {
+      const cell = values[key];
+      return cell && cell.u === 'bn' && cell.v != null && Number.isFinite(cell.v) ? cell : null;
+    };
+    if (metricKey === 'pe') {
+      // Прибыль акционерам банка → общая чистая прибыль за период.
+      const profit = pick('net_profit_shareholders') || pick('net_profit_total') || pick('net_profit');
+      if (profit && profit.v !== 0) return { v: capBn / (profit.v * factor), u: 'x' };
+      return null;
+    }
+    if (metricKey === 'pb') {
+      const equity = pick('equity');
+      if (equity && equity.v !== 0) return { v: capBn / equity.v, u: 'x' };
+      return null;
+    }
+    if (metricKey === 'ev_ebitda') {
+      const ebitda = pick('ebitda');
+      if (!ebitda || ebitda.v === 0) return null;
+      // Чистый долг может отсутствовать — тогда EV ≈ капитализация.
+      // Отрицательный чистый долг (чистая денежная позиция) уменьшает EV.
+      const netDebt = pick('net_debt');
+      const ev = capBn + (netDebt ? netDebt.v : 0);
+      return { v: ev / ebitda.v, u: 'x' };
+    }
+    if (metricKey === 'ps') {
+      const revenue = pick('revenue');
+      if (revenue && revenue.v !== 0) return { v: capBn / (revenue.v * factor), u: 'x' };
+      return null;
+    }
+    return null;
+  }
+
+  // Значение ячейки: как в отчёте, иначе — по текущей капитализации.
+  // «Капитализация» — текущее значение с Мосбиржи, показывается в КАЖДОЙ
+  // колонке (историческую из цен не восстановить); значение из самого
+  // отчёта, если строка там была, приоритетнее.
+  function cellForMetric(metricKey, column) {
+    const stored = column && column.values ? column.values[metricKey] : null;
+    if (stored && stored.v != null) return stored;
+    if (metricKey === 'market_cap') {
+      const cap = state.market.cap;
+      return cap && Number.isFinite(cap) && cap > 0
+        ? { v: cap / 1e9, u: 'bn' }
+        : null;
+    }
+    return marketCell(metricKey, column, state.market.cap);
   }
 
   // --- Данные ---------------------------------------------------------------
@@ -234,6 +301,9 @@
     state.view = 'values';
     state.openDoc = null;
     state.detail = null;
+    // Капитализация прошлой бумаги не должна подсвечивать мультипликаторы
+    // новой, пока не пришёл её собственный ответ /api/prices.
+    state.market = { cap: null, updated: '' };
     renderMain();
     try {
       const data = await requestJson(
@@ -242,6 +312,7 @@
       if (sequence !== state.detailSeq) return;
       state.detail = data;
       setUpdated(data);
+      loadMarketCap();
     } catch (err) {
       if (sequence !== state.detailSeq) return;
       state.companyError = err.message;
@@ -252,6 +323,38 @@
         state.loadingDetail = false;
         renderMain();
       }
+    }
+  }
+
+  // Текущая капитализация выбранной бумаги: /api/prices возвращает
+  // ISSUECAPITALIZATION (рубли) и ISSUECAPITALIZATION_UPDATETIME.
+  // Вызывается при выборе бумаги и на каждом real-time-тике (интервал —
+  // как у watchlist, AUTO_REFRESH_INTERVAL): пока открыт раздел «Отчетность»,
+  // капитализация в шапке и мультипликаторы в таблице остаются живыми.
+  async function loadMarketCap() {
+    const ticker = state.selected;
+    if (!ticker || ticker === '__orphans__') return;
+    try {
+      const data = await requestJson(
+        `${API}/api/prices/${encodeURIComponent(ticker)}`, {}, 15000,
+      );
+      // Бумагу успели сменить — ответ устарел, не трогаем состояние.
+      if (state.selected !== ticker) return;
+      const rawCap = data && data.ISSUECAPITALIZATION;
+      const cap = rawCap != null && Number.isFinite(Number(rawCap)) && Number(rawCap) > 0
+        ? Number(rawCap) : null;
+      const updated = (data && data.ISSUECAPITALIZATION_UPDATETIME) || '';
+      const same = cap === state.market.cap && updated === state.market.updated;
+      const sameBn = cap != null && state.market.cap != null
+        && Math.round(cap / 1e8) === Math.round(state.market.cap / 1e8);
+      if (same) return;
+      state.market = { cap, updated };
+      // Перерисовка нужна только когда значение реально сдвинулось
+      // (с точностью 0,1 млрд ₽ — чтобы не мигать таблицей на каждом тике).
+      if (sameBn) return;
+      renderMain();
+    } catch (e) {
+      // Сеть/таймаут — оставляем последнее известное значение.
     }
   }
 
@@ -351,7 +454,7 @@
       if (changeMode) {
         if (changeFor(metric.key, i, columns) != null) return true;
       } else {
-        const cell = columns[i].values && columns[i].values[metric.key];
+        const cell = cellForMetric(metric.key, columns[i]);
         if (cell && cell.v != null) return true;
       }
     }
@@ -384,7 +487,7 @@
           const cls = value == null ? ' empty' : (value < 0 ? ' neg' : '');
           return `<td><span class="reports-fin-value${cls}">${formatChange(value)}</span></td>`;
         }
-        const cell = column.values && column.values[metric.key];
+        const cell = cellForMetric(metric.key, column);
         if (!cell || cell.v == null) {
           return '<td><span class="reports-fin-value empty">—</span></td>';
         }
@@ -638,6 +741,12 @@
     }
 
     const isOrphans = detail.ticker === '__orphans__';
+    // Живая капитализация с Мосбиржи (правая часть шапки компании).
+    const capLine = state.market.cap
+      ? `<div class="reports-company-subtitle">Капитализация: ${
+          formatNumber(state.market.cap / 1e9, 1)} млрд ₽${
+          state.market.updated ? ` · на ${escapeHtml(state.market.updated)}` : ''}</div>`
+      : '';
     let tablePart = '';
     if (isOrphans) {
       tablePart = `<div class="reports-empty-inline">
@@ -668,6 +777,7 @@
             ${detail.exchange ? `<code>${escapeHtml(detail.exchange)}</code>` : ''}
           </div>
           <div class="reports-company-subtitle">${escapeHtml(subtitleParts.join(' · '))}</div>
+          ${capLine}
         </div>
       </div>
       ${tablePart}
@@ -858,6 +968,17 @@
     if (state.bound) return;
     state.bound = true;
 
+    // Real-time капитализация: пока открыт раздел «Отчетность», тянем
+    // /api/prices выбранной бумаги на том же цикле, что и watchlist
+    // (AUTO_REFRESH_INTERVAL из js/state.js, fallback 15 c).
+    const refreshMs = (typeof window.AUTO_REFRESH_INTERVAL === 'number')
+      ? window.AUTO_REFRESH_INTERVAL : 15000;
+    setInterval(() => {
+      if (sessionStorage.getItem('activePage') !== 'reports') return;
+      if (!state.selected || state.selected === '__orphans__') return;
+      loadMarketCap();
+    }, refreshMs);
+
     const select = byId('reports-company-select');
     const input = byId('reports-file-input');
     const addButton = byId('reports-add-column');
@@ -954,11 +1075,47 @@
 
   // --- Точка входа ---------------------------------------------------------
 
+  // Тикер, который нужно открыть при следующем входе в раздел. Ставится
+  // «Перейти в отчетность …» из контекстного меню watchlist (js/ui.js),
+  // снимается в loadReportsPage: переход одноразовый, обычное открытие
+  // раздела из меню навигации остаётся с сохранённым выбором компании.
+  let pendingTicker = '';
+
+  window.openReportsForTicker = function (symbol) {
+    const ticker = String(symbol || '').trim().toUpperCase();
+    if (!ticker) return;
+    pendingTicker = ticker;
+    if (typeof window.navigateTo === 'function') {
+      window.navigateTo('reports');
+    } else {
+      loadReportsPage();
+    }
+  };
+
   window.loadReportsPage = async function () {
     bindHandlers();
     // Повторный вход в раздел: список перечитываем (загрузки могли появиться
     // с другого устройства), выбранную бумагу сохраняем.
     await loadCompanies();
+    // Переход из watchlist: открываем отчетность запрошенного тикера.
+    // Тикер из списка мог исчезнуть (удалили из watchlist между кликом и
+    // открытием) или не поддерживаться (индекс) — тогда раздел открывается
+    // как обычно, без выбора.
+    const pending = pendingTicker;
+    pendingTicker = '';
+    if (pending) {
+      const candidates = pending.indexOf('MOEX:') === 0
+        ? [pending]
+        : [pending, `MOEX:${pending}`];
+      const entry = state.companies.find((item) => candidates.indexOf(item.ticker) >= 0);
+      if (entry) {
+        await selectCompany(entry.ticker);
+        return;
+      }
+      window.showToast && window.showToast(
+        `Отчетность по ${pending} недоступна — бумага не в списке раздела`, 'info',
+      );
+    }
     const saved = savedCompany();
     const exists = saved && state.companies.some((item) => item.ticker === saved);
     if (exists) {
@@ -988,4 +1145,12 @@
   window.reportsFormatChange = formatChange;
   window.reportsChangeFor = changeFor;
   window.reportsCanChangeView = canChangeView;
+  // Мультипликатор по текущей капитализации (pe/pb/ev_ebitda/ps) — для тестов.
+  window.reportsMarketCell = marketCell;
+  // Резолвер ячейки (отчёт → живая капитализация) и сеттер капитализации —
+  // для тестов строки «Капитализация».
+  window.reportsCellForMetric = cellForMetric;
+  window.reportsSetMarketCap = (cap, updated) => {
+    state.market = { cap: cap || null, updated: updated || '' };
+  };
 })();

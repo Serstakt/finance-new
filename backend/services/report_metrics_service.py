@@ -164,7 +164,10 @@ METRICS = (
             r"^(?!.*продолжающ).*чист\w*.*прибыл\w*.*относящ\w*.*акционер",
             r"^(?:чист\w* убыток )?чист\w* прибыль$",
             r"чист\w*.*прибыл\w*.*относящ\w*.*акционер",
-            r"чист\w*.*прибыл\w*",
+            # без «небанковской»: «Чистая прибыль по небанковской
+            # деятельности» (Совкомбанк 3м2026) — банковская статья
+            # nonbank_net_income, а не общая чистая прибыль.
+            r"^(?!.*небанковской)чист\w*.*прибыл\w*",
         ),
         core=True,
         hint="Прибыль, относящаяся к акционерам; если её нет — прибыль за период.",
@@ -237,11 +240,14 @@ METRICS = (
             # Активы = капитал + обязательства — банковские балансы
             # (Совкомбанк) подводят итог этой строкой.
             r"^итого капитал и обязательств",
-            # «Итого» под разделом «Активы» и «Всего активов» —
-            # банковские балансы (Совкомбанк, ВТБ).
             r"^итого$",
             r"^всего актив",
             r"^total assets$",
+            # OCR рвет названия итогов: «Итого обязательства» вместо
+            # «Итого капитал и обязательства» (Совкомбанк 6м2026). Шаблон
+            # последним (низший приоритет); мусорные кандидаты отсекает
+            # проверка «активы ≥ капитал» в _collect_metrics.
+            r"^итого(?: капитал)?(?: и)? обязательств\w*$",
         ),
         core=True,
     ),
@@ -308,6 +314,35 @@ METRICS = (
         derived=True,
         hint="Долг / EBITDA.",
     ),
+    # Рыночные мультипликаторы: считаются фронтендом по ТЕКУЩЕЙ
+    # капитализации с Мосбиржи (marketdata.ISSUECAPITALIZATION из
+    # /api/prices), обновляются при каждом real-time-тике цен. Значение
+    # из загруженного отчёта (если строка там есть) приоритетнее.
+    MetricDef(
+        "market_cap", "Капитализация", UNIT_MONEY, GROUP_RATIOS, "any",
+        derived=True,
+        hint="Текущая капитализация с Мосбиржи — во всех колонках, обновляется с ценой.",
+    ),
+    MetricDef(
+        "pe", "P/E", UNIT_RATIO, GROUP_RATIOS, "any",
+        derived=True,
+        hint="Капитализация / годовая чистая прибыль периода; иначе строка из отчёта.",
+    ),
+    MetricDef(
+        "pb", "P/B", UNIT_RATIO, GROUP_RATIOS, "any",
+        derived=True,
+        hint="Капитализация / капитал (баланс); иначе строка из отчёта.",
+    ),
+    MetricDef(
+        "ev_ebitda", "EV/EBITDA", UNIT_RATIO, GROUP_RATIOS, "any",
+        derived=True,
+        hint="(Капитализация + чистый долг) / EBITDA по текущей капитализации.",
+    ),
+    MetricDef(
+        "ps", "P/S", UNIT_RATIO, GROUP_RATIOS, "any",
+        derived=True,
+        hint="Капитализация / годовая выручка периода по текущей капитализации.",
+    ),
 )
 
 METRICS_BY_KEY = {metric.key: metric for metric in METRICS}
@@ -368,8 +403,13 @@ BANK_ONLY_METRICS = (
             r"чист\w*.*прибыл\w*.*относящ\w*.*акционер",
             r"^profit attributable to (?:the )?shareholders",
             # Подстатья под заголовком «…приходящаяся на:»: «Акционеры
-            # Банка» (Сбербанк) / «- акционеров Банка» (Совкомбанк).
-            r"^акционер\w* банка$",
+            # Банка» (Сбербанк) / «- акционеров Банка» (Совкомбанк); OCR ест
+            # буквы («• ащионеров Банка», 6м2026) и оставляет одно «Банка»
+            # (3м2026, «- акционеров» уходит в строку-раздел). Один шаблон с
+            # одним приоритетом: хвостовая строка совокупного дохода имеет
+            # тот же ярлык, но «best» берет меньший indent / более раннюю
+            # строку — прибыльная секция ПУС всегда раньше секции СД.
+            r"^(?:а[кщ]?ц?ионер\w* банка|банка)$",
         ),
         core=True,
         hint="Прибыль, приходящаяся на акционеров банка, без неконтролирующих долей.",
@@ -391,7 +431,9 @@ BANK_ONLY_METRICS = (
         "provisions", "Создание резервов", UNIT_MONEY,
         GROUP_INCOME, "income",
         patterns=(
-            r"^расход\w* по кредитным убыткам",
+            # «кред\w* убыткам» вместо строгого «кредитным»: OCR-сканы едят
+            # буквы («Расходы по кредтным убыткам», Совкомбанк 6м2026).
+            r"^расход\w* по кред\w* убыткам",
             r"^создание .*резерв.*кредит",
             r"^создание .*резерв",
             r"^резерв на возможные потери",
@@ -430,8 +472,34 @@ BANK_ONLY_METRICS = (
         UNIT_MONEY, GROUP_INCOME, "income",
         patterns=(
             r"^чист\w* доход по небанковской",
+            # Перенос названия в OCR-скане даёт «Чистый небанковской +
+            # доход по деятельности» (Совкомбанк 6м2026).
+            r"^чист\w* небанковской",
+            # ...а в 3м2026 — «Чистая прибыль по небанковской деятельности».
+            r"^чист\w* (?:доход|прибыль) по небанковской",
             r"^net non-banking",
         ),
+    ),
+    # Источники для вывода «Чистая прибыль» там, где строку разорвал OCR
+    # («отчетный» + раздел «Прибыль за период», Совкомбанк 3м2026):
+    # чистая прибыль = прибыль до налога − налог. В шаблон строк не выводим.
+    MetricDef(
+        "profit_before_tax", "Прибыль до налога", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^прибыль до налога",
+            r"^profit before (?:income )?tax$",
+        ),
+    ),
+    MetricDef(
+        "income_tax", "Налог на прибыль", UNIT_MONEY,
+        GROUP_INCOME, "income",
+        patterns=(
+            r"^расход\w* по налогу",
+            r"^налог (?:на прибыль|на доходы)",
+            r"^income tax expense$",
+        ),
+        absolute=True,
     ),
     MetricDef(
         "pe", "PE", UNIT_RATIO, GROUP_RATIOS, "any",
@@ -441,7 +509,7 @@ BANK_ONLY_METRICS = (
             r"^price to earnings",
         ),
         core=True,
-        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+        hint="Из отчёта или по текущей капитализации: капитализация / годовая прибыль акционерам.",
     ),
     MetricDef(
         "pb", "PB", UNIT_RATIO, GROUP_RATIOS, "any",
@@ -451,7 +519,7 @@ BANK_ONLY_METRICS = (
             r"^price to book",
         ),
         core=True,
-        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+        hint="Из отчёта или по текущей капитализации: капитализация / капитал.",
     ),
     MetricDef(
         "market_cap", "Капитализация", UNIT_MONEY, GROUP_RATIOS, "any",
@@ -460,7 +528,7 @@ BANK_ONLY_METRICS = (
             r"^market capitali[sz]ation",
         ),
         core=True,
-        hint="Берётся из загруженного отчёта, если он содержит такую строку.",
+        hint="Из отчёта, если он содержит такую строку; текущая с Мосбиржи — во всех колонках.",
     ),
     MetricDef(
         "roe", "ROE", UNIT_PERCENT, GROUP_RATIOS, "any",
@@ -969,8 +1037,31 @@ def _collect_metrics(rows: list[dict], column_index: int, source: str,
             break
 
     source_priority = _SOURCE_PRIORITY.get(source, 9)
+    # Активы не могут быть меньше капитала: отбрасываем итоговые строки,
+    # у которых OCR обрезал число («Итого» → «318» из «4 485 318») и которые
+    # затягивает терпимый шаблон «Итого обязательства» — иначе мусорное
+    # значение перебивает корректный итог баланса.
+    if "total_assets" in candidates and "equity" in candidates:
+        equity_choice = _choose_candidate(
+            candidates["equity"], PARSING_BY_KEY["equity"].combine,
+        )
+        if equity_choice:
+            floor = abs(equity_choice["value"]["v"])
+            kept = [
+                item for item in candidates["total_assets"]
+                if abs(item["value"]["v"]) >= floor
+            ]
+            if kept:
+                candidates["total_assets"] = kept
     for key, items in candidates.items():
-        chosen = _choose_candidate(items, PARSING_BY_KEY[key].combine)
+        if key == "net_profit_shareholders":
+            # Прибыль, приходящаяся на акционеров, и конец секции совокупного
+            # дохода («…приходящаяся на: акционеров Банка») имеют одинаковые
+            # ярлыки и разный OCR-отступ — прибыльную секцию ПУС дает только
+            # порядок строк: она всегда раньше секции СД. Отступ не учитываем.
+            chosen = min(items, key=lambda item: (item["priority"], item["order"]))
+        else:
+            chosen = _choose_candidate(items, PARSING_BY_KEY[key].combine)
         if not chosen:
             continue
         existing = values.get(key)
@@ -1063,6 +1154,22 @@ def _derive_column(values: dict, kind: str = "") -> None:
     nii = values.get("net_interest_income")
     opex = values.get("operating_expenses")
     noi = values.get("net_operating_income")
+
+    # «Чистая прибыль» разорвана OCR (Совкомбанк 3м2026: «отчетный» +
+    # раздел «Прибыль за период») — выводим из тождества отчета:
+    # прибыль до налога − налог на прибыль (оба по модулю).
+    pretax = values.get("profit_before_tax")
+    income_tax = values.get("income_tax")
+    if (
+        "net_profit_total" not in values
+        and pretax and income_tax
+        and _same_unit(pretax, income_tax)
+    ):
+        values["net_profit_total"] = {
+            "v": round(pretax["v"] - income_tax["v"], 6),
+            "u": pretax["u"],
+        }
+        net_total = values["net_profit_total"]
     if noi is None:
         # Нет строки «Чистый операционный доход» (сжатые ОПиУ) — оценка
         # до резервов: операционные доходы (после резервов) + резервы +
@@ -1117,6 +1224,64 @@ def _finalize_column(column: dict) -> dict:
     return column
 
 
+def _stitch_ocr_wrapped_labels(tables: list[dict]) -> None:
+    """Склеивает названия статей, разорванные OCR-сканом на две строки.
+
+    На страницах-сканах перенос названия внутри ячейки превращается в
+    отдельную строку БЕЗ чисел, которая попадает в «разделы». Два вида
+    разрыва (чинятся по уже сохранённым tables_json, поэтому чинят и
+    старые загрузки):
+
+    * название унесено в «раздел» ПОСЛЕ строки с числами, а в самой строке
+      осталось тире («—» [4 194 538] + «Итого активы») — работает для всех
+      таблиц, включая баланс;
+    * продолжение названия со СТРОЧНОЙ буквы после статьи («Чистый
+      комиссионный» + «доход») — только для небалансовых таблиц:
+      настоящие разделы баланса тоже начинаются с заглавной, но склейка
+      «Итого» + «активы» в балансе поднимает приоритет строки итога,
+      а у OCR-сканов у таких строк бывают обрезанные числа — мусорное
+      значение перебивало корректное «Итого капитал и обязательства»
+      (Совкомбанк 9м2026).
+    """
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        is_balance = str(table.get("key") or "") == "balance"
+        rows = table.get("rows")
+        if not isinstance(rows, list) or len(rows) < 2:
+            continue
+        merged_any = False
+        # Тире вместо названия: название строки — в следующем «разделе».
+        for i in range(len(rows) - 1):
+            row, nxt = rows[i], rows[i + 1]
+            if (
+                not str(row.get("label") or "").strip("—-‐‑'")
+                and nxt.get("section")
+                and str(nxt.get("label") or "").strip()
+            ):
+                row["label"] = str(nxt["label"]).strip()
+                nxt["label"] = ""
+                merged_any = True
+        if not is_balance:
+            for i in range(1, len(rows)):
+                row, prev = rows[i], rows[i - 1]
+                if (
+                    row.get("section")
+                    and not prev.get("section")
+                    and str(row.get("label") or "")[:1].islower()
+                ):
+                    prev["label"] = " ".join(
+                        part for part in (str(prev.get("label") or "").strip(),
+                                          str(row.get("label") or "").strip()) if part
+                    )
+                    row["label"] = ""
+                    merged_any = True
+        if merged_any:
+            table["rows"] = [
+                row for row in rows if str(row.get("label") or "").strip()
+            ]
+
+
 def build_columns(tables: list[dict]) -> list[dict]:
     """Собирает периоды одного документа из распознанных таблиц.
 
@@ -1125,6 +1290,7 @@ def build_columns(tables: list[dict]) -> list[dict]:
     баланс приклеивается к периоду с той же датой (или создаёт колонку,
     если в документе только баланс).
     """
+    _stitch_ocr_wrapped_labels(tables)
     periods: dict[str, dict] = {}
     balance_tables: list[dict] = []
 
