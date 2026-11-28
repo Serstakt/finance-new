@@ -802,11 +802,12 @@
 
     <!-- ==================================================================
          ОТЧЁТНОСТЬ — финансовые показатели компаний из watchlist
-         Слева — бумаги watchlist (кроме crypto), справа — таблица в духе
-         smart-lab: строки-показатели, колонки-периоды (кварталы,
-         полугодия, 9 месяцев, годы). Кнопка «Добавить колонку» загружает
-         PDF/ZIP по выбранной бумаге; бэкенд разбирает ОПиУ/ДДС/баланс и
-         добавляет колонки. Данные:
+         В шапке — выбор компании (дропдаун) и кнопка загрузки файла.
+         Таблица в духе smart-lab: строки «Период» и «Фин. отчетность»
+         (кнопка «Файл» у каждого периода), ниже — показатели, набор
+         которых зависит от сектора компании (банки — свой шаблон).
+         Бэкенд разбирает ОПиУ/ДДС/баланс из PDF/ZIP и добавляет колонки.
+         Данные:
          GET /api/reports/companies, GET /api/reports/company?ticker=...
          POST /api/reports/upload (file + ticker), GET/DELETE /api/reports/{id}.
          Рендер — js/reports.js.
@@ -816,50 +817,40 @@
             <div class="reports-header">
                 <div class="reports-title-group">
                     <h1 class="reports-title">Отчетность <span class="reports-title-sub">финансовые показатели</span></h1>
-                    <p class="reports-subtitle">Бумаги из watchlist → кварталы, полугодия и годы из загруженных отчётов</p>
+                    <p class="reports-subtitle">Выбор компании → кварталы, полугодия и годы из загруженных отчётов</p>
                 </div>
                 <div class="reports-header-right">
+                    <label class="reports-company-select-wrap">
+                        <select id="reports-company-select" class="reports-company-select"
+                                title="Выбор компании" aria-label="Выбор компании">
+                            <option value="">Выбор компании</option>
+                        </select>
+                    </label>
                     <span class="reports-updated" id="reports-updated"></span>
                     <button class="reports-refresh" id="reports-refresh" type="button" title="Обновить список бумаг и показатели">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                         <span>Обновить</span>
                     </button>
                     <button class="reports-upload-btn" id="reports-add-column" type="button"
-                            disabled title="Загрузить PDF/ZIP с отчётностью и добавить колонку периодов">
+                            disabled title="Загрузить PDF/ZIP с отчётностью за выбранный период">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                        <span>Добавить колонку</span>
+                        <span>Загрузить файл</span>
                     </button>
                     <input type="file" id="reports-file-input" accept=".pdf,.zip,application/pdf,application/zip" hidden>
                 </div>
             </div>
 
-            <div class="reports-layout">
-                <!-- Бумаги: тикеры всех списков watchlist, кроме crypto.
-                     Счётчик справа — число загруженных документов. -->
-                <aside class="reports-sidebar">
-                    <div class="reports-sidebar-head">
-                        <div class="reports-sidebar-title">Бумаги</div>
-                        <span class="reports-company-count" id="reports-company-count"></span>
-                    </div>
-                    <label class="reports-search">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                        <input type="search" id="reports-company-search" placeholder="Поиск по тикеру" autocomplete="off">
-                    </label>
-                    <div class="reports-company-list" id="reports-company-list"></div>
-                </aside>
-
-                <!-- Таблица показателей выбранной бумаги, документы и
-                     распознанные таблицы. Всё собирает js/reports.js. -->
-                <section class="reports-main" id="reports-main">
-                    <div class="reports-empty">
-                        <span class="reports-empty-icon" aria-hidden="true">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-3"/></svg>
-                        </span>
-                        <div class="reports-empty-title">Выберите бумагу</div>
-                        <div class="reports-empty-hint">Слева — тикеры из watchlist. По выбранной бумаге появится таблица показателей.</div>
-                    </div>
-                </section>
-            </div>
+            <!-- Таблица показателей выбранной компании, документы и
+                 распознанные таблицы. Всё собирает js/reports.js. -->
+            <section class="reports-main" id="reports-main">
+                <div class="reports-empty">
+                    <span class="reports-empty-icon" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-3"/></svg>
+                    </span>
+                    <div class="reports-empty-title">Выберите компанию</div>
+                    <div class="reports-empty-hint">В выпадающем списке — бумаги из watchlist. По выбранной компании появится таблица показателей.</div>
+                </div>
+            </section>
         </div>
     </div>
 

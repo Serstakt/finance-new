@@ -1,15 +1,17 @@
 // === ОТЧЁТНОСТЬ — ФИНАНСОВЫЕ ПОКАЗАТЕЛИ КОМПАНИЙ ИЗ WATCHLIST ===
 //
-// Раздел справа от FUTOI. Слева — бумаги watchlist (без crypto), справа —
-// таблица в духе smartlab: строки-показатели (выручка, EBITDA, чистая
-// прибыль, долг…), колонки-периоды (кварталы, полугодия, 9 месяцев, годы).
+// В шапке раздела — выбор компании (дропдаун) и кнопка загрузки файла.
+// Таблица в духе smart-lab: строка «Период» с колонками-периодами
+// (кварталы, полугодия, 9 месяцев, годы), строка «Фин. отчетность»
+// с кнопкой «Файл» у каждого периода и плоские строки-показатели.
+// Набор строк зависит от сектора компании (банки — свой шаблон из
+// бэкенда, см. report_metrics_service.py: metrics_catalog(sector)).
 //
-// Колонка появляется после загрузки PDF/ZIP по выбранной бумаге: бэкенд
-// (services/reports_service.py + report_metrics_service.py) распознаёт
-// ОПиУ/ДДС/баланс, приводит статьи к единому набору показателей и
-// сохраняет периоды в report_documents.columns_json. Кнопка «Добавить
-// колонку» загружает документ; ниже таблицы — документы компании и
-// исходные распознанные таблицы.
+// Колонка появляется после загрузки PDF/ZIP по выбранной компании:
+// бэкенд (services/reports_service.py + report_metrics_service.py)
+// распознаёт ОПиУ/ДДС/баланс, приводит статьи к единому набору
+// показателей и сохраняет периоды в report_documents.columns_json.
+// Ниже таблицы — документы компании и исходные распознанные таблицы.
 //
 // API:
 //   GET    /api/reports/companies            -> бумаги watchlist + счётчики
@@ -55,7 +57,6 @@
     companyError: '',
     filter: 'all',
     view: 'values',       // values | change
-    search: '',
     uploading: false,
     openDoc: null,        // {id, loading, data, activeTable}
     bound: false,
@@ -203,7 +204,7 @@
     if (state.loadingCompanies) return;
     state.loadingCompanies = true;
     state.companiesError = '';
-    renderCompanyList();
+    renderCompanySelect();
     try {
       const data = await requestJson(`${API}/api/reports/companies`, {}, 15000);
       state.companies = (data && data.companies) || [];
@@ -212,7 +213,7 @@
       state.companiesError = err.message;
     } finally {
       state.loadingCompanies = false;
-      renderCompanyList();
+      renderCompanySelect();
     }
   }
 
@@ -258,7 +259,7 @@
     if (!ticker) return;
     state.selected = ticker;
     rememberCompany(ticker);
-    renderCompanyList();
+    renderCompanySelect();
     updateAddButton();
     await loadCompany(ticker);
   }
@@ -280,6 +281,7 @@
       state.detail = null;
       rememberCompany(null);
       updateAddButton();
+      renderCompanySelect();
       renderMain();
     }
   }
@@ -292,72 +294,48 @@
     box.textContent = latest ? `Обновлено ${formatDate(latest.uploaded_at)}` : '';
   }
 
-  // --- Рендер списка бумаг --------------------------------------------------
+  // --- Рендер списка бумаг (дропдаун) ---------------------------------------
 
-  function visibleCompanies() {
-    const query = state.search.trim().toUpperCase();
-    if (!query) return state.companies;
-    return state.companies.filter((item) => {
-      return String(item.code || '').toUpperCase().includes(query)
-        || String(item.ticker || '').toUpperCase().includes(query);
-    });
-  }
-
-  function companyItemHtml(company) {
-    const active = company.ticker === state.selected ? ' active' : '';
-    const periods = Number(company.periods) || 0;
-    const documents = Number(company.documents) || 0;
-    const metaParts = [];
+  function companyOptionLabel(company) {
     if (company.ticker === '__orphans__') {
-      metaParts.push(`${documents} док. без привязки`);
-    } else {
-      metaParts.push(periods ? `${periods} периодов` : 'нет периодов');
-      if (!company.in_watchlist) metaParts.push('вне watchlist');
+      return 'Без компании';
     }
-    const exchange = company.exchange
-      ? `<span class="reports-company-exchange">${escapeHtml(company.exchange)}</span>`
-      : '';
-    const badge = documents ? `<span class="reports-company-badge">${documents}</span>` : '';
-    return `
-      <button class="reports-company${active}" type="button"
-              data-company-ticker="${escapeHtml(company.ticker)}"
-              title="${escapeHtml(company.ticker)}">
-        <span class="reports-company-main">
-          <span class="reports-company-code">${escapeHtml(company.code)}${exchange}</span>
-          <span class="reports-company-meta">${escapeHtml(metaParts.join(' · '))}</span>
-        </span>
-        ${badge}
-      </button>`;
+    const parts = [company.code || company.ticker];
+    if (!company.in_watchlist) parts.push('вне watchlist');
+    return parts.join(' · ');
   }
 
-  function renderCompanyList() {
-    const box = byId('reports-company-list');
-    const counter = byId('reports-company-count');
-    if (!box) return;
-
-    const companies = visibleCompanies();
-    if (counter) {
-      const total = state.companies.length;
-      counter.textContent = total ? `${companies.length} / ${total}` : '';
-    }
+  function renderCompanySelect() {
+    const select = byId('reports-company-select');
+    if (!select) return;
+    const previous = select.value;
 
     if (state.loadingCompanies && !state.companies.length) {
-      box.innerHTML = '<div class="reports-company-list-empty">Загрузка бумаг…</div>';
+      select.innerHTML = '<option value="">Загрузка бумаг…</option>';
+      select.disabled = true;
       return;
     }
+    select.disabled = false;
     if (state.companiesError) {
-      box.innerHTML = `<div class="reports-company-list-empty">Не удалось загрузить бумаги: ${escapeHtml(state.companiesError)}</div>`;
+      select.innerHTML = `<option value="">Не удалось загрузить бумаги</option>`;
       return;
     }
     if (!state.companies.length) {
-      box.innerHTML = '<div class="reports-company-list-empty">В watchlist нет бумаг. Добавьте акции — криптовалюты в отчётности не участвуют.</div>';
+      select.innerHTML = '<option value="">В watchlist нет бумаг</option>';
       return;
     }
-    if (!companies.length) {
-      box.innerHTML = '<div class="reports-company-list-empty">Ничего не найдено</div>';
-      return;
+
+    const options = ['<option value="">Выбор компании</option>']
+      .concat(state.companies.map((company) => `
+        <option value="${escapeHtml(company.ticker)}"${company.ticker === state.selected ? ' selected' : ''}>
+          ${escapeHtml(companyOptionLabel(company))}
+        </option>`))
+      .join('');
+    select.innerHTML = options;
+    // Восстанавливаем выбор, если перерисовка случилась без смены компании.
+    if (previous && state.companies.some((item) => item.ticker === previous)) {
+      select.value = state.selected || previous;
     }
-    box.innerHTML = companies.map(companyItemHtml).join('');
   }
 
   // --- Таблица показателей --------------------------------------------------
@@ -391,7 +369,7 @@
     return false;
   }
 
-  function groupRowsHtml(groupKey, label, metrics, columns, changeMode) {
+  function metricRowsHtml(metrics, columns, changeMode) {
     const rows = [];
     metrics.forEach((metric) => {
       const visible = metric.core || hasAnyValue(metric, columns, changeMode);
@@ -421,18 +399,28 @@
           ${cells}
         </tr>`);
     });
-    if (!rows.length) return '';
-    return `
-      <tr class="reports-fin-group">
-        <td colspan="${columns.length + 1}">${escapeHtml(label)}</td>
-      </tr>
-      ${rows.join('')}`;
+    return rows.join('');
+  }
+
+  // Документ-источник колонки: последняя загрузка, чьи распознанные
+  // периоды включают label колонки.
+  function documentForColumn(columns) {
+    const docs = (state.detail && state.detail.documents) || [];
+    const byPeriod = new Map();
+    docs.forEach((doc) => {
+      (doc.period_labels || []).forEach((label) => {
+        byPeriod.set(label, doc);
+      });
+    });
+    return columns.map((column) => byPeriod.get(column.label) || null);
   }
 
   function financialTableHtml(columns) {
     const metrics = (state.detail && state.detail.metrics) || [];
     const changeMode = state.view === 'change';
-    const headCells = columns.map((column) => {
+    const docByColumn = changeMode ? [] : documentForColumn(columns);
+
+    const periodCells = columns.map((column) => {
       const kind = KIND_LABELS[column.kind] || '';
       const title = column.full_label || column.label || '';
       return `<th title="${escapeHtml(title)}">
@@ -441,28 +429,36 @@
       </th>`;
     }).join('');
 
-    const groups = [];
-    const byGroup = new Map();
-    metrics.forEach((metric) => {
-      if (!byGroup.has(metric.group)) {
-        byGroup.set(metric.group, { label: metric.group_label || metric.group, items: [] });
-        groups.push(metric.group);
+    const fileCells = columns.map((column, index) => {
+      if (changeMode) return '<td class="reports-file-cell empty">—</td>';
+      const doc = docByColumn[index];
+      if (doc) {
+        return `<td class="reports-file-cell">
+          <button class="reports-file-btn" type="button" data-doc-toggle="${doc.id}"
+                  title="${escapeHtml(doc.filename)}: показать распознанные таблицы">Файл</button>
+        </td>`;
       }
-      byGroup.get(metric.group).items.push(metric);
-    });
-
-    const body = groups.map((key) => {
-      const group = byGroup.get(key);
-      return groupRowsHtml(key, group.label, group.items, columns, changeMode);
+      return `<td class="reports-file-cell">
+        <button class="reports-file-btn muted" type="button" data-file-add="1"
+                title="Файл за этот период не найден — загрузите PDF или ZIP">+ Файл</button>
+      </td>`;
     }).join('');
+
+    const body = metricRowsHtml(metrics, columns, changeMode);
 
     return `
       <div class="reports-fin-wrap">
         <table class="reports-fin-table">
-          <thead><tr>
-            <th class="reports-fin-metric">Показатель${changeMode ? ' · изм.' : ''}</th>
-            ${headCells}
-          </tr></thead>
+          <thead>
+            <tr>
+              <th class="reports-fin-metric">Период</th>
+              ${periodCells}
+            </tr>
+            <tr class="reports-fin-files">
+              <th class="reports-fin-metric reports-fin-files-label">Фин. отчетность</th>
+              ${fileCells}
+            </tr>
+          </thead>
           <tbody>${body}</tbody>
         </table>
       </div>`;
@@ -570,7 +566,7 @@
     const docs = Array.isArray(detail.documents) ? detail.documents : [];
     const rows = docs.length
       ? docs.map(documentRowHtml).join('')
-      : '<div class="reports-empty-inline">Документов пока нет. Нажмите «Добавить колонку», чтобы загрузить PDF или ZIP с отчётностью.</div>';
+      : '<div class="reports-empty-inline">Документов пока нет. Нажмите «Загрузить файл», чтобы загрузить PDF или ZIP с отчётностью.</div>';
     return `
       <div class="reports-docs">
         <div class="reports-docs-head">
@@ -608,8 +604,8 @@
 
     if (!state.selected) {
       box.innerHTML = emptyMain(
-        'Выберите бумагу',
-        'Слева — тикеры из watchlist. По выбранной бумаге появится таблица показателей.',
+        'Выберите компанию',
+        'В выпадающем списке — бумаги из watchlist. По выбранной компании появится таблица показателей.',
       );
       return;
     }
@@ -627,13 +623,14 @@
     }
     const detail = state.detail;
     if (!detail) {
-      box.innerHTML = emptyMain('Нет данных', 'Выберите бумагу слева.');
+      box.innerHTML = emptyMain('Нет данных', 'Выберите компанию в выпадающем списке.');
       return;
     }
 
     const columns = Array.isArray(detail.columns) ? detail.columns : [];
     const docs = Array.isArray(detail.documents) ? detail.documents : [];
     const subtitleParts = [];
+    if (detail.sector === 'bank') subtitleParts.push('банковский сектор');
     if (docs.length) subtitleParts.push(`документов: ${docs.length}`);
     if (columns.length) subtitleParts.push(`периодов: ${columns.length}`);
     if (!detail.ticker || detail.ticker === '__orphans__') {
@@ -651,7 +648,7 @@
     } else if (!columns.length) {
       tablePart = `<div class="reports-empty-inline">
         По <strong>${escapeHtml(detail.code || bareTicker(state.selected))}</strong>
-        ещё нет периодов. Нажмите <strong>«Добавить колонку»</strong> и загрузите
+        ещё нет периодов. Нажмите <strong>«Загрузить файл»</strong> и загрузите
         PDF или ZIP с отчётностью (ОПиУ, ДДС или баланс).
       </div>`;
     } else {
@@ -765,7 +762,7 @@
       && !state.uploading;
     button.disabled = !allowed;
     const label = button.querySelector('span');
-    if (label) label.textContent = state.uploading ? 'Распознаём…' : 'Добавить колонку';
+    if (label) label.textContent = state.uploading ? 'Распознаём…' : 'Загрузить файл';
     if (input) input.disabled = state.uploading;
   }
 
@@ -861,25 +858,15 @@
     if (state.bound) return;
     state.bound = true;
 
-    const search = byId('reports-company-search');
-    const list = byId('reports-company-list');
+    const select = byId('reports-company-select');
     const input = byId('reports-file-input');
     const addButton = byId('reports-add-column');
     const refreshButton = byId('reports-refresh');
     const main = byId('reports-main');
 
-    if (search) {
-      search.addEventListener('input', () => {
-        state.search = search.value || '';
-        renderCompanyList();
-      });
-    }
-
-    if (list) {
-      list.addEventListener('click', (event) => {
-        const item = event.target.closest('[data-company-ticker]');
-        if (!item) return;
-        const ticker = item.getAttribute('data-company-ticker');
+    if (select) {
+      select.addEventListener('change', () => {
+        const ticker = select.value || '';
         if (ticker && ticker !== state.selected) selectCompany(ticker);
       });
     }
@@ -929,6 +916,10 @@
             state.view = key;
             renderMain();
           }
+          return;
+        }
+        if (event.target.closest('[data-file-add]')) {
+          if (input && !input.disabled) input.click();
           return;
         }
         const docTab = event.target.closest('[data-doc-table]');
